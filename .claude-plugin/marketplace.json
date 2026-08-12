@@ -1,0 +1,13 @@
+{
+  "name": "mellos-mapping",
+  "owner": {
+    "name": "Mellos"
+  },
+  "plugins": [
+    {
+      "name": "mellos-mapping",
+      "source": "./",
+      "description": "梅勒斯地图 — a live layered dependency map for bottom-up development"
+    }
+  ]
+}
