@@ -111,6 +111,7 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 | shift+滚轮 | 垂直滚动 |
 | `hjkl` / 方向键 | 微移视口 |
 | `Tab` / `Shift+Tab` / `1-9` / 点击标签 | 切换页（并行的多张地图） |
+| 拖动 `⋯` 分隔线 | 调整详情面板高度——向上拉，完整阅读长设计笔记 |
 | `0` | 重置平移和缩放 |
 | `q` | 退出面板 |
 

@@ -110,9 +110,22 @@ const MOUSE_ON = '\x1b[?1003h\x1b[?1006h';
 const MOUSE_OFF = '\x1b[?1003l\x1b[?1006l';
 const RESET = '\x1b[0m';
 
-/** separator + 6 content rows; the hint row comes on top of these. */
+/** Default detail-panel height; the divider drag adjusts it at runtime. */
 const PANEL_CONTENT_ROWS = 6;
-const PANEL_ROWS = 1 + PANEL_CONTENT_ROWS;
+export const PANEL_ROWS_MIN = 2;
+/** The map keeps at least this many body rows however far the divider is pulled. */
+const MAP_ROWS_MIN = 4;
+
+/** Clamp a wanted panel height to what the terminal can spare. */
+export function clampPanelRows(wanted: number, totalRows: number, tabRows: number): number {
+  const largest = totalRows - tabRows - MAP_ROWS_MIN - 2; // separator + footer stay
+  return Math.max(PANEL_ROWS_MIN, Math.min(wanted, largest));
+}
+
+/** Panel height implied by dragging the divider to terminal row `termY` (1-based). */
+export function panelRowsFromDividerY(termY: number, totalRows: number, tabRows: number): number {
+  return clampPanelRows(totalRows - termY - 1, totalRows, tabRows);
+}
 
 const STATUS_GLYPH: Readonly<Record<NodeStatus, [unicode: string, ascii: string]>> = {
   planned: ['·', '.'],
@@ -230,6 +243,7 @@ export function nodePanel(
   unicode: boolean,
   width: number,
   pinned: boolean,
+  rows: number = PANEL_CONTENT_ROWS,
 ): PanelLine[] | undefined {
   const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
@@ -276,8 +290,8 @@ export function nodePanel(
       { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
       { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
     ];
-    while (lines.length < PANEL_CONTENT_ROWS) lines.push({ text: '', sgr: '' });
-    return lines;
+    while (lines.length < rows) lines.push({ text: '', sgr: '' });
+    return lines.slice(0, rows);
   }
 
   const node = map.nodes.find((n) => (n.id as string) === focusId);
@@ -302,7 +316,7 @@ export function nodePanel(
     { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
   ];
   const notes = node.detail !== undefined ? wrapWidth(node.detail, width) : ['(no design notes yet)'];
-  const room = PANEL_CONTENT_ROWS - lines.length;
+  const room = Math.max(0, rows - lines.length);
   for (let i = 0; i < room; i++) {
     const last = i === room - 1 && notes.length > room;
     lines.push({
@@ -310,11 +324,16 @@ export function nodePanel(
       sgr: node.detail !== undefined ? '' : '90',
     });
   }
-  return lines;
+  return lines.slice(0, rows);
 }
 
-/** The dashboard shown when nothing is focused. Exactly PANEL_CONTENT_ROWS lines. */
-export function mapPanel(map: MellosMap, unicode: boolean, width: number): PanelLine[] {
+/** The dashboard shown when nothing is focused. Exactly `rows` lines. */
+export function mapPanel(
+  map: MellosMap,
+  unicode: boolean,
+  width: number,
+  rows: number = PANEL_CONTENT_ROWS,
+): PanelLine[] {
   const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const count = (s: NodeStatus): number => map.nodes.filter((n) => n.status === s).length;
   const statuses: NodeStatus[] = ['done', 'in-progress', 'planned', 'regressed'];
@@ -322,7 +341,7 @@ export function mapPanel(map: MellosMap, unicode: boolean, width: number): Panel
     .filter((s) => count(s) > 0)
     .map((s) => `${g(s)} ${count(s)} ${s}`)
     .join('   ');
-  return [
+  const lines: PanelLine[] = [
     { text: fitWidth(map.title ?? 'mellos map', width), sgr: '1' },
     {
       text: fitWidth(`${map.layers.length} layers · ${map.nodes.length} nodes · ${map.edges.length} edges`, width),
@@ -331,8 +350,9 @@ export function mapPanel(map: MellosMap, unicode: boolean, width: number): Panel
     { text: fitWidth(counts, width), sgr: '' },
     { text: '', sgr: '' },
     { text: 'hover a node to inspect · click to pin', sgr: '90' },
-    { text: '', sgr: '' },
   ];
+  while (lines.length < rows) lines.push({ text: '', sgr: '' });
+  return lines.slice(0, rows);
 }
 
 function main(): void {
@@ -377,9 +397,14 @@ function main(): void {
   let lastHits: readonly BoxHit[] = [];
   let lastContent = { w: 0, h: 0 };
   let pendingInput = '';
+  let panelContentRows = PANEL_CONTENT_ROWS;
+  let dividerDrag = false;
 
   const tabRows = (): number => (pageFiles.length > 1 ? 1 : 0);
-  const viewHeight = (): number => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1 - tabRows());
+  const viewHeight = (): number =>
+    Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
+  /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
+  const dividerY = (): number => tabRows() + viewHeight() + 1;
 
   /** Park the current view, activate `file`, restore its view (or defaults). */
   const switchPage = (file: string): void => {
@@ -417,6 +442,8 @@ function main(): void {
 
   const paint = (): void => {
     const cols = process.stdout.columns ?? 100;
+    // a shrunken terminal may no longer afford the dragged panel height
+    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
 
@@ -454,14 +481,19 @@ function main(): void {
     const panelWidth = Math.max(10, cols - 2);
     let panel: PanelLine[];
     if (map === undefined) {
-      panel = Array.from({ length: PANEL_CONTENT_ROWS }, () => ({ text: '', sgr: '' }));
+      panel = Array.from({ length: panelContentRows }, () => ({ text: '', sgr: '' }));
     } else if (focus !== undefined) {
       panel =
-        nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus) ?? mapPanel(map, cfg.unicode, panelWidth);
+        nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows) ??
+        mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     } else {
-      panel = mapPanel(map, cfg.unicode, panelWidth);
+      panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
-    const separator = (cfg.unicode ? '─' : '-').repeat(cols);
+    // the separator doubles as the drag handle — mark its grip in the middle
+    const grip = cfg.unicode ? ' ⋯ ' : ' ~ ';
+    const bar = (cfg.unicode ? '─' : '-').repeat(cols);
+    const gripAt = Math.max(0, Math.floor((cols - grip.length) / 2));
+    const separator = cols > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
     const panelRows = [
       cfg.color ? `\x1b[90m${separator}${RESET}` : separator,
       ...panel.map((l) =>
@@ -635,10 +667,22 @@ function main(): void {
             break;
           }
           case 'mouse-down':
+            if (event.y === dividerY()) {
+              dividerDrag = true; // grabbing the divider, not the map
+              break;
+            }
             dragAnchor = { x: event.x, y: event.y, ox: offsetX, oy: offsetY };
             press = { moved: false };
             break;
           case 'mouse-drag':
+            if (dividerDrag) {
+              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? 30, tabRows());
+              if (next !== panelContentRows) {
+                panelContentRows = next;
+                dirty = true;
+              }
+              break;
+            }
             if (dragAnchor) {
               // the content follows the mouse: drag right reveals the left
               const nx = dragAnchor.ox - (event.x - dragAnchor.x);
@@ -652,6 +696,10 @@ function main(): void {
             }
             break;
           case 'mouse-up':
+            if (dividerDrag) {
+              dividerDrag = false; // releasing the divider is not a click
+              break;
+            }
             if (press && !press.moved) {
               const tabHit =
                 tabRows() > 0 && event.y === 1
