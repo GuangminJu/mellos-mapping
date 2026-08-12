@@ -114,14 +114,14 @@ htop and tmux speak):
 | --- | --- |
 | hover a node | spotlight its wires; preview its details below the map |
 | click a node | pin it — details stay resident after the mouse leaves |
-| click empty space / `Esc` | unpin |
+| click empty space / `Esc` | unpin; with nothing pinned, `Esc` climbs out of a dive |
 | wheel / `+` `-` | zoom, anchored on the focused node (see the ladder below) |
 | left-drag | grab and pan when the map outgrows the pane |
 | shift+wheel | scroll vertically |
 | `hjkl` / arrows | nudge the view |
 | `Tab` / `Shift+Tab` / `1-9` / click a tab | switch pages (parallel maps) |
 | double-click a `⊞` node | dive into its sub-map (a child page) |
-| `Backspace` | climb back out of the last dive |
+| `Backspace` / `Esc` | climb back out of the last dive |
 | drag the `⋯` divider | resize the detail panel — pull it up to read long design notes in full |
 | `0` | reset pan and zoom |
 | `q` | quit the pane |
