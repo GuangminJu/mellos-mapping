@@ -28,9 +28,54 @@
  *      private column on the right margin.
  * Crossings merge into proper junction characters via a direction-bitmask
  * union instead of any routing cleverness.
+ *
+ * Zoom — terminals cannot scale glyphs, so zooming out first COMPRESSES the
+ * geometry (gaps, breathing rows, padding shrink; labels truncate toward a
+ * scale-proportional budget) while boxes stay boxes. Only when a further
+ * step would leave labels too short to mean anything does the picture switch
+ * mode — to a borderless glyph constellation whose band bars carry
+ * done/total counts. Zooming in past 100% unfolds evidence and design notes
+ * inside the boxes. The ladder, one wheel tick per step:
+ *   +1   detail        evidence + design notes unfold inside boxes
+ *    0   100%          the standard working view (default, unchanged)
+ *   -1   85%           labels truncated to 85%, geometry still roomy
+ *   -2   70%           padding and breathing rows collapse
+ *   -3   55%           tightest meaningful boxes; band bars gain done/total
+ *   -4   overview      MODE SWITCH: borderless status glyphs, pure topology
+ * The same layout/routing machinery runs at every step; only the per-node
+ * box spec (size, border, content) and the whitespace geometry change.
  */
 
 import type { MapNode, MellosMap, NodeStatus } from '../domain/types.js';
+
+/** One wheel tick on the zoom ladder; see module header. */
+export type ZoomStep = -4 | -3 | -2 | -1 | 0 | 1;
+
+export const ZOOM_MIN: ZoomStep = -4;
+export const ZOOM_MAX: ZoomStep = 1;
+export const ZOOM_DEFAULT: ZoomStep = 0;
+
+export function clampZoom(n: number): ZoomStep {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n))) as ZoomStep;
+}
+
+/** What the footer shows: a percentage while scaling, a mode name at the ends. */
+export function zoomLabel(zoom: ZoomStep): string {
+  switch (zoom) {
+    case 1:
+      return 'detail';
+    case 0:
+      return '100%';
+    case -1:
+      return '85%';
+    case -2:
+      return '70%';
+    case -3:
+      return '55%';
+    case -4:
+      return 'overview';
+  }
+}
 
 export interface RenderOptions {
   /** Emit ANSI color codes. */
@@ -44,6 +89,8 @@ export interface RenderOptions {
    * bright instead of faint. Color mode only — monochrome output ignores it.
    */
   readonly focus?: string | undefined;
+  /** Position on the zoom ladder; omitted means ZOOM_DEFAULT (100%). */
+  readonly zoom?: ZoomStep | undefined;
 }
 
 /** A window over the rendered picture, in cell coordinates (0-based). */
@@ -83,6 +130,45 @@ export function displayWidth(text: string): number {
   let w = 0;
   for (const ch of text) w += charWidth(ch.codePointAt(0)!);
   return w;
+}
+
+/** Truncate to a display width, ANSI-free input, appending … when cut. */
+export function fitWidth(s: string, width: number): string {
+  if (displayWidth(s) <= width) return s;
+  let out = '';
+  let w = 0;
+  for (const ch of s) {
+    const cw = displayWidth(ch);
+    if (w + cw > width - 1) break;
+    out += ch;
+    w += cw;
+  }
+  return out + '…';
+}
+
+/** Hard word-wrap by display width (CJK-aware, splits anywhere). */
+export function wrapWidth(s: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  let w = 0;
+  for (const ch of s.replace(/\r/g, '')) {
+    if (ch === '\n') {
+      lines.push(line);
+      line = '';
+      w = 0;
+      continue;
+    }
+    const cw = displayWidth(ch);
+    if (w + cw > width) {
+      lines.push(line);
+      line = '';
+      w = 0;
+    }
+    line += ch;
+    w += cw;
+  }
+  if (line !== '') lines.push(line);
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,12 +432,101 @@ const BOX_H = 3;
 const BOX_GAP = 2;
 const LEFT_MARGIN = 2;
 
+/** How one zoom step translates into whitespace geometry; see module header. */
+interface ZoomGeometry {
+  readonly mode: 'constellation' | 'boxes' | 'detail';
+  /** Label width multiplier while scaling down (boxes mode). */
+  readonly scale: number;
+  /** Inner padding around "glyph label" (1 = the roomy standard look). */
+  readonly pad: 0 | 1;
+  readonly boxGap: number;
+  /** Breathing rows around wire track rows in a band gap. */
+  readonly breathe: 0 | 1;
+  /** Blank row after the title. */
+  readonly titleGap: 0 | 1;
+  /** Blank row between a band bar and its boxes. */
+  readonly barGap: 0 | 1;
+  /** Band bars carry done/total counts once boxes are too small to speak. */
+  readonly bandCounts: boolean;
+}
+
+function zoomGeometry(zoom: ZoomStep): ZoomGeometry {
+  switch (zoom) {
+    case 1:
+      return { mode: 'detail', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+    case 0:
+      return { mode: 'boxes', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+    case -1:
+      return { mode: 'boxes', scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+    case -2:
+      return { mode: 'boxes', scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
+    case -3:
+      return { mode: 'boxes', scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+    case -4:
+      return { mode: 'constellation', scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+  }
+}
+
+/** In-box rows below the label row (detail mode only). */
+interface ExtraRow {
+  readonly text: string;
+  readonly style: Style;
+}
+
 interface BoxLayout {
   readonly node: MapNode;
   readonly x: number;
   readonly w: number;
+  readonly h: number;
+  /** Label truncated to the zoom's budget; '' in constellation mode. */
+  readonly label: string;
+  readonly pad: 0 | 1;
+  readonly borderless: boolean;
+  readonly extra: readonly ExtraRow[];
   /** filled in during vertical layout */
   y: number;
+}
+
+const DETAIL_INNER_MIN = 22;
+const DETAIL_INNER_MAX = 32;
+const DETAIL_NOTE_ROWS = 3;
+const LABEL_BUDGET_MIN = 4;
+
+/** Size and content of one node's box under the given zoom geometry. */
+function boxSpec(node: MapNode, geo: ZoomGeometry): Omit<BoxLayout, 'node' | 'x' | 'y'> {
+  if (geo.mode === 'constellation') {
+    return { w: 3, h: 1, label: '', pad: 0, borderless: true, extra: [] };
+  }
+  if (geo.mode === 'detail') {
+    const innerW = Math.min(Math.max(displayWidth(node.label) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+    const extra: ExtraRow[] = [];
+    if (node.evidence !== undefined) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: 'faint' });
+    if (node.detail !== undefined) {
+      const wrapped = wrapWidth(node.detail, innerW - 2);
+      for (let i = 0; i < Math.min(wrapped.length, DETAIL_NOTE_ROWS); i++) {
+        const cut = i === DETAIL_NOTE_ROWS - 1 && wrapped.length > DETAIL_NOTE_ROWS;
+        extra.push({ text: ` ${cut ? fitWidth(wrapped[i]! + '…', innerW - 2) : wrapped[i]!}`, style: 'none' });
+      }
+    }
+    return {
+      w: innerW + 2,
+      h: BOX_H + extra.length,
+      label: fitWidth(node.label, innerW - 4),
+      pad: 1,
+      borderless: false,
+      extra,
+    };
+  }
+  const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(node.label) * geo.scale));
+  const label = fitWidth(node.label, budget);
+  return {
+    w: displayWidth(label) + 4 + 2 * geo.pad,
+    h: BOX_H,
+    label,
+    pad: geo.pad,
+    borderless: false,
+    extra: [],
+  };
 }
 
 interface EdgeRoute {
@@ -406,6 +581,7 @@ export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: V
 
 function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
   const canvas = new Canvas();
+  const geo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
 
   if (bands.length === 0) {
@@ -424,20 +600,28 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
     const prev = row[row.length - 1];
     const box: BoxLayout = {
       node,
-      x: prev ? prev.x + prev.w + BOX_GAP : LEFT_MARGIN,
-      w: displayWidth(node.label) + 6, // borders + padding + glyph
+      ...boxSpec(node, geo),
+      x: prev ? prev.x + prev.w + geo.boxGap : LEFT_MARGIN,
       y: 0,
     };
     row.push(box);
     boxes.set(node.id as string, box);
   }
 
+  // Band bar labels; at small scales the boxes go mute, so the bars carry
+  // the aggregate progress (done/total) for their band instead.
+  const bandLabel = bands.map((l, i) => {
+    const row = bandBoxes[i]!;
+    const done = row.filter((b) => b.node.status === 'done').length;
+    return geo.bandCounts && row.length > 0 ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
+  });
+
   let contentWidth = LEFT_MARGIN;
   for (const row of bandBoxes) {
     const last = row[row.length - 1];
     if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
   }
-  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
+  for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
 
   // -- edge analysis (see module header for the routing preference order) --
   const routes: EdgeRoute[] = map.edges.map((e) => {
@@ -572,19 +756,20 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
 
   // -- vertical layout --
   let y = 0;
-  if (map.title !== undefined) y += 2; // title row + blank
+  if (map.title !== undefined) y += 1 + geo.titleGap;
   const barY: number[] = [];
   const gapTrackStartY: number[] = [];
   for (let b = 0; b < bands.length; b++) {
     barY.push(y);
-    y += 2; // bar + blank
-    for (const box of bandBoxes[b]!) box.y = y;
-    y += BOX_H;
+    y += 1 + geo.barGap;
+    const row = bandBoxes[b]!;
+    for (const box of row) box.y = y;
+    y += row.reduce((max, box) => Math.max(max, box.h), geo.mode === 'constellation' ? 1 : BOX_H);
     if (b < gapCount) {
-      y += 1; // breathing row below the boxes
+      y += geo.breathe; // breathing row below the boxes
       gapTrackStartY.push(y);
       y += gapRowCount[b]!;
-      y += 1; // breathing row above the next bar
+      y += geo.breathe; // breathing row above the next bar
     }
   }
   const legendY = y + 1;
@@ -594,7 +779,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
   if (map.title !== undefined) canvas.text(LEFT_MARGIN, 0, map.title, 'none', true);
 
   for (let b = 0; b < bands.length; b++) {
-    const label = ` ${bands[b]!.name}`;
+    const label = bandLabel[b]!;
     for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b]!, LEFT | RIGHT, true);
     // flush right; only a margin-fallback column pushes it back to the content edge
     const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
@@ -607,7 +792,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
 
   // -- draw: edges (wires touching the focused node render bright) --
   for (const r of routes) {
-    const sy = r.fromBox.y + BOX_H - 1; // bottom border row of the source box
+    const sy = r.fromBox.y + r.fromBox.h - 1; // bottom border row of the source box
     const ey = r.toBox.y; // top border row of the target box
     const bright =
       opts.focus !== undefined &&
@@ -678,7 +863,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
     x: b.x,
     y: b.y,
     w: b.w,
-    h: BOX_H,
+    h: b.h,
   }));
   return { canvas, hits };
 }
@@ -686,11 +871,26 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
 function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions, focused = false): void {
   const { node, x, y, w } = box;
   const skin = skinFor(node.status, opts.unicode);
-  const inner = w - 2;
 
+  if (box.borderless) {
+    // Constellation mode: the node IS its status glyph. Wires simply end
+    // beside it — a glyph is not a border, so no junction chars appear.
+    canvas.text(x + 1, y, glyphFor(node.status, opts), skin.style, true);
+    return;
+  }
+
+  const inner = w - 2;
+  const pad = box.pad === 1 ? ' ' : '';
   canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
   canvas.text(x, y + 1, skin.v, skin.style, focused);
-  canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
+  canvas.text(x + 1, y + 1, `${pad}${glyphFor(node.status, opts)} ${box.label}${pad}`, skin.style, true);
   canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
-  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+  for (let i = 0; i < box.extra.length; i++) {
+    const row = box.extra[i]!;
+    const yy = y + 2 + i;
+    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x + 1, yy, row.text, row.style);
+    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+  }
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
 }

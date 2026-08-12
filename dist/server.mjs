@@ -21198,6 +21198,12 @@ function describeMapError(e) {
 }
 
 // src/render/render.ts
+var ZOOM_MIN = -4;
+var ZOOM_MAX = 1;
+var ZOOM_DEFAULT = 0;
+function clampZoom(n) {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n)));
+}
 var WIDE_RANGES = [
   [4352, 4447],
   // Hangul Jamo
@@ -21226,6 +21232,41 @@ function displayWidth(text2) {
   let w = 0;
   for (const ch of text2) w += charWidth(ch.codePointAt(0));
   return w;
+}
+function fitWidth(s, width) {
+  if (displayWidth(s) <= width) return s;
+  let out = "";
+  let w = 0;
+  for (const ch of s) {
+    const cw = displayWidth(ch);
+    if (w + cw > width - 1) break;
+    out += ch;
+    w += cw;
+  }
+  return out + "\u2026";
+}
+function wrapWidth(s, width) {
+  const lines = [];
+  let line = "";
+  let w = 0;
+  for (const ch of s.replace(/\r/g, "")) {
+    if (ch === "\n") {
+      lines.push(line);
+      line = "";
+      w = 0;
+      continue;
+    }
+    const cw = displayWidth(ch);
+    if (w + cw > width) {
+      lines.push(line);
+      line = "";
+      w = 0;
+    }
+    line += ch;
+    w += cw;
+  }
+  if (line !== "") lines.push(line);
+  return lines;
 }
 var UP = 1;
 var DOWN = 2;
@@ -21411,12 +21452,68 @@ function glyphFor(status, opts) {
 var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
+function zoomGeometry(zoom) {
+  switch (zoom) {
+    case 1:
+      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+    case 0:
+      return { mode: "boxes", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+    case -1:
+      return { mode: "boxes", scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+    case -2:
+      return { mode: "boxes", scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
+    case -3:
+      return { mode: "boxes", scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+    case -4:
+      return { mode: "constellation", scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+  }
+}
+var DETAIL_INNER_MIN = 22;
+var DETAIL_INNER_MAX = 32;
+var DETAIL_NOTE_ROWS = 3;
+var LABEL_BUDGET_MIN = 4;
+function boxSpec(node, geo) {
+  if (geo.mode === "constellation") {
+    return { w: 3, h: 1, label: "", pad: 0, borderless: true, extra: [] };
+  }
+  if (geo.mode === "detail") {
+    const innerW = Math.min(Math.max(displayWidth(node.label) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+    const extra = [];
+    if (node.evidence !== void 0) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: "faint" });
+    if (node.detail !== void 0) {
+      const wrapped = wrapWidth(node.detail, innerW - 2);
+      for (let i = 0; i < Math.min(wrapped.length, DETAIL_NOTE_ROWS); i++) {
+        const cut = i === DETAIL_NOTE_ROWS - 1 && wrapped.length > DETAIL_NOTE_ROWS;
+        extra.push({ text: ` ${cut ? fitWidth(wrapped[i] + "\u2026", innerW - 2) : wrapped[i]}`, style: "none" });
+      }
+    }
+    return {
+      w: innerW + 2,
+      h: BOX_H + extra.length,
+      label: fitWidth(node.label, innerW - 4),
+      pad: 1,
+      borderless: false,
+      extra
+    };
+  }
+  const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(node.label) * geo.scale));
+  const label = fitWidth(node.label, budget);
+  return {
+    w: displayWidth(label) + 4 + 2 * geo.pad,
+    h: BOX_H,
+    label,
+    pad: geo.pad,
+    borderless: false,
+    extra: []
+  };
+}
 function renderMap(map, opts) {
   const built = buildCanvas(map, opts);
   return built.canvas.emit(opts);
 }
 function buildCanvas(map, opts) {
   const canvas = new Canvas();
+  const geo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
@@ -21432,20 +21529,24 @@ function buildCanvas(map, opts) {
     const prev = row[row.length - 1];
     const box = {
       node,
-      x: prev ? prev.x + prev.w + BOX_GAP : LEFT_MARGIN,
-      w: displayWidth(node.label) + 6,
-      // borders + padding + glyph
+      ...boxSpec(node, geo),
+      x: prev ? prev.x + prev.w + geo.boxGap : LEFT_MARGIN,
       y: 0
     };
     row.push(box);
     boxes.set(node.id, box);
   }
+  const bandLabel = bands.map((l, i) => {
+    const row = bandBoxes[i];
+    const done = row.filter((b) => b.node.status === "done").length;
+    return geo.bandCounts && row.length > 0 ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
+  });
   let contentWidth = LEFT_MARGIN;
   for (const row of bandBoxes) {
     const last = row[row.length - 1];
     if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
   }
-  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
+  for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
   const routes = map.edges.map((e) => {
     const fromBox = boxes.get(e.from);
     const toBox = boxes.get(e.to);
@@ -21565,26 +21666,27 @@ function buildCanvas(map, opts) {
     return rowEnds.length;
   });
   let y = 0;
-  if (map.title !== void 0) y += 2;
+  if (map.title !== void 0) y += 1 + geo.titleGap;
   const barY = [];
   const gapTrackStartY = [];
   for (let b = 0; b < bands.length; b++) {
     barY.push(y);
-    y += 2;
-    for (const box of bandBoxes[b]) box.y = y;
-    y += BOX_H;
+    y += 1 + geo.barGap;
+    const row = bandBoxes[b];
+    for (const box of row) box.y = y;
+    y += row.reduce((max, box) => Math.max(max, box.h), geo.mode === "constellation" ? 1 : BOX_H);
     if (b < gapCount) {
-      y += 1;
+      y += geo.breathe;
       gapTrackStartY.push(y);
       y += gapRowCount[b];
-      y += 1;
+      y += geo.breathe;
     }
   }
   const legendY = y + 1;
   const rowYOf = (gap, s) => gapTrackStartY[gap] + segmentRow.get(s);
   if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none", true);
   for (let b = 0; b < bands.length; b++) {
-    const label = ` ${bands[b].name}`;
+    const label = bandLabel[b];
     for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
     const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
     canvas.text(labelStart, barY[b], label, "none", true);
@@ -21593,7 +21695,7 @@ function buildCanvas(map, opts) {
     drawBox(canvas, box, opts, opts.focus !== void 0 && box.node.id === opts.focus);
   }
   for (const r of routes) {
-    const sy = r.fromBox.y + BOX_H - 1;
+    const sy = r.fromBox.y + r.fromBox.h - 1;
     const ey = r.toBox.y;
     const bright = opts.focus !== void 0 && (r.fromBox.node.id === opts.focus || r.toBox.node.id === opts.focus);
     const direct = straightX.get(r);
@@ -21656,19 +21758,31 @@ function buildCanvas(map, opts) {
     x: b.x,
     y: b.y,
     w: b.w,
-    h: BOX_H
+    h: b.h
   }));
   return { canvas, hits };
 }
 function drawBox(canvas, box, opts, focused = false) {
   const { node, x, y, w } = box;
   const skin = skinFor(node.status, opts.unicode);
+  if (box.borderless) {
+    canvas.text(x + 1, y, glyphFor(node.status, opts), skin.style, true);
+    return;
+  }
   const inner = w - 2;
+  const pad = box.pad === 1 ? " " : "";
   canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
   canvas.text(x, y + 1, skin.v, skin.style, focused);
-  canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
+  canvas.text(x + 1, y + 1, `${pad}${glyphFor(node.status, opts)} ${box.label}${pad}`, skin.style, true);
   canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
-  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+  for (let i = 0; i < box.extra.length; i++) {
+    const row = box.extra[i];
+    const yy = y + 2 + i;
+    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x + 1, yy, row.text, row.style);
+    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+  }
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
 }
 
 // src/store/store.ts
@@ -21968,7 +22082,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.5.1";
+var SERVER_VERSION = "0.6.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({
@@ -22059,12 +22173,15 @@ function buildServer(stateFile) {
     {
       title: "View the current map",
       description: "Render the current Mellos map as monochrome text \u2014 the same picture the split-pane watcher shows live. Use it to check the map state or to show it inline in conversation.",
-      inputSchema: {}
+      inputSchema: {
+        zoom: external_exports.number().int().min(ZOOM_MIN).max(ZOOM_MAX).optional().describe("zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs")
+      }
     },
-    () => {
+    (input) => {
       const current = loadOrEmpty(stateFile);
       if (!current.ok) return text(current.error, true);
-      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0 }).join("\n"));
+      const zoom = clampZoom(input.zoom ?? 0);
+      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n"));
     }
   );
   return server;

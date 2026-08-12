@@ -19,6 +19,13 @@ Follow the platform-appropriate route:
    replacing `<PROJECT_DIR>` with the absolute project directory. This splits
    the CURRENT Windows Terminal window vertically, map on the right.
 
+   Caveat: `wt -w 0` resolves "current" to the MOST RECENTLY USED Windows
+   Terminal window, because this shell is not attached to the user's window.
+   With several terminal windows open (e.g. two Claude sessions), the pane
+   can land in the wrong window. If the user reports that, tell them to
+   focus the intended window first and rerun /mmap, or give them the route-3
+   command to run in the terminal where they want the map.
+
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json"`.
 

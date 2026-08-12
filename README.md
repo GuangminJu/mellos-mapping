@@ -115,11 +115,26 @@ htop and tmux speak):
 | hover a node | spotlight its wires; preview its details below the map |
 | click a node | pin it — details stay resident after the mouse leaves |
 | click empty space / `Esc` | unpin |
+| wheel / `+` `-` | zoom, anchored on the focused node (see the ladder below) |
 | left-drag | grab and pan when the map outgrows the pane |
-| wheel / shift+wheel | pan vertically / horizontally |
+| shift+wheel | scroll vertically |
 | `hjkl` / arrows | nudge the view |
-| `0` | jump back to origin |
+| `0` | reset pan and zoom |
 | `q` | quit the pane |
+
+Zooming scales the picture first and switches display mode only at the ends
+of the ladder, so every level still shows meaningful data:
+
+```
+detail ← 100% ← 85% ← 70% ← 55% ← overview
+```
+
+- **zoom in past 100%** — evidence and design notes unfold inside the boxes;
+- **85–55%** — whitespace tightens and labels truncate proportionally, boxes
+  stay boxes;
+- **below 55%** — labels would stop meaning anything, so the picture switches
+  to a borderless glyph constellation: pure topology, and each band bar
+  carries its `done/total` count instead. The footer always names the level.
 
 The two detail rows live at a fixed spot between map and hint line, showing
 the focused node's status, layer, evidence and both wire directions

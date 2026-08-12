@@ -46,11 +46,17 @@ describe('SGR mouse', () => {
     expect(parseInput('\x1b')).toEqual({ events: [{ kind: 'clear' }], rest: '' });
   });
 
-  it('maps the wheel to vertical pans and shift+wheel to horizontal', () => {
-    expect(parseInput('\x1b[<64;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: -3 }]);
-    expect(parseInput('\x1b[<65;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: 3 }]);
-    expect(parseInput('\x1b[<68;5;5M').events).toEqual([{ kind: 'pan', dx: -6, dy: 0 }]);
-    expect(parseInput('\x1b[<69;5;5M').events).toEqual([{ kind: 'pan', dx: 6, dy: 0 }]);
+  it('maps the wheel to zoom steps (up = closer) and shift+wheel to scrolling', () => {
+    expect(parseInput('\x1b[<64;5;5M').events).toEqual([{ kind: 'zoom', delta: 1 }]);
+    expect(parseInput('\x1b[<65;5;5M').events).toEqual([{ kind: 'zoom', delta: -1 }]);
+    expect(parseInput('\x1b[<68;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: -3 }]);
+    expect(parseInput('\x1b[<69;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: 3 }]);
+  });
+
+  it('maps + / = / - keys to zoom steps', () => {
+    expect(parseInput('+').events).toEqual([{ kind: 'zoom', delta: 1 }]);
+    expect(parseInput('=').events).toEqual([{ kind: 'zoom', delta: 1 }]);
+    expect(parseInput('-').events).toEqual([{ kind: 'zoom', delta: -1 }]);
   });
 
   it('ignores non-left buttons', () => {

@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
 import { EMPTY_MAP, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
-import { displayWidth, renderMap, renderMapWindow } from './render.js';
+import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -33,6 +33,7 @@ function sampleMap(): MellosMap {
   map = must(declareNode(map, { id: nid('watch'), label: 'Watcher', layer: lid('contracts'), status: 'planned' }));
   map = must(declareNode(map, { id: nid('server'), label: 'MCP Server', layer: lid('orchestration'), status: 'planned' }));
   map = must(updateNode(map, { id: nid('domain'), evidence: 'vitest 23 passed' }));
+  map = must(updateNode(map, { id: nid('domain'), detail: '结构不变量的唯一持有者：层全序、边严格向下，无环是推论。' }));
   map = must(linkNodes(map, nid('store'), nid('domain')));
   map = must(linkNodes(map, nid('watch'), nid('render')));
   map = must(linkNodes(map, nid('server'), nid('store')));
@@ -195,6 +196,67 @@ describe('renderMap', () => {
     expect(focused).not.toBe(plain); // wires touching domain brightened
     // monochrome output is unaffected by focus
     expect(renderMap(sampleMap(), { ...MONO, focus: 'domain' }).join('\n')).toBe(renderMap(sampleMap(), MONO).join('\n'));
+  });
+
+  it('zoom 0 IS the default view — the ladder does not disturb the standard picture', () => {
+    expect(renderMap(sampleMap(), { ...MONO, zoom: 0 }).join('\n')).toBe(renderMap(sampleMap(), MONO).join('\n'));
+  });
+
+  it('scales the picture down step by step, boxes staying boxes (no early mode switch)', () => {
+    const barWidth = (zoom: ZoomStep): number =>
+      Math.max(...renderMap(sampleMap(), { ...MONO, zoom }).filter((l) => l.includes('━')).map(displayWidth));
+    expect(barWidth(-1)).toBeLessThan(barWidth(0));
+    expect(barWidth(-2)).toBeLessThan(barWidth(-1));
+    expect(barWidth(-3)).toBeLessThan(barWidth(-2));
+    const height = (zoom: ZoomStep): number => renderMap(sampleMap(), { ...MONO, zoom }).length;
+    expect(height(-2)).toBeLessThan(height(0));
+    for (const zoom of [-1, -2, -3] as const) {
+      const text = renderMap(sampleMap(), { ...MONO, zoom }).join('\n');
+      expect(text).toContain('┏'); // done boxes still have borders
+      expect(text).toContain('…'); // labels truncated, not dropped
+    }
+  });
+
+  it('switches to the glyph constellation only at the far end of the ladder', () => {
+    const lines = renderMap(sampleMap(), { ...MONO, zoom: -4 });
+    const text = lines.join('\n');
+    for (const border of ['┏', '┓', '┃', '╭', '╮', '╎']) expect(text).not.toContain(border);
+    expect(text).not.toContain('状态存储'); // labels are gone entirely...
+    expect(text).toContain('■'); // ...the status glyphs are the nodes
+    expect(text).toContain('·');
+    expect(text).toContain('⠋');
+    // band bars take over the progress numbers the boxes can no longer show
+    expect(text).toContain('原语层 1/2');
+    expect(text).toContain('编排层 0/1');
+    expect(text).toMatchSnapshot();
+  });
+
+  it('unfolds evidence and design notes inside the boxes at detail zoom', () => {
+    const text = renderMap(sampleMap(), { ...MONO, zoom: 1 }).join('\n');
+    expect(text).toContain('vitest 23 passed');
+    // the notes wrap inside the box, so assert per-row fragments
+    expect(text).toContain('结构不变量');
+    expect(text).toContain('无环是推论');
+    expect(text).toMatchSnapshot();
+  });
+
+  it('reports hit regions matching each zoom mode geometry', () => {
+    const at = (zoom: ZoomStep): readonly { id: string; h: number }[] =>
+      renderMapWindow(sampleMap(), { ...MONO, zoom }, { x: 0, y: 0, width: 0, height: 0 }).hits;
+    for (const h of at(-4)) expect(h.h).toBe(1); // constellation glyphs
+    const detail = at(1);
+    expect(detail.find((h) => h.id === 'domain')!.h).toBeGreaterThan(3); // evidence + notes unfolded
+    expect(detail.find((h) => h.id === 'watch')!.h).toBe(3); // nothing to unfold
+  });
+
+  it('clamps zoom steps and names every rung of the ladder', () => {
+    expect(clampZoom(5)).toBe(1);
+    expect(clampZoom(-9)).toBe(-4);
+    expect(clampZoom(0.4)).toBe(0);
+    for (const zoom of [-4, -3, -2, -1, 0, 1] as const) expect(zoomLabel(zoom)).not.toBe('');
+    expect(zoomLabel(0)).toBe('100%');
+    expect(zoomLabel(-4)).toBe('overview');
+    expect(zoomLabel(1)).toBe('detail');
   });
 
   it('threads skip-level edges between boxes instead of detouring to the margin', () => {

@@ -25,12 +25,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { EMPTY_MAP, type MellosMap, type Result } from '../domain/types.js';
-import { renderMap } from '../render/render.js';
+import { ZOOM_MAX, ZOOM_MIN, clampZoom, renderMap } from '../render/render.js';
 import { STATE_FILE_RELATIVE_PATH, describeStoreError, loadMapFile, saveMapFile } from '../store/store.js';
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.5.1';
+export const SERVER_VERSION = '0.6.0';
 
 const ID = z
   .string()
@@ -175,12 +175,21 @@ export function buildServer(stateFile: string): McpServer {
       description:
         'Render the current Mellos map as monochrome text — the same picture the split-pane ' +
         'watcher shows live. Use it to check the map state or to show it inline in conversation.',
-      inputSchema: {},
+      inputSchema: {
+        zoom: z
+          .number()
+          .int()
+          .min(ZOOM_MIN)
+          .max(ZOOM_MAX)
+          .optional()
+          .describe('zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs'),
+      },
     },
-    () => {
+    (input) => {
       const current = loadOrEmpty(stateFile);
       if (!current.ok) return text(current.error, true);
-      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0 }).join('\n'));
+      const zoom = clampZoom(input.zoom ?? 0);
+      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n'));
     },
   );
 
