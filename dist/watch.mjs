@@ -1172,6 +1172,8 @@ function main() {
   let spinnerFrame = 0;
   let map;
   let notice = `waiting for ${cfg.file} ...`;
+  let lastCols = process.stdout.columns ?? 0;
+  let lastRows = process.stdout.rows ?? 0;
   let offsetX = 0;
   let offsetY = 0;
   let zoom = ZOOM_DEFAULT;
@@ -1225,9 +1227,11 @@ function main() {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      body = [notice];
+      body = [fitWidth(notice, Math.max(1, cols - 1))];
     }
-    if (notice !== "" && map !== void 0) body[body.length - 1] = `  ${notice}`;
+    if (notice !== "" && map !== void 0) {
+      body[body.length - 1] = fitWidth(`  ${notice}`, Math.max(1, cols - 1));
+    }
     const panelWidth = Math.max(10, cols - 2);
     let panel;
     if (map === void 0) {
@@ -1246,7 +1250,8 @@ function main() {
     ];
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
     const hint = !interactive ? cfg.file : `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
-    const footer = cfg.color ? `\x1B[90m ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
+    const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
+    const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
     let frame = HOME;
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";
     for (const row of panelRows) frame += row + ERASE_LINE_END + "\n";
@@ -1256,7 +1261,17 @@ function main() {
       lastFrame = frame;
     }
   };
+  const handleResize = () => {
+    lastCols = process.stdout.columns ?? lastCols;
+    lastRows = process.stdout.rows ?? lastRows;
+    lastFrame = "";
+    process.stdout.write(CLEAR_ALL);
+    paint();
+  };
   const tick = () => {
+    if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
+      handleResize();
+    }
     let mtimeMs;
     try {
       mtimeMs = statSync(cfg.file).mtimeMs;
@@ -1366,7 +1381,7 @@ function main() {
       }
       if (dirty) paint();
     });
-    process.stdout.on("resize", paint);
+    process.stdout.on("resize", handleResize);
   }
   tick();
   setInterval(tick, cfg.intervalMs);
