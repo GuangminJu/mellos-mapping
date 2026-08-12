@@ -30,7 +30,7 @@ import { STATE_FILE_RELATIVE_PATH, describeStoreError, loadMapFile, saveMapFile 
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.5.0';
+export const SERVER_VERSION = '0.5.1';
 
 const ID = z
   .string()

@@ -1,5 +1,7 @@
 # Mellos Mapping · 梅勒斯地图
 
+English | [简体中文](README.zh-CN.md)
+
 A live, terminal-native map of bottom-up development for
 [Claude Code](https://claude.com/claude-code).
 
@@ -68,13 +70,31 @@ picture makes the discipline visible:
 
 ## Install
 
+Two lines inside any Claude Code conversation:
+
 ```
 /plugin marketplace add GuangminJu/mellos-mapping
 /plugin install mellos-mapping@mellos-mapping
 ```
 
+Or one line in a terminal:
+
+```
+claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install mellos-mapping@mellos-mapping
+```
+
 Requires Node.js 18+ on PATH (Claude Code itself requires Node, so you
 already have it). No build step: the MCP server and watcher ship pre-bundled.
+
+## Update
+
+```
+claude plugin update mellos-mapping@mellos-mapping
+```
+
+Restart Claude Code to apply. Updates ship as version bumps in this repo's
+`master` branch — if the command says you are already at the latest version,
+you are. (In-app, `/plugin` opens the same management UI.)
 
 ## Use
 
