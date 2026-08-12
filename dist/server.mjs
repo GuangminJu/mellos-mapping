@@ -21902,7 +21902,8 @@ function buildServer(stateFile) {
   return server;
 }
 function resolveStateFile(env, cwd) {
-  return join2(env["MELLOS_MAPPING_CWD"] ?? cwd, STATE_FILE_RELATIVE_PATH);
+  const projectDir = env["MELLOS_MAPPING_CWD"] ?? env["CLAUDE_PROJECT_DIR"] ?? cwd;
+  return join2(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 async function main() {
   const server = buildServer(resolveStateFile(process.env, process.cwd()));

@@ -1,5 +1,6 @@
 {
   "name": "mellos-mapping",
+  "displayName": "Mellos Mapping · 梅勒斯地图",
   "version": "0.1.0",
   "description": "梅勒斯地图 — a live layered dependency map for bottom-up development: ghost the design first, then light nodes up from the bottom as they are built and verified",
   "author": {

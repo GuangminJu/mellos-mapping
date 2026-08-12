@@ -1,5 +1,6 @@
 ---
 description: Open the live Mellos map in a terminal split pane beside this session
+argument-hint: "[--ascii]"
 allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 ---
 

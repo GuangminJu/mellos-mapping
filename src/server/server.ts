@@ -11,10 +11,10 @@
  * is the single source of truth, so several sessions against one project
  * stay consistent per call.
  *
- * The state file lives in the project the CLIENT is working in. The client's
- * cwd is taken from the MELLOS_MAPPING_CWD env var when set (plugin config
- * sets it to ${CLAUDE_PROJECT_DIR}); otherwise this process's cwd, which is
- * where Claude Code launches stdio MCP servers by default.
+ * The state file lives in the project the CLIENT is working in, resolved in
+ * this order: MELLOS_MAPPING_CWD (explicit override for manual runs),
+ * CLAUDE_PROJECT_DIR (set by Claude Code for plugin MCP servers — the
+ * documented contract), then this process's cwd as the last resort.
  */
 
 import { join } from 'node:path';
@@ -177,9 +177,10 @@ export function buildServer(stateFile: string): McpServer {
   return server;
 }
 
-/** Resolve where the map file lives; see module header for the cwd contract. */
+/** Resolve where the map file lives; see module header for the precedence contract. */
 export function resolveStateFile(env: NodeJS.ProcessEnv, cwd: string): string {
-  return join(env['MELLOS_MAPPING_CWD'] ?? cwd, STATE_FILE_RELATIVE_PATH);
+  const projectDir = env['MELLOS_MAPPING_CWD'] ?? env['CLAUDE_PROJECT_DIR'] ?? cwd;
+  return join(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 
 async function main(): Promise<void> {

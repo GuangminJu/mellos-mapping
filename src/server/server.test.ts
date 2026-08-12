@@ -123,8 +123,11 @@ describe('mellos-mapping MCP server', () => {
 });
 
 describe('resolveStateFile', () => {
-  it('prefers MELLOS_MAPPING_CWD over the process cwd', () => {
-    expect(resolveStateFile({ MELLOS_MAPPING_CWD: 'D:\\proj' }, 'C:\\elsewhere')).toBe(
+  it('resolves MELLOS_MAPPING_CWD, then CLAUDE_PROJECT_DIR, then the process cwd', () => {
+    expect(
+      resolveStateFile({ MELLOS_MAPPING_CWD: 'D:\\override', CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere'),
+    ).toBe(join('D:\\override', '.claude', 'mellos-mapping.json'));
+    expect(resolveStateFile({ CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere')).toBe(
       join('D:\\proj', '.claude', 'mellos-mapping.json'),
     );
     expect(resolveStateFile({}, 'C:\\elsewhere')).toBe(join('C:\\elsewhere', '.claude', 'mellos-mapping.json'));
