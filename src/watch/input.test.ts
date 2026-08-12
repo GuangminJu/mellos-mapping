@@ -35,7 +35,15 @@ describe('SGR mouse', () => {
   it('parses press, drag and release of the left button', () => {
     expect(parseInput('\x1b[<0;15;7M').events).toEqual([{ kind: 'mouse-down', x: 15, y: 7 }]);
     expect(parseInput('\x1b[<32;18;9M').events).toEqual([{ kind: 'mouse-drag', x: 18, y: 9 }]);
-    expect(parseInput('\x1b[<0;18;9m').events).toEqual([{ kind: 'mouse-up' }]);
+    expect(parseInput('\x1b[<0;18;9m').events).toEqual([{ kind: 'mouse-up', x: 18, y: 9 }]);
+  });
+
+  it('parses buttonless motion (any-event tracking) as hover moves', () => {
+    expect(parseInput('\x1b[<35;22;4M').events).toEqual([{ kind: 'mouse-move', x: 22, y: 4 }]);
+  });
+
+  it('maps a lone Esc byte to clear', () => {
+    expect(parseInput('\x1b')).toEqual({ events: [{ kind: 'clear' }], rest: '' });
   });
 
   it('maps the wheel to vertical pans and shift+wheel to horizontal', () => {
@@ -67,8 +75,8 @@ describe('split escape sequences', () => {
     expect(second.rest).toBe('');
   });
 
-  it('holds a bare ESC and a bare CSI head', () => {
-    expect(parseInput('\x1b').rest).toBe('\x1b');
+  it('holds a bare CSI head (but a lone ESC is the Esc key, handled above)', () => {
     expect(parseInput('\x1b[').rest).toBe('\x1b[');
+    expect(parseInput('j\x1b').rest).toBe('\x1b'); // trailing ESC mid-stream still buffers
   });
 });

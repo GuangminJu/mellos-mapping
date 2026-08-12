@@ -179,6 +179,24 @@ describe('renderMap', () => {
     expect([...foundationTop].filter((ch) => ch === '┷')).toHaveLength(2); // both landed, different columns
   });
 
+  it('reports node hit regions matching the picture', () => {
+    const { hits, lines } = renderMapWindow(sampleMap(), MONO, { x: 0, y: 0, width: 200, height: 100 });
+    expect(hits).toHaveLength(sampleMap().nodes.length);
+    const store = hits.find((h) => h.id === 'store')!;
+    // the label really sits inside the reported rectangle
+    const labelRow = lines[store.y + 1]!;
+    expect(labelRow).toContain('状态存储');
+    expect(store.h).toBe(3);
+  });
+
+  it('spotlights the focused node and its wires in color mode', () => {
+    const plain = renderMap(sampleMap(), { ...MONO, color: true }).join('\n');
+    const focused = renderMap(sampleMap(), { ...MONO, color: true, focus: 'domain' }).join('\n');
+    expect(focused).not.toBe(plain); // wires touching domain brightened
+    // monochrome output is unaffected by focus
+    expect(renderMap(sampleMap(), { ...MONO, focus: 'domain' }).join('\n')).toBe(renderMap(sampleMap(), MONO).join('\n'));
+  });
+
   it('threads skip-level edges between boxes instead of detouring to the margin', () => {
     const lines = renderMap(sampleMap(), MONO);
     // no margin corridor needed: no wiring or box renders wider than the band

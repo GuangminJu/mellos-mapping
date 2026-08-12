@@ -69,7 +69,7 @@ picture makes the discipline visible:
 ## Install
 
 ```
-/plugin marketplace add mellos/mellos-mapping
+/plugin marketplace add GuangminJu/mellos-mapping
 /plugin install mellos-mapping@mellos-mapping
 ```
 
@@ -86,16 +86,23 @@ already have it). No build step: the MCP server and watcher ship pre-bundled.
 3. Watch nodes light up from the bottom. Interrupt when the picture worries
    you — that is what it is for.
 
-When the map outgrows the pane, pan it (xterm SGR mouse tracking — the same
-protocol htop and tmux speak):
+The pane is mouse-aware (xterm SGR any-event tracking — the same protocol
+htop and tmux speak):
 
 | Input | Action |
 | --- | --- |
-| left-drag | grab and pan the map |
+| hover a node | spotlight its wires; preview its details below the map |
+| click a node | pin it — details stay resident after the mouse leaves |
+| click empty space / `Esc` | unpin |
+| left-drag | grab and pan when the map outgrows the pane |
 | wheel / shift+wheel | pan vertically / horizontally |
 | `hjkl` / arrows | nudge the view |
 | `0` | jump back to origin |
 | `q` | quit the pane |
+
+The two detail rows live at a fixed spot between map and hint line, showing
+the focused node's status, layer, evidence and both wire directions
+(`uses → … · used by ← …`) — nothing ever floats over the map.
 
 `--no-mouse` disables mouse reporting if your terminal multiplexer wants the
 mouse for itself.

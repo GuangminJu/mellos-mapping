@@ -90,7 +90,7 @@ var Canvas = class {
   cell(x, y) {
     while (this.rows.length <= y) this.rows.push([]);
     const row = this.rows[y];
-    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: "none", bold: false });
+    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, bright: false, style: "none", bold: false });
     return row[x];
   }
   get height() {
@@ -118,7 +118,7 @@ var Canvas = class {
     return cx;
   }
   /** Merge a routed-line direction mask into (x, y). */
-  line(x, y, mask, heavyHorizontal = false) {
+  line(x, y, mask, heavyHorizontal = false, bright = false) {
     const c = this.cell(x, y);
     if (c.literal !== void 0) {
       const junction = BORDER_JUNCTION[c.literal];
@@ -128,6 +128,7 @@ var Canvas = class {
     }
     c.mask |= mask;
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
+    c.bright = c.bright || bright;
   }
   /**
    * Emit terminal lines, optionally windowed to a viewport. Slicing happens
@@ -154,7 +155,7 @@ var Canvas = class {
         } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
           ch = " ";
         }
-        const params = ch === " " ? "" : isWire ? SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
+        const params = ch === " " ? "" : isWire ? c.bright ? "1" : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
         if (opts.color && params !== open) {
           line += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
           open = params;
@@ -167,21 +168,21 @@ var Canvas = class {
     return out;
   }
 };
-function drawPath(canvas, points) {
+function drawPath(canvas, points, bright = false) {
   for (let i = 0; i + 1 < points.length; i++) {
     const [x1, y1] = points[i];
     const [x2, y2] = points[i + 1];
     if (x1 === x2 && y1 === y2) continue;
     if (x1 === x2) {
       const [lo, hi] = y1 < y2 ? [y1, y2] : [y2, y1];
-      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN);
-      canvas.line(x1, y1, y2 > y1 ? DOWN : UP);
-      canvas.line(x1, y2, y2 > y1 ? UP : DOWN);
+      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN, false, bright);
+      canvas.line(x1, y1, y2 > y1 ? DOWN : UP, false, bright);
+      canvas.line(x1, y2, y2 > y1 ? UP : DOWN, false, bright);
     } else {
       const [lo, hi] = x1 < x2 ? [x1, x2] : [x2, x1];
-      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT);
-      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT);
-      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT);
+      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT, false, bright);
+      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT, false, bright);
+      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT, false, bright);
     }
   }
 }
@@ -219,8 +220,13 @@ var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
 function renderMapWindow(map, opts, viewport) {
-  const canvas = buildCanvas(map, opts);
-  return { lines: canvas.emit(opts, viewport), contentWidth: canvas.width, contentHeight: canvas.height };
+  const built = buildCanvas(map, opts);
+  return {
+    lines: built.canvas.emit(opts, viewport),
+    contentWidth: built.canvas.width,
+    contentHeight: built.canvas.height,
+    hits: built.hits
+  };
 }
 function buildCanvas(map, opts) {
   const canvas = new Canvas();
@@ -228,7 +234,7 @@ function buildCanvas(map, opts) {
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
     canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return canvas;
+    return { canvas, hits: [] };
   }
   const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
   const boxes = /* @__PURE__ */ new Map();
@@ -396,39 +402,54 @@ function buildCanvas(map, opts) {
     const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
     canvas.text(labelStart, barY[b], label, "none", true);
   }
-  for (const box of boxes.values()) drawBox(canvas, box, opts);
+  for (const box of boxes.values()) {
+    drawBox(canvas, box, opts, opts.focus !== void 0 && box.node.id === opts.focus);
+  }
   for (const r of routes) {
     const sy = r.fromBox.y + BOX_H - 1;
     const ey = r.toBox.y;
+    const bright = opts.focus !== void 0 && (r.fromBox.node.id === opts.focus || r.toBox.node.id === opts.focus);
     const direct = straightX.get(r);
     if (direct !== void 0) {
-      drawPath(canvas, [
-        [direct, sy],
-        [direct, ey]
-      ]);
+      drawPath(
+        canvas,
+        [
+          [direct, sy],
+          [direct, ey]
+        ],
+        bright
+      );
       continue;
     }
     const { sx, ex } = attach.get(r);
     const segments = segmentOf.get(r);
     const landingY = rowYOf(r.toBand - 1, segments.landing);
     if (r.toBand - r.fromBand === 1) {
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, landingY],
-        [ex, landingY],
-        [ex, ey]
-      ]);
+      drawPath(
+        canvas,
+        [
+          [sx, sy],
+          [sx, landingY],
+          [ex, landingY],
+          [ex, ey]
+        ],
+        bright
+      );
     } else {
       const c = descentX.get(r);
       const exitY = rowYOf(r.fromBand, segments.exit);
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, exitY],
-        [c, exitY],
-        [c, landingY],
-        [ex, landingY],
-        [ex, ey]
-      ]);
+      drawPath(
+        canvas,
+        [
+          [sx, sy],
+          [sx, exitY],
+          [c, exitY],
+          [c, landingY],
+          [ex, landingY],
+          [ex, ey]
+        ],
+        bright
+      );
     }
   }
   const legendOpts = { ...opts, spinnerFrame: 0 };
@@ -443,17 +464,24 @@ function buildCanvas(map, opts) {
     if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
     lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
   }
-  return canvas;
+  const hits = [...boxes.values()].map((b) => ({
+    id: b.node.id,
+    x: b.x,
+    y: b.y,
+    w: b.w,
+    h: BOX_H
+  }));
+  return { canvas, hits };
 }
-function drawBox(canvas, box, opts) {
+function drawBox(canvas, box, opts, focused = false) {
   const { node, x, y, w } = box;
   const skin = skinFor(node.status, opts.unicode);
   const inner = w - 2;
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
-  canvas.text(x, y + 1, skin.v, skin.style);
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
+  canvas.text(x, y + 1, skin.v, skin.style, focused);
   canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style);
-  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
+  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
 }
 
 // src/store/store.ts
@@ -683,11 +711,17 @@ function mouseEvent(code, x, y, final) {
     const direction = code & 1 ? 1 : -1;
     return code & SHIFT ? { kind: "pan", dx: direction * WHEEL_H_STEP, dy: 0 } : { kind: "pan", dx: 0, dy: direction * WHEEL_V_STEP };
   }
-  if (final === "m") return { kind: "mouse-up" };
-  if ((code & BUTTON_BITS) !== 0) return void 0;
-  return code & MOTION ? { kind: "mouse-drag", x, y } : { kind: "mouse-down", x, y };
+  const buttons = code & BUTTON_BITS;
+  if (final === "m") return buttons === 0 ? { kind: "mouse-up", x, y } : void 0;
+  if (code & MOTION) {
+    if (buttons === 3) return { kind: "mouse-move", x, y };
+    if (buttons === 0) return { kind: "mouse-drag", x, y };
+    return void 0;
+  }
+  return buttons === 0 ? { kind: "mouse-down", x, y } : void 0;
 }
 function parseInput(chunk) {
+  if (chunk === "\x1B") return { events: [{ kind: "clear" }], rest: "" };
   const events = [];
   let i = 0;
   while (i < chunk.length) {
@@ -754,10 +788,49 @@ var SHOW_CURSOR = "\x1B[?25h";
 var CLEAR_ALL = "\x1B[H\x1B[2J";
 var HOME = "\x1B[H";
 var ERASE_LINE_END = "\x1B[K";
-var MOUSE_ON = "\x1B[?1002h\x1B[?1006h";
-var MOUSE_OFF = "\x1B[?1002l\x1B[?1006l";
-var DIM = "\x1B[2m";
+var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
+var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
 var RESET = "\x1B[0m";
+var DETAIL_ROWS = 2;
+var STATUS_GLYPH = {
+  planned: ["\xB7", "."],
+  "in-progress": ["\u283F", "*"],
+  done: ["\u25A0", "#"],
+  regressed: ["\u2717", "X"]
+};
+var STATUS_SGR = {
+  planned: "2",
+  "in-progress": "33",
+  done: "32",
+  regressed: "31"
+};
+function fitWidth(s, width) {
+  if (displayWidth(s) <= width) return s;
+  let out = "";
+  let w = 0;
+  for (const ch of s) {
+    const cw = displayWidth(ch);
+    if (w + cw > width - 1) break;
+    out += ch;
+    w += cw;
+  }
+  return out + "\u2026";
+}
+function nodeDetails(map, focusId, unicode) {
+  const node = map.nodes.find((n) => n.id === focusId);
+  if (!node) return void 0;
+  const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? node.layer;
+  const glyph = STATUS_GLYPH[node.status][unicode ? 0 : 1];
+  const evidence = node.evidence !== void 0 ? ` \u2014 ${node.evidence}` : "";
+  const labelOf = (id) => map.nodes.find((n) => n.id === id)?.label ?? id;
+  const uses = map.edges.filter((e) => e.from === node.id).map((e) => labelOf(e.to));
+  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => labelOf(e.from));
+  const arrow = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
+  return [
+    `${glyph} ${node.label} [${node.id}] \xB7 ${layerName} \xB7 ${node.status}${evidence}`,
+    `uses ${arrow[0]} ${uses.join(", ") || "\u2014"}   used by ${arrow[1]} ${usedBy.join(", ") || "\u2014"}`
+  ];
+}
 function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
@@ -770,7 +843,20 @@ function main() {
   let offsetX = 0;
   let offsetY = 0;
   let dragAnchor;
+  let press;
+  let hoverId;
+  let selectedId;
+  let lastHits = [];
   let pendingInput = "";
+  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - DETAIL_ROWS - 1);
+  const hitTest = (termX, termY) => {
+    const sx = termX - 1;
+    const sy = termY - 1;
+    if (sy >= viewHeight()) return void 0;
+    const cx = sx + offsetX;
+    const cy = sy + offsetY;
+    return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
+  };
   process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ""));
   const restore = () => {
     process.stdout.write((mouseActive ? MOUSE_OFF : "") + SHOW_CURSOR + "\n");
@@ -780,15 +866,15 @@ function main() {
   process.on("SIGTERM", restore);
   const paint = () => {
     const cols = process.stdout.columns ?? 100;
-    const rows = process.stdout.rows ?? 30;
-    const viewH = Math.max(1, rows - 1);
+    const viewH = viewHeight();
+    const focus = hoverId ?? selectedId;
     let body;
     let panned = "";
     let pannable = false;
     if (map !== void 0) {
       const windowed = renderMapWindow(
         map,
-        { color: cfg.color, unicode: cfg.unicode, spinnerFrame },
+        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus },
         { x: offsetX, y: offsetY, width: cols, height: viewH }
       );
       const maxX = Math.max(0, windowed.contentWidth - cols);
@@ -801,16 +887,32 @@ function main() {
       }
       pannable = maxX > 0 || maxY > 0;
       body = windowed.lines;
+      lastHits = windowed.hits;
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
       body = [notice];
     }
     if (notice !== "" && map !== void 0) body[body.length - 1] = `  ${notice}`;
-    const hint = !interactive ? cfg.file : pannable ? "drag/wheel pan \xB7 hjkl/arrows \xB7 0 reset \xB7 q quit" : "map fits pane \xB7 q quit";
-    const footer = cfg.color ? `${DIM} ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
+    let detail1 = "";
+    let detail2 = "";
+    if (map !== void 0 && focus !== void 0) {
+      const details = nodeDetails(map, focus, cfg.unicode);
+      if (details) {
+        const pin = selectedId === focus && hoverId === void 0 ? cfg.unicode ? " \u2299" : " *" : "";
+        const status = map.nodes.find((n) => n.id === focus).status;
+        const line1 = fitWidth(details[0] + pin, cols - 2);
+        const line2 = fitWidth(details[1], cols - 2);
+        detail1 = cfg.color ? ` \x1B[${STATUS_SGR[status]};1m${line1}${RESET}` : ` ${line1}`;
+        detail2 = cfg.color ? ` \x1B[90m${line2}${RESET}` : ` ${line2}`;
+      }
+    } else if (interactive) {
+      detail1 = cfg.color ? " \x1B[90mhover a node to inspect \xB7 click to pin\x1B[0m" : "";
+    }
+    const hint = !interactive ? cfg.file : (pannable ? "drag/wheel pan \xB7 " : "map fits pane \xB7 ") + "hjkl/arrows \xB7 0 reset \xB7 Esc unpin \xB7 q quit";
+    const footer = cfg.color ? `\x1B[90m ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
     let frame = HOME;
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";
-    frame += footer + ERASE_LINE_END;
+    frame += detail1 + ERASE_LINE_END + "\n" + detail2 + ERASE_LINE_END + "\n" + footer + ERASE_LINE_END;
     if (frame !== lastFrame) {
       process.stdout.write(frame);
       lastFrame = frame;
@@ -845,6 +947,7 @@ function main() {
     process.stdin.on("data", (chunk) => {
       const parsed = parseInput(pendingInput + chunk);
       pendingInput = parsed.rest;
+      let dirty = false;
       for (const event of parsed.events) {
         switch (event.kind) {
           case "quit":
@@ -853,26 +956,52 @@ function main() {
           case "reset":
             offsetX = 0;
             offsetY = 0;
+            dirty = true;
+            break;
+          case "clear":
+            selectedId = void 0;
+            dirty = true;
             break;
           case "pan":
             offsetX += event.dx;
             offsetY += event.dy;
+            dirty = true;
             break;
+          case "mouse-move": {
+            const over = hitTest(event.x, event.y);
+            if (over !== hoverId) {
+              hoverId = over;
+              dirty = true;
+            }
+            break;
+          }
           case "mouse-down":
             dragAnchor = { x: event.x, y: event.y, ox: offsetX, oy: offsetY };
+            press = { moved: false };
             break;
           case "mouse-drag":
             if (dragAnchor) {
-              offsetX = dragAnchor.ox - (event.x - dragAnchor.x);
-              offsetY = dragAnchor.oy - (event.y - dragAnchor.y);
+              const nx = dragAnchor.ox - (event.x - dragAnchor.x);
+              const ny = dragAnchor.oy - (event.y - dragAnchor.y);
+              if (nx !== offsetX || ny !== offsetY) {
+                offsetX = nx;
+                offsetY = ny;
+                if (press) press.moved = true;
+                dirty = true;
+              }
             }
             break;
           case "mouse-up":
+            if (press && !press.moved) {
+              selectedId = hitTest(event.x, event.y);
+              dirty = true;
+            }
             dragAnchor = void 0;
+            press = void 0;
             break;
         }
       }
-      if (parsed.events.length > 0) paint();
+      if (dirty) paint();
     });
     process.stdout.on("resize", paint);
   }
@@ -883,5 +1012,6 @@ if (process.argv[1] !== void 0 && import.meta.url === pathToFileURL(process.argv
   main();
 }
 export {
+  nodeDetails,
   parseArgs
 };

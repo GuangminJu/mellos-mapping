@@ -39,6 +39,11 @@ export interface RenderOptions {
   readonly unicode: boolean;
   /** Spinner frame index for in-progress nodes; caller advances it over time. */
   readonly spinnerFrame: number;
+  /**
+   * Node id to spotlight: its box border and every wire touching it render
+   * bright instead of faint. Color mode only — monochrome output ignores it.
+   */
+  readonly focus?: string | undefined;
 }
 
 /** A window over the rendered picture, in cell coordinates (0-based). */
@@ -145,6 +150,8 @@ interface Cell {
   mask: number;
   /** The bar row uses heavy horizontals; crossings become ┿. */
   heavyHorizontal: boolean;
+  /** A spotlighted wire cell: emits bright instead of faint. */
+  bright: boolean;
   style: Style;
   bold: boolean;
 }
@@ -164,7 +171,7 @@ class Canvas {
   private cell(x: number, y: number): Cell {
     while (this.rows.length <= y) this.rows.push([]);
     const row = this.rows[y]!;
-    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: 'none', bold: false });
+    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, bright: false, style: 'none', bold: false });
     return row[x]!;
   }
 
@@ -198,7 +205,7 @@ class Canvas {
   }
 
   /** Merge a routed-line direction mask into (x, y). */
-  line(x: number, y: number, mask: number, heavyHorizontal = false): void {
+  line(x: number, y: number, mask: number, heavyHorizontal = false, bright = false): void {
     const c = this.cell(x, y);
     if (c.literal !== undefined) {
       const junction = BORDER_JUNCTION[c.literal];
@@ -208,6 +215,7 @@ class Canvas {
     }
     c.mask |= mask;
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
+    c.bright = c.bright || bright;
   }
 
   /**
@@ -235,7 +243,14 @@ class Canvas {
         } else if (charWidth(ch.codePointAt(0)!) === 2 && x + 1 >= vp.x + vp.width) {
           ch = ' '; // wide character whose right half would spill past the window
         }
-        const params = ch === ' ' ? '' : isWire ? SGR.faint : [SGR[c.style], c.bold ? '1' : ''].filter(Boolean).join(';');
+        const params =
+          ch === ' '
+            ? ''
+            : isWire
+              ? c.bright
+                ? '1' // spotlighted wire: bold default color against the faint board
+                : SGR.faint
+              : [SGR[c.style], c.bold ? '1' : ''].filter(Boolean).join(';');
         if (opts.color && params !== open) {
           line += (open !== '' ? ANSI_RESET : '') + (params !== '' ? `\x1b[${params}m` : '');
           open = params;
@@ -257,21 +272,21 @@ class Canvas {
  * entering a box border) and turning points become corner characters, all via
  * the same mask union. Zero-length segments vanish naturally.
  */
-function drawPath(canvas: Canvas, points: ReadonlyArray<readonly [number, number]>): void {
+function drawPath(canvas: Canvas, points: ReadonlyArray<readonly [number, number]>, bright = false): void {
   for (let i = 0; i + 1 < points.length; i++) {
     const [x1, y1] = points[i]!;
     const [x2, y2] = points[i + 1]!;
     if (x1 === x2 && y1 === y2) continue;
     if (x1 === x2) {
       const [lo, hi] = y1 < y2 ? [y1, y2] : [y2, y1];
-      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN);
-      canvas.line(x1, y1, y2 > y1 ? DOWN : UP);
-      canvas.line(x1, y2, y2 > y1 ? UP : DOWN);
+      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN, false, bright);
+      canvas.line(x1, y1, y2 > y1 ? DOWN : UP, false, bright);
+      canvas.line(x1, y2, y2 > y1 ? UP : DOWN, false, bright);
     } else {
       const [lo, hi] = x1 < x2 ? [x1, x2] : [x2, x1];
-      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT);
-      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT);
-      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT);
+      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT, false, bright);
+      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT, false, bright);
+      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT, false, bright);
     }
   }
 }
@@ -356,7 +371,17 @@ interface GapSegment {
 
 /** Render the whole map as terminal lines. */
 export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
-  return buildCanvas(map, opts).emit(opts);
+  const built = buildCanvas(map, opts);
+  return built.canvas.emit(opts);
+}
+
+/** Where a node's box sits on the full (unwindowed) picture, for hit testing. */
+export interface BoxHit {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
 }
 
 export interface WindowedRender {
@@ -364,22 +389,29 @@ export interface WindowedRender {
   /** Full extent of the picture, for viewport clamping. */
   readonly contentWidth: number;
   readonly contentHeight: number;
+  /** Node hit regions in full-picture coordinates, for mouse interaction. */
+  readonly hits: readonly BoxHit[];
 }
 
 /** Render only the given viewport of the map, plus the full content extent. */
 export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: Viewport): WindowedRender {
-  const canvas = buildCanvas(map, opts);
-  return { lines: canvas.emit(opts, viewport), contentWidth: canvas.width, contentHeight: canvas.height };
+  const built = buildCanvas(map, opts);
+  return {
+    lines: built.canvas.emit(opts, viewport),
+    contentWidth: built.canvas.width,
+    contentHeight: built.canvas.height,
+    hits: built.hits,
+  };
 }
 
-function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
+function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
   const canvas = new Canvas();
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
 
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? 'mellos mapping', 'none', true);
     canvas.text(0, 2, '(empty map — declare layers and nodes to begin)', 'dim');
-    return canvas;
+    return { canvas, hits: [] };
   }
 
   // -- horizontal layout: one row of boxes per band --
@@ -569,19 +601,28 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     canvas.text(labelStart, barY[b]!, label, 'none', true);
   }
 
-  for (const box of boxes.values()) drawBox(canvas, box, opts);
+  for (const box of boxes.values()) {
+    drawBox(canvas, box, opts, opts.focus !== undefined && (box.node.id as string) === opts.focus);
+  }
 
-  // -- draw: edges --
+  // -- draw: edges (wires touching the focused node render bright) --
   for (const r of routes) {
     const sy = r.fromBox.y + BOX_H - 1; // bottom border row of the source box
     const ey = r.toBox.y; // top border row of the target box
+    const bright =
+      opts.focus !== undefined &&
+      ((r.fromBox.node.id as string) === opts.focus || (r.toBox.node.id as string) === opts.focus);
 
     const direct = straightX.get(r);
     if (direct !== undefined) {
-      drawPath(canvas, [
-        [direct, sy],
-        [direct, ey],
-      ]);
+      drawPath(
+        canvas,
+        [
+          [direct, sy],
+          [direct, ey],
+        ],
+        bright,
+      );
       continue;
     }
 
@@ -590,23 +631,31 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     const landingY = rowYOf(r.toBand - 1, segments.landing);
 
     if (r.toBand - r.fromBand === 1) {
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, landingY],
-        [ex, landingY],
-        [ex, ey],
-      ]);
+      drawPath(
+        canvas,
+        [
+          [sx, sy],
+          [sx, landingY],
+          [ex, landingY],
+          [ex, ey],
+        ],
+        bright,
+      );
     } else {
       const c = descentX.get(r)!;
       const exitY = rowYOf(r.fromBand, segments.exit!);
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, exitY],
-        [c, exitY],
-        [c, landingY],
-        [ex, landingY],
-        [ex, ey],
-      ]);
+      drawPath(
+        canvas,
+        [
+          [sx, sy],
+          [sx, exitY],
+          [c, exitY],
+          [c, landingY],
+          [ex, landingY],
+          [ex, ey],
+        ],
+        bright,
+      );
     }
   }
 
@@ -624,17 +673,24 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
   }
 
-  return canvas;
+  const hits: BoxHit[] = [...boxes.values()].map((b) => ({
+    id: b.node.id as string,
+    x: b.x,
+    y: b.y,
+    w: b.w,
+    h: BOX_H,
+  }));
+  return { canvas, hits };
 }
 
-function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions): void {
+function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions, focused = false): void {
   const { node, x, y, w } = box;
   const skin = skinFor(node.status, opts.unicode);
   const inner = w - 2;
 
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
-  canvas.text(x, y + 1, skin.v, skin.style);
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
+  canvas.text(x, y + 1, skin.v, skin.style, focused);
   canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style);
-  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
+  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
 }

@@ -21282,7 +21282,7 @@ var Canvas = class {
   cell(x, y) {
     while (this.rows.length <= y) this.rows.push([]);
     const row = this.rows[y];
-    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: "none", bold: false });
+    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, bright: false, style: "none", bold: false });
     return row[x];
   }
   get height() {
@@ -21310,7 +21310,7 @@ var Canvas = class {
     return cx;
   }
   /** Merge a routed-line direction mask into (x, y). */
-  line(x, y, mask, heavyHorizontal = false) {
+  line(x, y, mask, heavyHorizontal = false, bright = false) {
     const c = this.cell(x, y);
     if (c.literal !== void 0) {
       const junction = BORDER_JUNCTION[c.literal];
@@ -21320,6 +21320,7 @@ var Canvas = class {
     }
     c.mask |= mask;
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
+    c.bright = c.bright || bright;
   }
   /**
    * Emit terminal lines, optionally windowed to a viewport. Slicing happens
@@ -21346,7 +21347,7 @@ var Canvas = class {
         } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
           ch = " ";
         }
-        const params = ch === " " ? "" : isWire ? SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
+        const params = ch === " " ? "" : isWire ? c.bright ? "1" : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
         if (opts.color && params !== open) {
           line += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
           open = params;
@@ -21359,21 +21360,21 @@ var Canvas = class {
     return out;
   }
 };
-function drawPath(canvas, points) {
+function drawPath(canvas, points, bright = false) {
   for (let i = 0; i + 1 < points.length; i++) {
     const [x1, y1] = points[i];
     const [x2, y2] = points[i + 1];
     if (x1 === x2 && y1 === y2) continue;
     if (x1 === x2) {
       const [lo, hi] = y1 < y2 ? [y1, y2] : [y2, y1];
-      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN);
-      canvas.line(x1, y1, y2 > y1 ? DOWN : UP);
-      canvas.line(x1, y2, y2 > y1 ? UP : DOWN);
+      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN, false, bright);
+      canvas.line(x1, y1, y2 > y1 ? DOWN : UP, false, bright);
+      canvas.line(x1, y2, y2 > y1 ? UP : DOWN, false, bright);
     } else {
       const [lo, hi] = x1 < x2 ? [x1, x2] : [x2, x1];
-      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT);
-      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT);
-      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT);
+      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT, false, bright);
+      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT, false, bright);
+      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT, false, bright);
     }
   }
 }
@@ -21411,7 +21412,8 @@ var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
 function renderMap(map, opts) {
-  return buildCanvas(map, opts).emit(opts);
+  const built = buildCanvas(map, opts);
+  return built.canvas.emit(opts);
 }
 function buildCanvas(map, opts) {
   const canvas = new Canvas();
@@ -21419,7 +21421,7 @@ function buildCanvas(map, opts) {
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
     canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return canvas;
+    return { canvas, hits: [] };
   }
   const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
   const boxes = /* @__PURE__ */ new Map();
@@ -21587,39 +21589,54 @@ function buildCanvas(map, opts) {
     const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
     canvas.text(labelStart, barY[b], label, "none", true);
   }
-  for (const box of boxes.values()) drawBox(canvas, box, opts);
+  for (const box of boxes.values()) {
+    drawBox(canvas, box, opts, opts.focus !== void 0 && box.node.id === opts.focus);
+  }
   for (const r of routes) {
     const sy = r.fromBox.y + BOX_H - 1;
     const ey = r.toBox.y;
+    const bright = opts.focus !== void 0 && (r.fromBox.node.id === opts.focus || r.toBox.node.id === opts.focus);
     const direct = straightX.get(r);
     if (direct !== void 0) {
-      drawPath(canvas, [
-        [direct, sy],
-        [direct, ey]
-      ]);
+      drawPath(
+        canvas,
+        [
+          [direct, sy],
+          [direct, ey]
+        ],
+        bright
+      );
       continue;
     }
     const { sx, ex } = attach.get(r);
     const segments = segmentOf.get(r);
     const landingY = rowYOf(r.toBand - 1, segments.landing);
     if (r.toBand - r.fromBand === 1) {
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, landingY],
-        [ex, landingY],
-        [ex, ey]
-      ]);
+      drawPath(
+        canvas,
+        [
+          [sx, sy],
+          [sx, landingY],
+          [ex, landingY],
+          [ex, ey]
+        ],
+        bright
+      );
     } else {
       const c = descentX.get(r);
       const exitY = rowYOf(r.fromBand, segments.exit);
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, exitY],
-        [c, exitY],
-        [c, landingY],
-        [ex, landingY],
-        [ex, ey]
-      ]);
+      drawPath(
+        canvas,
+        [
+          [sx, sy],
+          [sx, exitY],
+          [c, exitY],
+          [c, landingY],
+          [ex, landingY],
+          [ex, ey]
+        ],
+        bright
+      );
     }
   }
   const legendOpts = { ...opts, spinnerFrame: 0 };
@@ -21634,17 +21651,24 @@ function buildCanvas(map, opts) {
     if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
     lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
   }
-  return canvas;
+  const hits = [...boxes.values()].map((b) => ({
+    id: b.node.id,
+    x: b.x,
+    y: b.y,
+    w: b.w,
+    h: BOX_H
+  }));
+  return { canvas, hits };
 }
-function drawBox(canvas, box, opts) {
+function drawBox(canvas, box, opts, focused = false) {
   const { node, x, y, w } = box;
   const skin = skinFor(node.status, opts.unicode);
   const inner = w - 2;
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
-  canvas.text(x, y + 1, skin.v, skin.style);
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
+  canvas.text(x, y + 1, skin.v, skin.style, focused);
   canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style);
-  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
+  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
 }
 
 // src/store/store.ts
@@ -21933,7 +21957,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.3.0";
+var SERVER_VERSION = "0.4.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({

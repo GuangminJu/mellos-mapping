@@ -13,13 +13,17 @@
 export type InputEvent =
   | { readonly kind: 'quit' }
   | { readonly kind: 'reset' }
+  /** Esc: clear the pinned selection. */
+  | { readonly kind: 'clear' }
   /** Pan the VIEW by a delta (keyboard / wheel). */
   | { readonly kind: 'pan'; readonly dx: number; readonly dy: number }
   /** Left button pressed at terminal cell (1-based). */
   | { readonly kind: 'mouse-down'; readonly x: number; readonly y: number }
   /** Motion while the left button is held. */
   | { readonly kind: 'mouse-drag'; readonly x: number; readonly y: number }
-  | { readonly kind: 'mouse-up' };
+  /** Motion with no button held (any-event tracking) — hover. */
+  | { readonly kind: 'mouse-move'; readonly x: number; readonly y: number }
+  | { readonly kind: 'mouse-up'; readonly x: number; readonly y: number };
 
 export interface ParsedInput {
   readonly events: InputEvent[];
@@ -64,13 +68,22 @@ function mouseEvent(code: number, x: number, y: number, final: string): InputEve
       ? { kind: 'pan', dx: direction * WHEEL_H_STEP, dy: 0 }
       : { kind: 'pan', dx: 0, dy: direction * WHEEL_V_STEP };
   }
-  if (final === 'm') return { kind: 'mouse-up' };
-  if ((code & BUTTON_BITS) !== 0) return undefined; // only the left button pans
-  return code & MOTION ? { kind: 'mouse-drag', x, y } : { kind: 'mouse-down', x, y };
+  const buttons = code & BUTTON_BITS;
+  if (final === 'm') return buttons === 0 ? { kind: 'mouse-up', x, y } : undefined;
+  if (code & MOTION) {
+    if (buttons === 3) return { kind: 'mouse-move', x, y }; // no button held — hover
+    if (buttons === 0) return { kind: 'mouse-drag', x, y };
+    return undefined;
+  }
+  return buttons === 0 ? { kind: 'mouse-down', x, y } : undefined; // only the left button interacts
 }
 
 /** Parse one stdin chunk (prepend the previous call's `rest`). */
 export function parseInput(chunk: string): ParsedInput {
+  // A chunk that is exactly ESC is the Esc key itself: terminals deliver real
+  // escape sequences in one read, so a lone ESC byte is not a sequence head.
+  if (chunk === '\x1b') return { events: [{ kind: 'clear' }], rest: '' };
+
   const events: InputEvent[] = [];
   let i = 0;
   while (i < chunk.length) {
