@@ -12,34 +12,37 @@ what is built *and verified*.
 ```
   梅勒斯地图 · mellos-mapping 插件
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━ 编排层 ━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 编排层
 
-  ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
+  ╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮
   ╎ · MCP Server ╎
-  └╌╌╌┬╌╌╌┬╌╌┬╌╌╌┘
-      │   │  │
-      │   │  └───────────────────────┐
-      └──┐│                          │
-         │└─────────────┐            │
-         │              │            │
-━━━━━━━━━┿━━━━━━━━━━━━━━┿━━ 契约层 ━━┿━
-         │              │            │
-  ┏━━━━━━┷━━━━━┓  ┌╌╌╌╌╌┴╌╌╌╌╌┐      │
-  ┃ ■ 状态存储 ┃  ╎ · Watcher ╎      │
-  ┗━━━━━━┯━━━━━┛  └╌╌╌╌╌┬╌╌╌╌╌┘      │
-         │              │            │
-       ┌─┘              │            │
-       │                └──┐         │
-       │    ┌──────────────┼─────────┘
-       │    │              │
-━━━━━━━┿━━━━┿━━━━━━━━━━━━━━ 原语层 ━━━━
-       │    │              │
-  ┏━━━━┷━━━━┷━━━━┓  ┌──────┴──────┐
+  ╰╌╌╌┬┬╌╌╌╌┬╌╌╌╌╯
+      ││    │
+      └┼────┼───────────┐
+       │    └───┐       │
+       │        │       │
+━━━━━━━┿━━━━━━━━┿━━━━━━━┿━━━ 契约层
+       │        │       │
+  ┏━━━━┷━━━━━━━┓│ ╭╌╌╌╌╌┴╌╌╌╌╌╮
+  ┃ ■ 状态存储 ┃│ ╎ · Watcher ╎
+  ┗━━━━━┯━━━━━━┛│ ╰╌╌╌╌╌╌┬╌╌╌╌╯
+        │       │        │
+        │ ┌─────┘        │
+        │ │              │
+━━━━━━━━┿━┿━━━━━━━━━━━━━━┿━━ 原语层
+        │ │              │
+  ┏━━━━━┷━┷━━━━━━┓  ╭────┴────────╮
   ┃ ■ 图领域模型 ┃  │ ⠋ ASCII渲染 │
-  ┗━━━━━━━━━━━━━━┛  └─────────────┘
+  ┗━━━━━━━━━━━━━━┛  ╰─────────────╯
 
   · planned   ⠋ in-progress   ■ done   ✗ regressed
 ```
+
+In a real terminal the wiring and band bars render FAINT while node boxes
+glow in their status colors with bold labels — a dark circuit board where
+the components are the bright things. Skip-level edges thread through gaps
+between boxes (watch the line dive between 状态存储 and Watcher above);
+non-overlapping wire segments share track rows to keep the bands close.
 
 *(This is the plugin's own map, mid-development. The spinner really spins.)*
 

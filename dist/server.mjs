@@ -21261,12 +21261,13 @@ function maskChar(mask, heavyHorizontal, unicode) {
   }
   return LIGHT_BY_MASK[mask] ?? "\u253C";
 }
-var ANSI = {
+var SGR = {
   none: "",
-  dim: "\x1B[2m",
-  amber: "\x1B[33m",
-  green: "\x1B[32m",
-  red: "\x1B[31m"
+  dim: "2",
+  amber: "33",
+  green: "32",
+  red: "31",
+  faint: "90"
 };
 var ANSI_RESET = "\x1B[0m";
 var BORDER_JUNCTION = {
@@ -21281,16 +21282,23 @@ var Canvas = class {
   cell(x, y) {
     while (this.rows.length <= y) this.rows.push([]);
     const row = this.rows[y];
-    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: "none" });
+    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: "none", bold: false });
     return row[x];
   }
-  /** Write literal text starting at (x, y). */
-  text(x, y, s, style) {
+  get height() {
+    return this.rows.length;
+  }
+  get width() {
+    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  }
+  /** Write literal text starting at (x, y). Returns the column just past it. */
+  text(x, y, s, style, bold = false) {
     let cx = x;
     for (const ch of s) {
       const c = this.cell(cx, y);
       c.literal = ch;
       c.style = style;
+      c.bold = bold;
       const w = charWidth(ch.codePointAt(0));
       if (w === 2) {
         const phantom = this.cell(cx + 1, y);
@@ -21299,6 +21307,7 @@ var Canvas = class {
       }
       cx += w;
     }
+    return cx;
   }
   /** Merge a routed-line direction mask into (x, y). */
   line(x, y, mask, heavyHorizontal = false) {
@@ -21312,17 +21321,12 @@ var Canvas = class {
     c.mask |= mask;
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
   }
-  get height() {
-    return this.rows.length;
-  }
-  get width() {
-    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
-  }
   /**
    * Emit terminal lines, optionally windowed to a viewport. Slicing happens
    * at the cell level so ANSI codes reopen correctly inside the window and a
    * CJK character cut in half at either edge degrades to a space instead of
-   * shifting the whole row.
+   * shifting the whole row. Routed wiring (mask cells) emits FAINT — the
+   * circuit board recedes, the boxes glow.
    */
   emit(opts, viewport) {
     const vp = viewport ?? { x: 0, y: 0, width: this.width, height: this.height };
@@ -21330,25 +21334,26 @@ var Canvas = class {
     for (let y = vp.y; y < vp.y + vp.height; y++) {
       const row = this.rows[y] ?? [];
       let line = "";
-      let open = "none";
+      let open = "";
       const end = Math.min(vp.x + vp.width, row.length);
       for (let x = Math.max(0, vp.x); x < end; x++) {
         const c = row[x];
-        let ch = c.literal !== void 0 ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : " ";
+        const isWire = c.literal === void 0 && c.mask !== 0;
+        let ch = c.literal !== void 0 ? c.literal : isWire ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : " ";
         if (ch === "") {
           if (x !== Math.max(0, vp.x)) continue;
           ch = " ";
         } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
           ch = " ";
         }
-        const style = ch === " " ? "none" : c.style;
-        if (opts.color && style !== open) {
-          line += (open !== "none" ? ANSI_RESET : "") + ANSI[style];
-          open = style;
+        const params = ch === " " ? "" : isWire ? SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
+        if (opts.color && params !== open) {
+          line += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
+          open = params;
         }
         line += ch;
       }
-      if (opts.color && open !== "none") line += ANSI_RESET;
+      if (opts.color && open !== "") line += ANSI_RESET;
       out.push(line.replace(/ +$/, ""));
     }
     return out;
@@ -21381,9 +21386,9 @@ function skinFor(status, unicode) {
   }
   switch (status) {
     case "planned":
-      return { h: "\u254C", v: "\u254E", corners: ["\u250C", "\u2510", "\u2514", "\u2518"], style };
+      return { h: "\u254C", v: "\u254E", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
     case "in-progress":
-      return { h: "\u2500", v: "\u2502", corners: ["\u250C", "\u2510", "\u2514", "\u2518"], style };
+      return { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
     case "done":
     case "regressed":
       return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
@@ -21412,7 +21417,7 @@ function buildCanvas(map, opts) {
   const canvas = new Canvas();
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
   if (bands.length === 0) {
-    canvas.text(0, 0, map.title ?? "mellos mapping", "none");
+    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
     canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
     return canvas;
   }
@@ -21433,6 +21438,12 @@ function buildCanvas(map, opts) {
     row.push(box);
     boxes.set(node.id, box);
   }
+  let contentWidth = LEFT_MARGIN;
+  for (const row of bandBoxes) {
+    const last = row[row.length - 1];
+    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
+  }
+  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
   const routes = map.edges.map((e) => {
     const fromBox = boxes.get(e.from);
     const toBox = boxes.get(e.to);
@@ -21467,51 +21478,6 @@ function buildCanvas(map, opts) {
       }
     }
   }
-  const gapCount = bands.length - 1;
-  const exitTracks = Array.from({ length: gapCount }, () => []);
-  const landingTracks = Array.from({ length: gapCount }, () => []);
-  const skipRoutes = [];
-  for (const r of routes) {
-    if (straightX.has(r)) continue;
-    landingTracks[r.toBand - 1].push(r);
-    if (r.toBand - r.fromBand > 1) {
-      exitTracks[r.fromBand].push(r);
-      skipRoutes.push(r);
-    }
-  }
-  let y = 0;
-  if (map.title !== void 0) y += 2;
-  const barY = [];
-  const landingY = /* @__PURE__ */ new Map();
-  const jogY = /* @__PURE__ */ new Map();
-  for (let b = 0; b < bands.length; b++) {
-    barY.push(y);
-    y += 2;
-    for (const box of bandBoxes[b]) box.y = y;
-    y += BOX_H;
-    if (b < gapCount) {
-      y += 1;
-      for (const r of exitTracks[b]) jogY.set(r, y++);
-      for (const r of landingTracks[b]) landingY.set(r, y++);
-      y += 1;
-    }
-  }
-  const legendY = y + 1;
-  let contentWidth = LEFT_MARGIN;
-  for (const row of bandBoxes) {
-    const last = row[row.length - 1];
-    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
-  }
-  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
-  const marginX = new Map(skipRoutes.map((r, i) => [r, contentWidth + 2 + i * 2]));
-  const totalWidth = contentWidth + 2 + skipRoutes.length * 2;
-  if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none");
-  for (let b = 0; b < bands.length; b++) {
-    const label = ` ${bands[b].name} `;
-    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
-    canvas.text(contentWidth - displayWidth(label), barY[b], label, "none");
-  }
-  for (const box of boxes.values()) drawBox(canvas, box, opts);
   const bent = routes.filter((r) => !straightX.has(r));
   const outgoing = /* @__PURE__ */ new Map();
   const incoming = /* @__PURE__ */ new Map();
@@ -21530,6 +21496,98 @@ function buildCanvas(map, opts) {
     }
     return ideal;
   };
+  const attach = /* @__PURE__ */ new Map();
+  for (const r of bent) {
+    const outs = outgoing.get(r.fromBox);
+    const ins = incoming.get(r.toBox);
+    attach.set(r, {
+      sx: freeSlot(r.fromBox, outs.indexOf(r), outs.length),
+      ex: freeSlot(r.toBox, ins.indexOf(r), ins.length)
+    });
+  }
+  const skipRoutes = bent.filter((r) => r.toBand - r.fromBand > 1);
+  const usedDescent = /* @__PURE__ */ new Set();
+  const descentX = /* @__PURE__ */ new Map();
+  let fallbackCount = 0;
+  const blockedByBox = (band, x) => bandBoxes[band].some((b) => x >= b.x && x <= b.x + b.w - 1);
+  for (const r of skipRoutes) {
+    const { ex } = attach.get(r);
+    let chosen;
+    for (let d = 0; d <= contentWidth && chosen === void 0; d++) {
+      for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
+        if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
+        let blocked = false;
+        for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
+        if (!blocked) {
+          chosen = c;
+          break;
+        }
+      }
+    }
+    if (chosen === void 0) chosen = contentWidth + 2 + fallbackCount++ * 2;
+    usedDescent.add(chosen);
+    descentX.set(r, chosen);
+  }
+  const totalWidth = fallbackCount > 0 ? contentWidth + 2 + fallbackCount * 2 : contentWidth;
+  const gapCount = bands.length - 1;
+  const gapSegments = Array.from({ length: gapCount }, () => []);
+  const segmentOf = /* @__PURE__ */ new Map();
+  for (const r of bent) {
+    const { sx, ex } = attach.get(r);
+    if (r.toBand - r.fromBand === 1) {
+      const landing = { route: r, kind: "landing", lo: Math.min(sx, ex), hi: Math.max(sx, ex) };
+      gapSegments[r.toBand - 1].push(landing);
+      segmentOf.set(r, { landing });
+    } else {
+      const c = descentX.get(r);
+      const exit = { route: r, kind: "exit", lo: Math.min(sx, c), hi: Math.max(sx, c) };
+      const landing = { route: r, kind: "landing", lo: Math.min(c, ex), hi: Math.max(c, ex) };
+      gapSegments[r.fromBand].push(exit);
+      gapSegments[r.toBand - 1].push(landing);
+      segmentOf.set(r, { exit, landing });
+    }
+  }
+  const segmentRow = /* @__PURE__ */ new Map();
+  const gapRowCount = gapSegments.map((segments) => {
+    const rowEnds = [];
+    for (const s of [...segments].sort((a, b) => a.lo - b.lo)) {
+      let row = rowEnds.findIndex((end) => s.lo > end + 1);
+      if (row === -1) {
+        rowEnds.push(s.hi);
+        row = rowEnds.length - 1;
+      } else {
+        rowEnds[row] = Math.max(rowEnds[row], s.hi);
+      }
+      segmentRow.set(s, row);
+    }
+    return rowEnds.length;
+  });
+  let y = 0;
+  if (map.title !== void 0) y += 2;
+  const barY = [];
+  const gapTrackStartY = [];
+  for (let b = 0; b < bands.length; b++) {
+    barY.push(y);
+    y += 2;
+    for (const box of bandBoxes[b]) box.y = y;
+    y += BOX_H;
+    if (b < gapCount) {
+      y += 1;
+      gapTrackStartY.push(y);
+      y += gapRowCount[b];
+      y += 1;
+    }
+  }
+  const legendY = y + 1;
+  const rowYOf = (gap, s) => gapTrackStartY[gap] + segmentRow.get(s);
+  if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none", true);
+  for (let b = 0; b < bands.length; b++) {
+    const label = ` ${bands[b].name}`;
+    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
+    const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
+    canvas.text(labelStart, barY[b], label, "none", true);
+  }
+  for (const box of boxes.values()) drawBox(canvas, box, opts);
   for (const r of routes) {
     const sy = r.fromBox.y + BOX_H - 1;
     const ey = r.toBox.y;
@@ -21541,39 +21599,41 @@ function buildCanvas(map, opts) {
       ]);
       continue;
     }
-    const outs = outgoing.get(r.fromBox);
-    const ins = incoming.get(r.toBox);
-    const sx = freeSlot(r.fromBox, outs.indexOf(r), outs.length);
-    const ex = freeSlot(r.toBox, ins.indexOf(r), ins.length);
-    const landing = landingY.get(r);
+    const { sx, ex } = attach.get(r);
+    const segments = segmentOf.get(r);
+    const landingY = rowYOf(r.toBand - 1, segments.landing);
     if (r.toBand - r.fromBand === 1) {
       drawPath(canvas, [
         [sx, sy],
-        [sx, landing],
-        [ex, landing],
+        [sx, landingY],
+        [ex, landingY],
         [ex, ey]
       ]);
     } else {
-      const jog = jogY.get(r);
-      const mx = marginX.get(r);
+      const c = descentX.get(r);
+      const exitY = rowYOf(r.fromBand, segments.exit);
       drawPath(canvas, [
         [sx, sy],
-        [sx, jog],
-        [mx, jog],
-        [mx, landing],
-        [ex, landing],
+        [sx, exitY],
+        [c, exitY],
+        [c, landingY],
+        [ex, landingY],
         [ex, ey]
       ]);
     }
   }
   const legendOpts = { ...opts, spinnerFrame: 0 };
-  const legend = [
-    `${glyphFor("planned", legendOpts)} planned`,
-    `${glyphFor("in-progress", legendOpts)} in-progress`,
-    `${glyphFor("done", legendOpts)} done`,
-    `${glyphFor("regressed", legendOpts)} regressed`
-  ].join("   ");
-  canvas.text(LEFT_MARGIN, legendY, legend, "dim");
+  let lx = LEFT_MARGIN;
+  const legendEntries = [
+    ["planned", "dim"],
+    ["in-progress", "amber"],
+    ["done", "green"],
+    ["regressed", "red"]
+  ];
+  for (const [status, style] of legendEntries) {
+    if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
+    lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+  }
   return canvas;
 }
 function drawBox(canvas, box, opts) {
@@ -21581,7 +21641,8 @@ function drawBox(canvas, box, opts) {
   const skin = skinFor(node.status, opts.unicode);
   const inner = w - 2;
   canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
-  canvas.text(x, y + 1, skin.v + ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style);
+  canvas.text(x, y + 1, skin.v, skin.style);
+  canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
   canvas.text(x + w - 1, y + 1, skin.v, skin.style);
   canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
 }
@@ -21872,7 +21933,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.2.0";
+var SERVER_VERSION = "0.3.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({

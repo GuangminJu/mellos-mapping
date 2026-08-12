@@ -5,20 +5,29 @@
  * (colored, animated). Pure function of (map, options): no I/O, no clock —
  * animation is driven by the caller passing a spinner frame index.
  *
- * Visual language:
- *   rank 0 renders at the BOTTOM of the picture, matching the mental model
- *   "primitives are the ground". Every band is introduced by a full-width
- *   bar carrying its name; dependency lines only ever travel downward.
+ * Visual language — a dark circuit board:
+ *   rank 0 renders at the BOTTOM of the picture ("primitives are the
+ *   ground"). Wiring and band bars are FAINT; the glowing things are the
+ *   nodes. Junctions where a wire enters a box inherit the box's color,
+ *   like lit pins. Dependency lines only ever travel downward.
  *
- *   planned      dashed dim box, glyph '·'   — a ghost: designed, not built
- *   in-progress  light amber box, spinner    — where attention currently is
- *   done         heavy green box, glyph '■'  — built and verified
- *   regressed    heavy red box, glyph '✗'    — was done, foundation cracked
+ *   planned      dashed dim rounded box, '·'  — a ghost: designed, not built
+ *   in-progress  amber rounded box, spinner   — where attention currently is
+ *   done         heavy green box, '■'         — built and verified
+ *   regressed    heavy red box, '✗'           — was done, foundation cracked
  *
- * Layout is deliberately primitive (one row of boxes per band; skip-level
- * edges routed along the right margin). Edge crossings merge into proper
- * junction characters via a direction-bitmask union instead of any routing
- * cleverness.
+ * Routing preference, in order:
+ *   1. STRAIGHT — an adjacent-band edge whose box borders share a free
+ *      column is one vertical line, no corners.
+ *   2. DOGLEG — descend, run horizontally on a track row in the gap above
+ *      the target band, descend. Tracks are PACKED: segments that do not
+ *      overlap share a row, keeping bands close together.
+ *   3. THREAD — a skip-level edge descends through the nearest column that
+ *      is free of boxes in every intermediate band (threading the needle
+ *      between boxes); only if no such column exists does it fall back to a
+ *      private column on the right margin.
+ * Crossings merge into proper junction characters via a direction-bitmask
+ * union instead of any routing cleverness.
  */
 
 import type { MapNode, MellosMap, NodeStatus } from '../domain/types.js';
@@ -116,14 +125,16 @@ function maskChar(mask: number, heavyHorizontal: boolean, unicode: boolean): str
 // canvas — a grid of cells that knows how to merge crossing lines
 // ---------------------------------------------------------------------------
 
-type Style = 'none' | 'dim' | 'amber' | 'green' | 'red';
+type Style = 'none' | 'dim' | 'amber' | 'green' | 'red' | 'faint';
 
-const ANSI: Readonly<Record<Style, string>> = {
+/** SGR parameter per style; combined with bold ("1") at emit time. */
+const SGR: Readonly<Record<Style, string>> = {
   none: '',
-  dim: '\x1b[2m',
-  amber: '\x1b[33m',
-  green: '\x1b[32m',
-  red: '\x1b[31m',
+  dim: '2',
+  amber: '33',
+  green: '32',
+  red: '31',
+  faint: '90',
 };
 const ANSI_RESET = '\x1b[0m';
 
@@ -135,6 +146,7 @@ interface Cell {
   /** The bar row uses heavy horizontals; crossings become ┿. */
   heavyHorizontal: boolean;
   style: Style;
+  bold: boolean;
 }
 
 /** Junction replacements when a routed line meets a literal border character. */
@@ -152,17 +164,26 @@ class Canvas {
   private cell(x: number, y: number): Cell {
     while (this.rows.length <= y) this.rows.push([]);
     const row = this.rows[y]!;
-    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: 'none' });
+    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: 'none', bold: false });
     return row[x]!;
   }
 
-  /** Write literal text starting at (x, y). */
-  text(x: number, y: number, s: string, style: Style): void {
+  get height(): number {
+    return this.rows.length;
+  }
+
+  get width(): number {
+    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  }
+
+  /** Write literal text starting at (x, y). Returns the column just past it. */
+  text(x: number, y: number, s: string, style: Style, bold = false): number {
     let cx = x;
     for (const ch of s) {
       const c = this.cell(cx, y);
       c.literal = ch;
       c.style = style;
+      c.bold = bold;
       const w = charWidth(ch.codePointAt(0)!);
       if (w === 2) {
         // The second column of a wide character is a phantom cell: it must
@@ -173,6 +194,7 @@ class Canvas {
       }
       cx += w;
     }
+    return cx;
   }
 
   /** Merge a routed-line direction mask into (x, y). */
@@ -188,19 +210,12 @@ class Canvas {
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
   }
 
-  get height(): number {
-    return this.rows.length;
-  }
-
-  get width(): number {
-    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
-  }
-
   /**
    * Emit terminal lines, optionally windowed to a viewport. Slicing happens
    * at the cell level so ANSI codes reopen correctly inside the window and a
    * CJK character cut in half at either edge degrades to a space instead of
-   * shifting the whole row.
+   * shifting the whole row. Routed wiring (mask cells) emits FAINT — the
+   * circuit board recedes, the boxes glow.
    */
   emit(opts: RenderOptions, viewport?: Viewport): string[] {
     const vp = viewport ?? { x: 0, y: 0, width: this.width, height: this.height };
@@ -208,26 +223,26 @@ class Canvas {
     for (let y = vp.y; y < vp.y + vp.height; y++) {
       const row = this.rows[y] ?? [];
       let line = '';
-      let open: Style = 'none';
+      let open = '';
       const end = Math.min(vp.x + vp.width, row.length);
       for (let x = Math.max(0, vp.x); x < end; x++) {
         const c = row[x]!;
-        let ch =
-          c.literal !== undefined ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : ' ';
+        const isWire = c.literal === undefined && c.mask !== 0;
+        let ch = c.literal !== undefined ? c.literal : isWire ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : ' ';
         if (ch === '') {
           if (x !== Math.max(0, vp.x)) continue; // phantom half inside the window: already emitted
           ch = ' '; // window starts on the right half of a wide character
         } else if (charWidth(ch.codePointAt(0)!) === 2 && x + 1 >= vp.x + vp.width) {
           ch = ' '; // wide character whose right half would spill past the window
         }
-        const style = ch === ' ' ? 'none' : c.style;
-        if (opts.color && style !== open) {
-          line += (open !== 'none' ? ANSI_RESET : '') + ANSI[style];
-          open = style;
+        const params = ch === ' ' ? '' : isWire ? SGR.faint : [SGR[c.style], c.bold ? '1' : ''].filter(Boolean).join(';');
+        if (opts.color && params !== open) {
+          line += (open !== '' ? ANSI_RESET : '') + (params !== '' ? `\x1b[${params}m` : '');
+          open = params;
         }
         line += ch;
       }
-      if (opts.color && open !== 'none') line += ANSI_RESET;
+      if (opts.color && open !== '') line += ANSI_RESET;
       out.push(line.replace(/ +$/, ''));
     }
     return out;
@@ -240,7 +255,7 @@ class Canvas {
  * every point cell carries only the directions of the segments that actually
  * touch it — so path endpoints become clean junction stubs (e.g. ┬ when
  * entering a box border) and turning points become corner characters, all via
- * the same mask union.
+ * the same mask union. Zero-length segments vanish naturally.
  */
 function drawPath(canvas: Canvas, points: ReadonlyArray<readonly [number, number]>): void {
   for (let i = 0; i + 1 < points.length; i++) {
@@ -285,9 +300,9 @@ function skinFor(status: NodeStatus, unicode: boolean): BoxSkin {
   }
   switch (status) {
     case 'planned':
-      return { h: '╌', v: '╎', corners: ['┌', '┐', '└', '┘'], style };
+      return { h: '╌', v: '╎', corners: ['╭', '╮', '╰', '╯'], style };
     case 'in-progress':
-      return { h: '─', v: '│', corners: ['┌', '┐', '└', '┘'], style };
+      return { h: '─', v: '│', corners: ['╭', '╮', '╰', '╯'], style };
     case 'done':
     case 'regressed':
       return { h: '━', v: '┃', corners: ['┏', '┓', '┗', '┛'], style };
@@ -331,6 +346,14 @@ interface EdgeRoute {
   readonly toBand: number;
 }
 
+/** A horizontal wire segment inside a band gap, packed onto shared rows. */
+interface GapSegment {
+  readonly route: EdgeRoute;
+  readonly kind: 'exit' | 'landing';
+  readonly lo: number;
+  readonly hi: number;
+}
+
 /** Render the whole map as terminal lines. */
 export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
   return buildCanvas(map, opts).emit(opts);
@@ -354,7 +377,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
 
   if (bands.length === 0) {
-    canvas.text(0, 0, map.title ?? 'mellos mapping', 'none');
+    canvas.text(0, 0, map.title ?? 'mellos mapping', 'none', true);
     canvas.text(0, 2, '(empty map — declare layers and nodes to begin)', 'dim');
     return canvas;
   }
@@ -377,16 +400,14 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     boxes.set(node.id as string, box);
   }
 
-  // -- edge analysis --
-  // Routing preference, in order:
-  //   1. STRAIGHT: an adjacent-band edge whose two border spans overlap gets
-  //      one shared column — a single vertical line, no corners at all.
-  //   2. DOGLEG: otherwise the edge descends, moves horizontally on its own
-  //      row ("track") in the gap directly above the target band, and
-  //      descends again.
-  //   3. MARGIN: skip-level edges additionally get a jog track in the gap
-  //      below their source band, from which they travel to a private column
-  //      on the right margin and descend outside all content.
+  let contentWidth = LEFT_MARGIN;
+  for (const row of bandBoxes) {
+    const last = row[row.length - 1];
+    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
+  }
+  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
+
+  // -- edge analysis (see module header for the routing preference order) --
   const routes: EdgeRoute[] = map.edges.map((e) => {
     const fromBox = boxes.get(e.from as string)!;
     const toBox = boxes.get(e.to as string)!;
@@ -408,6 +429,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     return x;
   };
 
+  // 1. STRAIGHT edges
   const straightX = new Map<EdgeRoute, number>();
   for (const r of routes) {
     if (r.toBand - r.fromBand !== 1) continue;
@@ -425,66 +447,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     }
   }
 
-  const gapCount = bands.length - 1;
-  const exitTracks: EdgeRoute[][] = Array.from({ length: gapCount }, () => []);
-  const landingTracks: EdgeRoute[][] = Array.from({ length: gapCount }, () => []);
-  const skipRoutes: EdgeRoute[] = [];
-  for (const r of routes) {
-    if (straightX.has(r)) continue; // straight edges need no track at all
-    landingTracks[r.toBand - 1]!.push(r);
-    if (r.toBand - r.fromBand > 1) {
-      exitTracks[r.fromBand]!.push(r);
-      skipRoutes.push(r);
-    }
-  }
-
-  // -- vertical layout --
-  let y = 0;
-  if (map.title !== undefined) y += 2; // title row + blank
-  const barY: number[] = [];
-  const landingY = new Map<EdgeRoute, number>();
-  const jogY = new Map<EdgeRoute, number>();
-  for (let b = 0; b < bands.length; b++) {
-    barY.push(y);
-    y += 2; // bar + blank
-    for (const box of bandBoxes[b]!) box.y = y;
-    y += BOX_H;
-    if (b < gapCount) {
-      y += 1; // breathing row below the boxes
-      for (const r of exitTracks[b]!) jogY.set(r, y++);
-      for (const r of landingTracks[b]!) landingY.set(r, y++);
-      y += 1; // breathing row above the next bar
-    }
-  }
-  const legendY = y + 1;
-
-  // -- content width, then private margin columns for skip-level descents --
-  let contentWidth = LEFT_MARGIN;
-  for (const row of bandBoxes) {
-    const last = row[row.length - 1];
-    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
-  }
-  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
-  const marginX = new Map<EdgeRoute, number>(skipRoutes.map((r, i) => [r, contentWidth + 2 + i * 2]));
-  const totalWidth = contentWidth + 2 + skipRoutes.length * 2;
-
-  // -- draw: title, band bars, boxes --
-  if (map.title !== undefined) canvas.text(LEFT_MARGIN, 0, map.title, 'none');
-
-  for (let b = 0; b < bands.length; b++) {
-    const label = ` ${bands[b]!.name} `;
-    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b]!, LEFT | RIGHT, true);
-    // The label ends at the content edge so it can never cover the margin
-    // columns where skip-level edges descend.
-    canvas.text(contentWidth - displayWidth(label), barY[b]!, label, 'none');
-  }
-
-  for (const box of boxes.values()) drawBox(canvas, box, opts);
-
-  // -- draw: edges --
-  // Bent edges get attach slots spread across their box borders, nudged off
-  // any column a straight edge already claimed; distinct boxes occupy
-  // distinct column spans, so slots never collide across boxes.
+  // 2. attach slots for the bent rest, nudged off claimed columns
   const bent = routes.filter((r) => !straightX.has(r));
   const outgoing = new Map<BoxLayout, EdgeRoute[]>();
   const incoming = new Map<BoxLayout, EdgeRoute[]>();
@@ -503,7 +466,112 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
     }
     return ideal; // every column claimed (extremely crowded box) — overlap and live with it
   };
+  const attach = new Map<EdgeRoute, { sx: number; ex: number }>();
+  for (const r of bent) {
+    const outs = outgoing.get(r.fromBox)!;
+    const ins = incoming.get(r.toBox)!;
+    attach.set(r, {
+      sx: freeSlot(r.fromBox, outs.indexOf(r), outs.length),
+      ex: freeSlot(r.toBox, ins.indexOf(r), ins.length),
+    });
+  }
 
+  // 3. THREAD descent columns for skip-level edges
+  const skipRoutes = bent.filter((r) => r.toBand - r.fromBand > 1);
+  const usedDescent = new Set<number>();
+  const descentX = new Map<EdgeRoute, number>();
+  let fallbackCount = 0;
+  const blockedByBox = (band: number, x: number): boolean =>
+    bandBoxes[band]!.some((b) => x >= b.x && x <= b.x + b.w - 1);
+  for (const r of skipRoutes) {
+    const { ex } = attach.get(r)!;
+    let chosen: number | undefined;
+    for (let d = 0; d <= contentWidth && chosen === undefined; d++) {
+      for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
+        if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
+        let blocked = false;
+        for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
+        if (!blocked) {
+          chosen = c;
+          break;
+        }
+      }
+    }
+    if (chosen === undefined) chosen = contentWidth + 2 + fallbackCount++ * 2; // margin fallback
+    usedDescent.add(chosen);
+    descentX.set(r, chosen);
+  }
+  const totalWidth = fallbackCount > 0 ? contentWidth + 2 + fallbackCount * 2 : contentWidth;
+
+  // 4. pack horizontal segments into shared track rows per gap
+  const gapCount = bands.length - 1;
+  const gapSegments: GapSegment[][] = Array.from({ length: gapCount }, () => []);
+  const segmentOf = new Map<EdgeRoute, { exit?: GapSegment; landing: GapSegment }>();
+  for (const r of bent) {
+    const { sx, ex } = attach.get(r)!;
+    if (r.toBand - r.fromBand === 1) {
+      const landing: GapSegment = { route: r, kind: 'landing', lo: Math.min(sx, ex), hi: Math.max(sx, ex) };
+      gapSegments[r.toBand - 1]!.push(landing);
+      segmentOf.set(r, { landing });
+    } else {
+      const c = descentX.get(r)!;
+      const exit: GapSegment = { route: r, kind: 'exit', lo: Math.min(sx, c), hi: Math.max(sx, c) };
+      const landing: GapSegment = { route: r, kind: 'landing', lo: Math.min(c, ex), hi: Math.max(c, ex) };
+      gapSegments[r.fromBand]!.push(exit);
+      gapSegments[r.toBand - 1]!.push(landing);
+      segmentOf.set(r, { exit, landing });
+    }
+  }
+  const segmentRow = new Map<GapSegment, number>();
+  const gapRowCount: number[] = gapSegments.map((segments) => {
+    const rowEnds: number[] = []; // rightmost occupied column per packed row
+    for (const s of [...segments].sort((a, b) => a.lo - b.lo)) {
+      let row = rowEnds.findIndex((end) => s.lo > end + 1);
+      if (row === -1) {
+        rowEnds.push(s.hi);
+        row = rowEnds.length - 1;
+      } else {
+        rowEnds[row] = Math.max(rowEnds[row]!, s.hi);
+      }
+      segmentRow.set(s, row);
+    }
+    return rowEnds.length;
+  });
+
+  // -- vertical layout --
+  let y = 0;
+  if (map.title !== undefined) y += 2; // title row + blank
+  const barY: number[] = [];
+  const gapTrackStartY: number[] = [];
+  for (let b = 0; b < bands.length; b++) {
+    barY.push(y);
+    y += 2; // bar + blank
+    for (const box of bandBoxes[b]!) box.y = y;
+    y += BOX_H;
+    if (b < gapCount) {
+      y += 1; // breathing row below the boxes
+      gapTrackStartY.push(y);
+      y += gapRowCount[b]!;
+      y += 1; // breathing row above the next bar
+    }
+  }
+  const legendY = y + 1;
+  const rowYOf = (gap: number, s: GapSegment): number => gapTrackStartY[gap]! + segmentRow.get(s)!;
+
+  // -- draw: title, band bars, boxes --
+  if (map.title !== undefined) canvas.text(LEFT_MARGIN, 0, map.title, 'none', true);
+
+  for (let b = 0; b < bands.length; b++) {
+    const label = ` ${bands[b]!.name}`;
+    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b]!, LEFT | RIGHT, true);
+    // flush right; only a margin-fallback column pushes it back to the content edge
+    const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
+    canvas.text(labelStart, barY[b]!, label, 'none', true);
+  }
+
+  for (const box of boxes.values()) drawBox(canvas, box, opts);
+
+  // -- draw: edges --
   for (const r of routes) {
     const sy = r.fromBox.y + BOX_H - 1; // bottom border row of the source box
     const ey = r.toBox.y; // top border row of the target box
@@ -517,44 +585,44 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
       continue;
     }
 
-    const outs = outgoing.get(r.fromBox)!;
-    const ins = incoming.get(r.toBox)!;
-    const sx = freeSlot(r.fromBox, outs.indexOf(r), outs.length);
-    const ex = freeSlot(r.toBox, ins.indexOf(r), ins.length);
-    const landing = landingY.get(r)!;
+    const { sx, ex } = attach.get(r)!;
+    const segments = segmentOf.get(r)!;
+    const landingY = rowYOf(r.toBand - 1, segments.landing);
 
     if (r.toBand - r.fromBand === 1) {
       drawPath(canvas, [
         [sx, sy],
-        [sx, landing],
-        [ex, landing],
+        [sx, landingY],
+        [ex, landingY],
         [ex, ey],
       ]);
     } else {
-      const jog = jogY.get(r)!;
-      const mx = marginX.get(r)!;
+      const c = descentX.get(r)!;
+      const exitY = rowYOf(r.fromBand, segments.exit!);
       drawPath(canvas, [
         [sx, sy],
-        [sx, jog],
-        [mx, jog],
-        [mx, landing],
-        [ex, landing],
+        [sx, exitY],
+        [c, exitY],
+        [c, landingY],
+        [ex, landingY],
         [ex, ey],
       ]);
     }
   }
 
-  // -- legend --
-  // The legend is a key, not an animation: its in-progress glyph stays on
-  // frame 0 no matter what the boxes are doing.
+  // -- legend, each glyph in its real color --
   const legendOpts: RenderOptions = { ...opts, spinnerFrame: 0 };
-  const legend = [
-    `${glyphFor('planned', legendOpts)} planned`,
-    `${glyphFor('in-progress', legendOpts)} in-progress`,
-    `${glyphFor('done', legendOpts)} done`,
-    `${glyphFor('regressed', legendOpts)} regressed`,
-  ].join('   ');
-  canvas.text(LEFT_MARGIN, legendY, legend, 'dim');
+  let lx = LEFT_MARGIN;
+  const legendEntries: ReadonlyArray<readonly [NodeStatus, Style]> = [
+    ['planned', 'dim'],
+    ['in-progress', 'amber'],
+    ['done', 'green'],
+    ['regressed', 'red'],
+  ];
+  for (const [status, style] of legendEntries) {
+    if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, '   ', 'none');
+    lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+  }
 
   return canvas;
 }
@@ -565,7 +633,8 @@ function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions): void {
   const inner = w - 2;
 
   canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
-  canvas.text(x, y + 1, skin.v + ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style);
+  canvas.text(x, y + 1, skin.v, skin.style);
+  canvas.text(x + 1, y + 1, ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style, true);
   canvas.text(x + w - 1, y + 1, skin.v, skin.style);
   canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
 }

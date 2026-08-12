@@ -145,8 +145,8 @@ describe('renderMap', () => {
     );
     // The window starts INSIDE the green box: the color must be reopened
     // and every opened style must be closed again within the line.
-    expect(windowed.lines[0]).toContain('\x1b[32m');
-    const codes = windowed.lines[0]!.match(/\x1b\[\d+m/g) ?? [];
+    expect(windowed.lines[0]).toContain('32m');
+    const codes = windowed.lines[0]!.match(/\x1b\[[\d;]+m/g) ?? [];
     expect(codes.filter((c) => c !== '\x1b[0m').length).toBe(codes.filter((c) => c === '\x1b[0m').length);
   });
 
@@ -179,12 +179,21 @@ describe('renderMap', () => {
     expect([...foundationTop].filter((ch) => ch === '┷')).toHaveLength(2); // both landed, different columns
   });
 
-  it('routes skip-level edges outside the content, never through a box', () => {
+  it('threads skip-level edges between boxes instead of detouring to the margin', () => {
     const lines = renderMap(sampleMap(), MONO);
-    const content = Math.max(
-      ...lines.filter((l) => l.includes('┃') || l.includes('╎')).map((l) => displayWidth(l.trimEnd())),
-    );
-    const barWidth = Math.max(...lines.filter((l) => l.includes('━')).map((l) => displayWidth(l.trimEnd())));
-    expect(barWidth).toBeGreaterThan(content); // the margin corridor exists right of all boxes
+    // no margin corridor needed: no wiring or box renders wider than the band
+    // bars (the legend row is prose, not part of the circuit)
+    const barWidth = Math.max(...lines.filter((l) => l.includes('━')).map((l) => displayWidth(l)));
+    for (const line of lines.filter((l) => !l.includes('planned'))) {
+      expect(displayWidth(line)).toBeLessThanOrEqual(barWidth);
+    }
+    // the wire passes BETWEEN the contract boxes without corrupting either
+    const contractsBody = lines.find((l) => l.includes('状态存储'))!;
+    expect(contractsBody).toContain('■ 状态存储');
+    expect(contractsBody).toContain('· Watcher');
+    // both the straight edge and the threaded skip edge land on the foundation
+    const groundBar = lines.findIndex((l) => l.includes('原语层'));
+    const domainTop = lines.slice(groundBar).find((l) => l.includes('┏'))!;
+    expect([...domainTop].filter((ch) => ch === '┷')).toHaveLength(2);
   });
 });
