@@ -1,90 +1,76 @@
 {
   "version": 1,
-  "title": "多页支持 v0.7.0 — feature/pages",
+  "title": "梅勒斯地图 · 功能总览",
+  "kind": "architecture",
   "layers": [
     {
-      "id": "domain",
-      "name": "领域层",
+      "id": "base",
+      "name": "地基功能",
       "rank": 0
     },
     {
-      "id": "store",
-      "name": "存储层",
+      "id": "upper",
+      "name": "组合功能",
       "rank": 1
-    },
-    {
-      "id": "server",
-      "name": "服务层",
-      "rank": 2
-    },
-    {
-      "id": "pane",
-      "name": "面板层",
-      "rank": 3
     }
   ],
   "nodes": [
     {
-      "id": "map-status",
-      "label": "mapStatus聚合",
-      "layer": "domain",
-      "status": "done",
-      "detail": "整图状态推导（regressed>in-progress>done>planned），与 groupStatus 共享 aggregateStatus。标签栏每页的状态字形用它。已写码，未验证。",
-      "evidence": "vitest: mapStatus 规格 (ops.test)"
+      "id": "zoom",
+      "label": "语义缩放",
+      "layer": "base",
+      "status": "planned",
+      "detail": "滚轮阶梯:先几何缩放,内容失去意义才切模式;最远端分组聚合。双击下潜看它的开发图。",
+      "submap": "semantic-zoom"
     },
     {
-      "id": "page-store",
-      "label": "页寻址与列举",
-      "layer": "store",
-      "status": "done",
-      "detail": "页=文件：默认页维持 mellos-mapping.json，命名页在 mellos-mapping.pages/<slug>.json。makePageId 复用领域 ID 语法；listPageFiles 默认页优先、命名页按 slug 排序。已写码，未验证。",
-      "evidence": "vitest: makePageId/pageFilePath/listPageFiles 16 specs"
+      "id": "pages",
+      "label": "多页",
+      "layer": "base",
+      "status": "planned",
+      "detail": "页=文件,一 effort 一页;标签栏切换,后台页变化亮灯。子图链接指向面板分隔线开发页作示例。",
+      "submap": "panel-divider"
     },
     {
-      "id": "page-param",
-      "label": "工具page参数",
-      "layer": "server",
-      "status": "done",
-      "detail": "四个 mmap_* 工具加可选 page；每次调用 load→apply→save 定向到该页文件。文件级原子写使并发会话各写各页互不冲突。已写码，未验证。",
-      "evidence": "vitest: 分页写入隔离集成测试 (InMemory MCP)"
+      "id": "kinds",
+      "label": "图种",
+      "layer": "upper",
+      "status": "planned",
+      "detail": "同一台分层 DAG 机器的五种读法:dev/架构/数据流/行为树/时序。双击看它的开发图。",
+      "submap": "diagram-kinds"
     },
     {
-      "id": "page-input",
-      "label": "页切换按键",
-      "layer": "pane",
-      "status": "done",
-      "detail": "Tab 下一页、Shift+Tab（CSI Z）上一页、数字 1-9 直达。纯解析器扩展。已写码，未验证。",
-      "evidence": "vitest: Tab/Shift+Tab/1-9 解析规格"
+      "id": "dive",
+      "label": "子图下潜",
+      "layer": "upper",
+      "status": "planned",
+      "detail": "节点 submap 指向子页,⊞ 徽标,双击下潜,Backspace 返回。图中图,全部由页组合而成。",
+      "submap": "submaps"
     },
     {
-      "id": "tab-bar",
-      "label": "标签栏渲染",
-      "layer": "pane",
-      "status": "done",
-      "detail": "多页时顶部一行：每页 标记+状态字形+标题，当前页高亮，有新改动的页提亮。纯函数返回分段与点击区间。",
-      "evidence": "vitest: pageTabRow 三规格 + 管道冒烟双页渲染"
-    },
-    {
-      "id": "page-switch",
-      "label": "多页轮询与切换",
-      "layer": "pane",
-      "status": "done",
-      "detail": "每 tick 发现页文件、按 mtime 增量加载；每页独立的平移/缩放/钉住状态；点击标签或按键切页，不自动跳页，改动只亮点提示。",
-      "evidence": "管道冒烟: 双页标签栏+活动页渲染; 键鼠切换待真机复核"
+      "id": "seq-demo",
+      "label": "时序示例",
+      "layer": "upper",
+      "status": "planned",
+      "detail": "经典调用/返回时序的活例子:一次 mmap 调用的往返。双击观看。",
+      "submap": "demo-sequence"
     }
   ],
   "edges": [
     {
-      "from": "page-param",
-      "to": "page-store"
+      "from": "kinds",
+      "to": "zoom",
+      "label": "中性渲染骑在缩放几何上"
     },
     {
-      "from": "tab-bar",
-      "to": "map-status"
+      "from": "kinds",
+      "to": "pages",
+      "label": "图种按页声明"
     },
     {
-      "from": "page-switch",
-      "to": "page-store"
+      "from": "dive",
+      "to": "pages",
+      "label": "下潜=切页"
     }
   ]
 }

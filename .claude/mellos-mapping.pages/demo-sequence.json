@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "title": "一次 mmap 调用的时序",
+  "title": "一次 mmap 调用的往返",
   "kind": "sequence",
   "layers": [
     {
@@ -22,6 +22,11 @@
       "id": "t3",
       "name": "第4步",
       "rank": 3
+    },
+    {
+      "id": "t4",
+      "name": "第5步",
+      "rank": 4
     }
   ],
   "lanes": [
@@ -34,55 +39,67 @@
       "label": "MCP服务器"
     },
     {
-      "id": "pane",
-      "label": "终端面板"
+      "id": "file",
+      "label": "状态文件"
     }
   ],
   "nodes": [
     {
       "id": "call",
-      "label": "调用 mmap_declare",
+      "label": "发起 mmap_declare",
       "layer": "t0",
       "status": "planned",
       "lane": "claude"
     },
     {
-      "id": "commit",
-      "label": "校验并原子落盘",
+      "id": "validate",
+      "label": "重放校验批次",
       "layer": "t1",
       "status": "planned",
       "lane": "server"
     },
     {
-      "id": "poll",
-      "label": "轮询发现 mtime 变化",
+      "id": "commit",
+      "label": "临时文件原子换名",
       "layer": "t2",
       "status": "planned",
-      "lane": "pane"
+      "lane": "file"
     },
     {
-      "id": "paint",
-      "label": "重画地图",
+      "id": "reply",
+      "label": "组装 map now 摘要",
       "layer": "t3",
       "status": "planned",
-      "lane": "pane"
+      "lane": "server"
+    },
+    {
+      "id": "receive",
+      "label": "收到摘要",
+      "layer": "t4",
+      "status": "planned",
+      "lane": "claude"
     }
   ],
   "edges": [
     {
-      "from": "commit",
+      "from": "validate",
       "to": "call",
-      "label": "声明批次"
+      "label": "声明批次(进入)"
     },
     {
-      "from": "poll",
+      "from": "commit",
+      "to": "validate",
+      "label": "写入(进入)"
+    },
+    {
+      "from": "reply",
       "to": "commit",
-      "label": "状态文件"
+      "label": "落盘完成(返回)"
     },
     {
-      "from": "paint",
-      "to": "poll",
-      "label": "新地图"
+      "from": "receive",
+      "to": "reply",
+      "label": "map now 摘要(返回)"
     }
   ]
 }

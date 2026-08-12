@@ -17,6 +17,7 @@ import {
   type NodeId,
   type NodeKind,
   type Result,
+  type SubmapRef,
 } from '../domain/types.js';
 import type { BoxHit } from '../render/render.js';
 import {
@@ -170,11 +171,11 @@ describe('diagram kinds in the panel', () => {
     return map;
   }
 
-  it('edge labels ride along in the wire lines', () => {
+  it('edge labels ride along in the wire lines, worded in time on sequence pages', () => {
     const panel = nodePanel(sequencePage(), 'check', true, 80, false)!;
-    expect(panel[2]!.text).toBe('uses →  · 发起登录 (用户名+口令)');
+    expect(panel[2]!.text).toBe('after →  · 发起登录 (用户名+口令)');
     const reqPanel = nodePanel(sequencePage(), 'req', true, 80, false)!;
-    expect(reqPanel[3]!.text).toBe('used by ←  · 校验凭证 (用户名+口令)');
+    expect(reqPanel[3]!.text).toBe('before ←  · 校验凭证 (用户名+口令)');
   });
 
   it('neutral pages hide the status word and show kind glyph, lane and kind slug', () => {
@@ -182,6 +183,13 @@ describe('diagram kinds in the panel', () => {
     expect(panel[0]!.text).toBe('· 发起登录 [req] · 第1步 · 客户端 · action');
     expect(panel[0]!.text).not.toContain('planned');
     expect(panel[0]!.sgr).toBe('1'); // bold, no status color
+  });
+
+  it('a sub-map link shows in the panel header', () => {
+    let map = sample();
+    map = must(updateNode(map, { id: nid('core'), submap: 'core-internals' as SubmapRef }));
+    const panel = nodePanel(map, 'core', true, 80, false)!;
+    expect(panel[0]!.text).toContain('⊞ core-internals');
   });
 
   it('the dashboard says what kind of diagram this is instead of counting progress', () => {

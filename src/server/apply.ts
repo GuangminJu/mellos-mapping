@@ -33,6 +33,7 @@ import {
   type NodeKind,
   type NodeStatus,
   type Result,
+  type SubmapRef,
   describeMapError,
   err,
   makeGroupId,
@@ -42,6 +43,7 @@ import {
   makeNodeId,
   makeNodeKind,
   makeNodeStatus,
+  makeSubmapRef,
   ok,
 } from '../domain/types.js';
 
@@ -66,6 +68,7 @@ export interface DeclareInput {
         readonly group?: string | undefined;
         readonly kind?: string | undefined;
         readonly lane?: string | undefined;
+        readonly submap?: string | undefined;
       }>
     | undefined;
   readonly edges?:
@@ -86,6 +89,8 @@ export interface UpdateInput {
     readonly kind?: string | null | undefined;
     /** A lane id joins that lane; null leaves the current one. */
     readonly lane?: string | null | undefined;
+    /** A page slug links a child map; null unlinks it. */
+    readonly submap?: string | null | undefined;
   }>;
 }
 
@@ -161,6 +166,12 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
       lane = parsed.value;
     }
+    let submap: SubmapRef | undefined;
+    if (n.submap !== undefined) {
+      const parsed = makeSubmapRef(n.submap);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      submap = parsed.value;
+    }
     const declared = declareNode(next, {
       id: id.value,
       label: n.label,
@@ -170,6 +181,7 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       ...(group !== undefined ? { group } : {}),
       ...(kind !== undefined ? { kind } : {}),
       ...(lane !== undefined ? { lane } : {}),
+      ...(submap !== undefined ? { submap } : {}),
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -221,6 +233,13 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
       lane = parsed.value;
     }
+    let submap: SubmapRef | null | undefined;
+    if (u.submap === null) submap = null;
+    else if (u.submap !== undefined) {
+      const parsed = makeSubmapRef(u.submap);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      submap = parsed.value;
+    }
     const updated = updateNode(next, {
       id: id.value,
       ...(status !== undefined ? { status } : {}),
@@ -230,6 +249,7 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
       ...(group !== undefined ? { group } : {}),
       ...(kind !== undefined ? { kind } : {}),
       ...(lane !== undefined ? { lane } : {}),
+      ...(submap !== undefined ? { submap } : {}),
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;

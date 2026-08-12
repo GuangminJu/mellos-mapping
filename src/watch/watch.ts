@@ -53,10 +53,12 @@ import {
   zoomLabel,
 } from '../render/render.js';
 import {
+  type PageId,
   STATE_FILE_RELATIVE_PATH,
   describeStoreError,
   listPageFiles,
   loadMapFile,
+  pageFilePath,
   pageIdOfFile,
 } from '../store/store.js';
 import { parseInput } from './input.js';
@@ -338,15 +340,19 @@ export function nodePanel(
     ...(laneLabel !== undefined ? [laneLabel] : []),
     ...(node.kind !== undefined ? [node.kind as string] : []),
     ...(neutral ? [] : [node.status]),
+    ...(node.submap !== undefined ? [`${unicode ? '⊞' : '+'} ${node.submap}`] : []),
   ];
+  // On sequence pages an edge is a moment in time, not a dependency:
+  // "after" = the earlier events this one follows, "before" = the later ones.
+  const [usesWord, usedByWord] = map.kind === 'sequence' ? ['after', 'before'] : ['uses', 'used by'];
   const lines: PanelLine[] = [
     {
       text: fitWidth(`${headParts.join(' · ')}${pin}`, width),
       sgr: neutral ? '1' : `${STATUS_SGR[node.status]};1`,
     },
     { text: fitWidth(`evidence: ${node.evidence ?? '—'}`, width), sgr: '90' },
-    { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
-    { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
+    { text: fitWidth(`${usesWord} ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
+    { text: fitWidth(`${usedByWord} ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
   ];
   const notes = node.detail !== undefined ? wrapWidth(node.detail, width) : ['(no design notes yet)'];
   const room = Math.max(0, rows - lines.length);
@@ -432,6 +438,10 @@ function main(): void {
   let pendingInput = '';
   let panelContentRows = PANEL_CONTENT_ROWS;
   let dividerDrag = false;
+  // sub-map navigation: double-click dives, Backspace climbs back out
+  let lastClick: { id: string; at: number } | undefined;
+  const diveStack: string[] = [];
+  let flash: { text: string; until: number } | undefined;
 
   const tabRows = (): number => (pageFiles.length > 1 ? 1 : 0);
   const viewHeight = (): number =>
@@ -559,7 +569,10 @@ function main(): void {
     const zoomTag = `${cfg.unicode ? '⊕' : 'zoom'} ${zoomLabel(zoom)}`;
     const hint = !interactive
       ? cfg.file
-      : `${zoomTag} · wheel zoom · ` + (pannable ? 'drag pan · ' : '') + 'hover/click · 0 reset · q quit';
+      : (flash !== undefined ? `${flash.text} · ` : '') +
+        `${zoomTag} · wheel zoom · ` +
+        (pannable ? 'drag pan · ' : '') +
+        'hover/click · 0 reset · q quit';
     // A footer wider than the pane would wrap and shear the whole frame.
     const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
     const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;
@@ -635,6 +648,7 @@ function main(): void {
 
     // any page spinning keeps the animation alive
     if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
+    if (flash !== undefined && Date.now() > flash.until) flash = undefined; // footer message expires
     paint();
   };
 
@@ -744,8 +758,27 @@ function main(): void {
                 const target = pageFiles[tabHit.index];
                 if (target !== undefined && target !== activeFile) switchPage(target);
               } else {
-                // a press that never dragged is a click: pin, or unpin on empty
-                selectedId = hitTest(event.x, event.y);
+                // a press that never dragged is a click: pin, or unpin on empty.
+                // A second click on the same node within the window is a
+                // double-click — dive into its sub-map when it links one.
+                const id = hitTest(event.x, event.y);
+                const now = Date.now();
+                if (id !== undefined && lastClick?.id === id && now - lastClick.at <= 450) {
+                  const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
+                  if (submap !== undefined && activeFile !== undefined) {
+                    const target = pageFilePath(cfg.file, submap as unknown as PageId);
+                    if (pageFiles.includes(target)) {
+                      diveStack.push(activeFile);
+                      switchPage(target);
+                    } else {
+                      flash = { text: `submap "${submap as string}" has no page yet`, until: now + 2500 };
+                    }
+                  }
+                  lastClick = undefined;
+                } else {
+                  lastClick = id !== undefined ? { id, at: now } : undefined;
+                }
+                selectedId = id;
               }
               dirty = true;
             }
@@ -766,6 +799,16 @@ function main(): void {
             const target = pageFiles[event.index];
             if (target !== undefined && target !== activeFile) {
               switchPage(target);
+              dirty = true;
+            }
+            break;
+          }
+          case 'back': {
+            // climb out of the last dive; a stale parent (page deleted) is skipped
+            let parent = diveStack.pop();
+            while (parent !== undefined && !pageFiles.includes(parent)) parent = diveStack.pop();
+            if (parent !== undefined && parent !== activeFile) {
+              switchPage(parent);
               dirty = true;
             }
             break;

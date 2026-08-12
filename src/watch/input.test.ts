@@ -59,6 +59,11 @@ describe('SGR mouse', () => {
     expect(parseInput('-').events).toEqual([{ kind: 'zoom', delta: -1 }]);
   });
 
+  it('maps Backspace to climbing out of a sub-map dive', () => {
+    expect(parseInput('\x7f').events).toEqual([{ kind: 'back' }]);
+    expect(parseInput('\x08').events).toEqual([{ kind: 'back' }]);
+  });
+
   it('maps Tab / Shift+Tab to page cycling and digits 1-9 to page jumps', () => {
     expect(parseInput('\t').events).toEqual([{ kind: 'next-page' }]);
     expect(parseInput('\x1b[Z').events).toEqual([{ kind: 'prev-page' }]);

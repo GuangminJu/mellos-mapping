@@ -19,6 +19,7 @@ import {
   type NodeId,
   type NodeKind,
   type Result,
+  type SubmapRef,
 } from '../domain/types.js';
 import {
   listPageFiles,
@@ -141,7 +142,14 @@ describe('boundary validation (P1)', () => {
     map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
     map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
     map = must(
-      declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: laid('client'), kind: 'action' as NodeKind }),
+      declareNode(map, {
+        id: nid('req'),
+        label: '发起登录',
+        layer: lid('t0'),
+        lane: laid('client'),
+        kind: 'action' as NodeKind,
+        submap: 'login-details' as SubmapRef,
+      }),
     );
     map = must(declareNode(map, { id: nid('verify'), label: '校验凭证', layer: lid('t1'), lane: laid('server') }));
     map = must(linkNodes(map, nid('verify'), nid('req'), '用户名+口令'));

@@ -86,6 +86,11 @@ restart — never silently skip the map.
 - **One effort = one page.** A genuinely separate effort (parallel session,
   unrelated subsystem) gets its own page via the `page` parameter — don't mix
   efforts or overwrite a finished map.
+- **Sub-maps: dive, don't cram.** When a node's internals genuinely deserve
+  their own picture, declare a separate page and set `submap: <page-slug>` on
+  the node — the pane badges it ⊞; double-click dives in, Backspace climbs
+  back. Your judgment: most nodes need no sub-map; create one only when the
+  child map would carry a handful of nodes of its own.
 
 ## Diagram kinds
 
@@ -100,9 +105,12 @@ picture of a system rather than a picture of work; one diagram = one page.
 - `behavior-tree` — leaves (actions) at rank 0, root on top; node `kind`
   selector | sequence | parallel | decorator | condition | action renders
   as a glyph. Also fits mind maps and WBS.
-- `sequence` — rank = time step, EARLIEST at rank 0: later events stand on
-  earlier ones. Declare participants as `lanes`, put each event node in its
-  participant's lane, label edges with the message.
+- `sequence` — the classic call/return diagram. rank = time step, rank 0 =
+  earliest; the pane draws sequence pages TOP-DOWN (earliest step on top,
+  under the participant headers). Declare participants as `lanes`; every
+  call AND every return is its own event node in the ACTING participant's
+  lane, so a round trip zigzags into the callee's lane and back out. Label
+  each edge with the message.
 - State machines are out of scope: transitions cycle, and edges here only
   point downward. Say so rather than forcing one in.
 
