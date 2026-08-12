@@ -288,6 +288,8 @@ function main(): void {
   let spinnerFrame = 0;
   let map: MellosMap | undefined;
   let notice = `waiting for ${cfg.file} ...`;
+  let lastCols = process.stdout.columns ?? 0;
+  let lastRows = process.stdout.rows ?? 0;
 
   // viewport pan/zoom + interaction state
   let offsetX = 0;
@@ -350,9 +352,11 @@ function main(): void {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      body = [notice];
+      body = [fitWidth(notice, Math.max(1, cols - 1))];
     }
-    if (notice !== '' && map !== undefined) body[body.length - 1] = `  ${notice}`;
+    if (notice !== '' && map !== undefined) {
+      body[body.length - 1] = fitWidth(`  ${notice}`, Math.max(1, cols - 1));
+    }
 
     // -- detail panel --
     const panelWidth = Math.max(10, cols - 2);
@@ -377,7 +381,9 @@ function main(): void {
     const hint = !interactive
       ? cfg.file
       : `${zoomTag} · wheel zoom · ` + (pannable ? 'drag pan · ' : '') + 'hover/click · 0 reset · q quit';
-    const footer = cfg.color ? `\x1b[90m ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
+    // A footer wider than the pane would wrap and shear the whole frame.
+    const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
+    const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;
 
     let frame = HOME;
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? '') + ERASE_LINE_END + '\n';
@@ -389,7 +395,26 @@ function main(): void {
     }
   };
 
+  /**
+   * A size change needs more than a repaint: ConPTY (Windows) rewraps the
+   * old screen content on resize, leaving artifacts a HOME+erase-per-line
+   * frame never touches — so clear everything and force a full redraw.
+   * Called from the 'resize' event AND from the poll below, because the
+   * event is not reliably delivered on every Windows terminal host.
+   */
+  const handleResize = (): void => {
+    lastCols = process.stdout.columns ?? lastCols;
+    lastRows = process.stdout.rows ?? lastRows;
+    lastFrame = '';
+    process.stdout.write(CLEAR_ALL);
+    paint();
+  };
+
   const tick = (): void => {
+    if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
+      handleResize();
+    }
+
     let mtimeMs: number | undefined;
     try {
       mtimeMs = statSync(cfg.file).mtimeMs;
@@ -507,7 +532,7 @@ function main(): void {
       }
       if (dirty) paint();
     });
-    process.stdout.on('resize', paint);
+    process.stdout.on('resize', handleResize);
   }
 
   tick();

@@ -22231,7 +22231,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.6.0";
+var SERVER_VERSION = "0.6.1";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({
