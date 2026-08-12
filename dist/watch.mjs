@@ -723,6 +723,7 @@ function main() {
     const viewH = Math.max(1, rows - 1);
     let body;
     let panned = "";
+    let pannable = false;
     if (map !== void 0) {
       const windowed = renderMapWindow(
         map,
@@ -737,13 +738,14 @@ function main() {
         paint();
         return;
       }
+      pannable = maxX > 0 || maxY > 0;
       body = windowed.lines;
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
       body = [notice];
     }
     if (notice !== "" && map !== void 0) body[body.length - 1] = `  ${notice}`;
-    const hint = interactive ? "drag/wheel pan \xB7 hjkl/arrows \xB7 0 reset \xB7 q quit" : cfg.file;
+    const hint = !interactive ? cfg.file : pannable ? "drag/wheel pan \xB7 hjkl/arrows \xB7 0 reset \xB7 q quit" : "map fits pane \xB7 q quit";
     const footer = cfg.color ? `${DIM} ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
     let frame = HOME;
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";

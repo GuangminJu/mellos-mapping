@@ -108,6 +108,7 @@ function main(): void {
 
     let body: string[];
     let panned = '';
+    let pannable = false;
     if (map !== undefined) {
       const windowed = renderMapWindow(
         map,
@@ -123,6 +124,7 @@ function main(): void {
         paint();
         return;
       }
+      pannable = maxX > 0 || maxY > 0;
       body = windowed.lines;
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
@@ -130,7 +132,13 @@ function main(): void {
     }
     if (notice !== '' && map !== undefined) body[body.length - 1] = `  ${notice}`;
 
-    const hint = interactive ? 'drag/wheel pan · hjkl/arrows · 0 reset · q quit' : cfg.file;
+    // Tell the user WHY dragging does nothing when everything is visible —
+    // silent inertness reads as breakage.
+    const hint = !interactive
+      ? cfg.file
+      : pannable
+        ? 'drag/wheel pan · hjkl/arrows · 0 reset · q quit'
+        : 'map fits pane · q quit';
     const footer = cfg.color ? `${DIM} ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
 
     let frame = HOME;
