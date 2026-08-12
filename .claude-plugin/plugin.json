@@ -1,0 +1,19 @@
+{
+  "name": "mellos-mapping",
+  "displayName": "Mellos Mapping · 梅勒斯地图",
+  "version": "0.5.0",
+  "description": "梅勒斯地图 — a live layered dependency map for bottom-up development: ghost the design first, then light nodes up from the bottom as they are built and verified",
+  "author": {
+    "name": "Mellos"
+  },
+  "homepage": "https://github.com/GuangminJu/mellos-mapping",
+  "repository": "https://github.com/GuangminJu/mellos-mapping",
+  "license": "MIT",
+  "keywords": [
+    "visualization",
+    "bottom-up",
+    "architecture",
+    "dependency-map",
+    "progress"
+  ]
+}

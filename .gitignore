@@ -1,0 +1,6 @@
+# dependencies
+node_modules/
+
+# note: dist/ is intentionally COMMITTED.
+# Claude Code installs plugins by cloning this repo without running any
+# build step, so the bundled MCP server and watcher must ship in-tree.
