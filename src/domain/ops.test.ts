@@ -182,6 +182,15 @@ describe('updates are unpoliced records (ledger, not judge)', () => {
     expect(map.nodes[0]).toMatchObject({ label: 'Result<T, E>', status: 'in-progress', evidence: 'wip' });
   });
 
+  it('records design notes at declaration and via update', () => {
+    let map = must(
+      declareNode(threeBands(), { id: nid('a'), label: 'A', layer: lid('primitives'), detail: '职责：装下一切。' }),
+    );
+    expect(map.nodes[0]?.detail).toBe('职责：装下一切。');
+    map = must(updateNode(map, { id: nid('a'), detail: '改主意了。' }));
+    expect(map.nodes[0]).toMatchObject({ detail: '改主意了。', label: 'A' });
+  });
+
   it('refuses updates to nodes that do not exist', () => {
     expect(mustFail(updateNode(base(), { id: nid('ghost'), status: 'done' })).kind).toBe('unknown-node');
   });

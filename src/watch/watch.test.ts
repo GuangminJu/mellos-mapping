@@ -1,5 +1,6 @@
 /**
- * Spec for the watcher's pure helpers: the resident detail rows.
+ * Spec for the watcher's pure helpers: width fitting/wrapping and the
+ * fixed-height detail panel (node view and map dashboard).
  * (The interactive shell itself is I/O and stays untested by design.)
  */
 
@@ -7,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { declareLayer, declareNode, linkNodes, updateNode } from '../domain/ops.js';
 import { EMPTY_MAP, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
-import { nodeDetails } from './watch.js';
+import { fitWidth, mapPanel, nodePanel, wrapWidth } from './watch.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -20,35 +21,70 @@ function sample(): MellosMap {
   let map = EMPTY_MAP;
   map = must(declareLayer(map, { id: lid('base'), name: '原语层', rank: 0 }));
   map = must(declareLayer(map, { id: lid('top'), name: '编排层', rank: 1 }));
-  map = must(declareNode(map, { id: nid('core'), label: '核心', layer: lid('base'), status: 'done' }));
+  map = must(
+    declareNode(map, {
+      id: nid('core'),
+      label: '核心',
+      layer: lid('base'),
+      status: 'done',
+      detail: '持有全部结构不变量：层全序、节点唯一归属、边严格向下。纯函数，零异常控制流。',
+    }),
+  );
   map = must(updateNode(map, { id: nid('core'), evidence: 'vitest: 9 passed' }));
   map = must(declareNode(map, { id: nid('shell'), label: '外壳', layer: lid('top') }));
-  map = must(declareNode(map, { id: nid('cli'), label: 'CLI', layer: lid('top') }));
+  map = must(declareNode(map, { id: nid('cli'), label: 'CLI', layer: lid('top'), status: 'in-progress' }));
   map = must(linkNodes(map, nid('shell'), nid('core')));
   map = must(linkNodes(map, nid('cli'), nid('core')));
   return map;
 }
 
-describe('nodeDetails', () => {
-  it('shows status, layer, evidence and both wire directions by label', () => {
-    const [line1, line2] = nodeDetails(sample(), 'core', true)!;
-    expect(line1).toBe('■ 核心 [core] · 原语层 · done — vitest: 9 passed');
-    expect(line2).toBe('uses → —   used by ← 外壳, CLI');
+describe('fitWidth / wrapWidth', () => {
+  it('fits CJK text to a display width with an ellipsis', () => {
+    expect(fitWidth('状态存储状态存储', 8)).toBe('状态存…');
+    expect(fitWidth('short', 8)).toBe('short');
   });
 
-  it('shows uses for an upper node and an em-dash for empty directions', () => {
-    const [line1, line2] = nodeDetails(sample(), 'shell', true)!;
-    expect(line1).toBe('· 外壳 [shell] · 编排层 · planned');
-    expect(line2).toBe('uses → 核心   used by ← —');
+  it('wraps by display width, honoring embedded newlines', () => {
+    expect(wrapWidth('一二三四五', 4)).toEqual(['一二', '三四', '五']);
+    expect(wrapWidth('ab\ncd', 10)).toEqual(['ab', 'cd']);
+    expect(wrapWidth('', 10)).toEqual([]);
+  });
+});
+
+describe('nodePanel', () => {
+  it('is exactly six rows: header, evidence, wires with neighbour glyphs, design notes', () => {
+    const panel = nodePanel(sample(), 'core', true, 80, false)!;
+    expect(panel).toHaveLength(6);
+    expect(panel[0]).toEqual({ text: '■ 核心 [core] · 原语层 · done', sgr: '32;1' });
+    expect(panel[1]).toEqual({ text: 'evidence: vitest: 9 passed', sgr: '90' });
+    expect(panel[2]!.text).toBe('uses →  —');
+    // neighbours carry their own status glyphs: ghost shell, spinning cli
+    expect(panel[3]!.text).toBe('used by ←  · 外壳  ⠿ CLI');
+    expect(panel[4]!.text).toContain('持有全部结构不变量');
   });
 
-  it('falls back to ASCII arrows and glyphs', () => {
-    const [line1, line2] = nodeDetails(sample(), 'core', false)!;
-    expect(line1.startsWith('# 核心')).toBe(true);
-    expect(line2).toContain('uses -> —');
+  it('marks a pinned node and falls back for missing design notes', () => {
+    const pinned = nodePanel(sample(), 'shell', true, 80, true)!;
+    expect(pinned[0]!.text).toContain('⊙ pinned');
+    expect(pinned[4]).toEqual({ text: '(no design notes yet)', sgr: '90' });
+  });
+
+  it('clips overlong design notes with an ellipsis on the last row', () => {
+    const narrow = nodePanel(sample(), 'core', true, 20, false)!;
+    expect(narrow).toHaveLength(6);
+    expect(narrow[5]!.text.endsWith('…')).toBe(true);
   });
 
   it('returns undefined for an unknown node', () => {
-    expect(nodeDetails(sample(), 'ghost', true)).toBeUndefined();
+    expect(nodePanel(sample(), 'ghost', true, 80, false)).toBeUndefined();
+  });
+});
+
+describe('mapPanel (dashboard)', () => {
+  it('shows title, totals and per-status counts', () => {
+    const panel = mapPanel(sample(), true, 80);
+    expect(panel).toHaveLength(6);
+    expect(panel[1]!.text).toBe('2 layers · 3 nodes · 2 edges');
+    expect(panel[2]!.text).toBe('■ 1 done   ⠿ 1 in-progress   · 1 planned');
   });
 });

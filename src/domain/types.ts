@@ -71,6 +71,8 @@ export interface MapNode {
   readonly status: NodeStatus;
   /** Verification evidence for `done`, or the observed breakage for `regressed`. */
   readonly evidence?: string;
+  /** Design notes: responsibility, contract, key decisions. Free text. */
+  readonly detail?: string;
 }
 
 /** `from` USES `to`. Must point strictly downward (invariant I4). */

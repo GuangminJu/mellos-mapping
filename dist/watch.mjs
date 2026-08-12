@@ -559,7 +559,8 @@ function declareNode(map, input) {
     id: input.id,
     label: input.label,
     layer: input.layer,
-    status: input.status ?? "planned"
+    status: input.status ?? "planned",
+    ...input.detail !== void 0 ? { detail: input.detail } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -582,7 +583,8 @@ function updateNode(map, input) {
     ...node,
     ...input.status !== void 0 ? { status: input.status } : {},
     ...input.label !== void 0 ? { label: input.label } : {},
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {}
+    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
+    ...input.detail !== void 0 ? { detail: input.detail } : {}
   };
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
 }
@@ -642,7 +644,14 @@ function parseMap(raw, path) {
     if (!status.ok) return err({ kind: "invariant-violation", path, violation: status.error });
     const label = optionalString(rawNode["label"]);
     if (label === void 0) return err({ kind: "bad-shape", path, detail: `nodes[${i}] needs a string label` });
-    const declared = declareNode(map, { id: id.value, label, layer: layer.value, status: status.value });
+    const detail = optionalString(rawNode["detail"]);
+    const declared = declareNode(map, {
+      id: id.value,
+      label,
+      layer: layer.value,
+      status: status.value,
+      ...detail !== void 0 ? { detail } : {}
+    });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
     const evidence = optionalString(rawNode["evidence"]);
@@ -791,7 +800,8 @@ var ERASE_LINE_END = "\x1B[K";
 var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
 var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
 var RESET = "\x1B[0m";
-var DETAIL_ROWS = 2;
+var PANEL_CONTENT_ROWS = 6;
+var PANEL_ROWS = 1 + PANEL_CONTENT_ROWS;
 var STATUS_GLYPH = {
   planned: ["\xB7", "."],
   "in-progress": ["\u283F", "*"],
@@ -816,19 +826,77 @@ function fitWidth(s, width) {
   }
   return out + "\u2026";
 }
-function nodeDetails(map, focusId, unicode) {
+function wrapWidth(s, width) {
+  const lines = [];
+  let line = "";
+  let w = 0;
+  for (const ch of s.replace(/\r/g, "")) {
+    if (ch === "\n") {
+      lines.push(line);
+      line = "";
+      w = 0;
+      continue;
+    }
+    const cw = displayWidth(ch);
+    if (w + cw > width) {
+      lines.push(line);
+      line = "";
+      w = 0;
+    }
+    line += ch;
+    w += cw;
+  }
+  if (line !== "") lines.push(line);
+  return lines;
+}
+function nodePanel(map, focusId, unicode, width, pinned) {
   const node = map.nodes.find((n) => n.id === focusId);
   if (!node) return void 0;
+  const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? node.layer;
-  const glyph = STATUS_GLYPH[node.status][unicode ? 0 : 1];
-  const evidence = node.evidence !== void 0 ? ` \u2014 ${node.evidence}` : "";
-  const labelOf = (id) => map.nodes.find((n) => n.id === id)?.label ?? id;
-  const uses = map.edges.filter((e) => e.from === node.id).map((e) => labelOf(e.to));
-  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => labelOf(e.from));
-  const arrow = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
+  const [right, left] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
+  const withGlyph = (id) => {
+    const n = map.nodes.find((x) => x.id === id);
+    return n ? `${g(n.status)} ${n.label}` : id;
+  };
+  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withGlyph(e.to));
+  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withGlyph(e.from));
+  const pin = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
+  const lines = [
+    {
+      text: fitWidth(`${g(node.status)} ${node.label} [${node.id}] \xB7 ${layerName} \xB7 ${node.status}${pin}`, width),
+      sgr: `${STATUS_SGR[node.status]};1`
+    },
+    { text: fitWidth(`evidence: ${node.evidence ?? "\u2014"}`, width), sgr: "90" },
+    { text: fitWidth(`uses ${right}  ${uses.join("  ") || "\u2014"}`, width), sgr: "" },
+    { text: fitWidth(`used by ${left}  ${usedBy.join("  ") || "\u2014"}`, width), sgr: "" }
+  ];
+  const notes = node.detail !== void 0 ? wrapWidth(node.detail, width) : ["(no design notes yet)"];
+  const room = PANEL_CONTENT_ROWS - lines.length;
+  for (let i = 0; i < room; i++) {
+    const last = i === room - 1 && notes.length > room;
+    lines.push({
+      text: last ? fitWidth(notes[i] + "\u2026", width) : notes[i] ?? "",
+      sgr: node.detail !== void 0 ? "" : "90"
+    });
+  }
+  return lines;
+}
+function mapPanel(map, unicode, width) {
+  const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const count = (s) => map.nodes.filter((n) => n.status === s).length;
+  const statuses = ["done", "in-progress", "planned", "regressed"];
+  const counts = statuses.filter((s) => count(s) > 0).map((s) => `${g(s)} ${count(s)} ${s}`).join("   ");
   return [
-    `${glyph} ${node.label} [${node.id}] \xB7 ${layerName} \xB7 ${node.status}${evidence}`,
-    `uses ${arrow[0]} ${uses.join(", ") || "\u2014"}   used by ${arrow[1]} ${usedBy.join(", ") || "\u2014"}`
+    { text: fitWidth(map.title ?? "mellos map", width), sgr: "1" },
+    {
+      text: fitWidth(`${map.layers.length} layers \xB7 ${map.nodes.length} nodes \xB7 ${map.edges.length} edges`, width),
+      sgr: "90"
+    },
+    { text: fitWidth(counts, width), sgr: "" },
+    { text: "", sgr: "" },
+    { text: "hover a node to inspect \xB7 click to pin", sgr: "90" },
+    { text: "", sgr: "" }
   ];
 }
 function main() {
@@ -848,7 +916,7 @@ function main() {
   let selectedId;
   let lastHits = [];
   let pendingInput = "";
-  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - DETAIL_ROWS - 1);
+  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1);
   const hitTest = (termX, termY) => {
     const sx = termX - 1;
     const sy = termY - 1;
@@ -893,26 +961,28 @@ function main() {
       body = [notice];
     }
     if (notice !== "" && map !== void 0) body[body.length - 1] = `  ${notice}`;
-    let detail1 = "";
-    let detail2 = "";
-    if (map !== void 0 && focus !== void 0) {
-      const details = nodeDetails(map, focus, cfg.unicode);
-      if (details) {
-        const pin = selectedId === focus && hoverId === void 0 ? cfg.unicode ? " \u2299" : " *" : "";
-        const status = map.nodes.find((n) => n.id === focus).status;
-        const line1 = fitWidth(details[0] + pin, cols - 2);
-        const line2 = fitWidth(details[1], cols - 2);
-        detail1 = cfg.color ? ` \x1B[${STATUS_SGR[status]};1m${line1}${RESET}` : ` ${line1}`;
-        detail2 = cfg.color ? ` \x1B[90m${line2}${RESET}` : ` ${line2}`;
-      }
-    } else if (interactive) {
-      detail1 = cfg.color ? " \x1B[90mhover a node to inspect \xB7 click to pin\x1B[0m" : "";
+    const panelWidth = Math.max(10, cols - 2);
+    let panel;
+    if (map === void 0) {
+      panel = Array.from({ length: PANEL_CONTENT_ROWS }, () => ({ text: "", sgr: "" }));
+    } else if (focus !== void 0) {
+      panel = nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus) ?? mapPanel(map, cfg.unicode, panelWidth);
+    } else {
+      panel = mapPanel(map, cfg.unicode, panelWidth);
     }
-    const hint = !interactive ? cfg.file : (pannable ? "drag/wheel pan \xB7 " : "map fits pane \xB7 ") + "hjkl/arrows \xB7 0 reset \xB7 Esc unpin \xB7 q quit";
+    const separator = (cfg.unicode ? "\u2500" : "-").repeat(cols);
+    const panelRows = [
+      cfg.color ? `\x1B[90m${separator}${RESET}` : separator,
+      ...panel.map(
+        (l) => cfg.color && l.sgr !== "" && l.text !== "" ? ` \x1B[${l.sgr}m${l.text}${RESET}` : ` ${l.text}`
+      )
+    ];
+    const hint = !interactive ? cfg.file : (pannable ? "drag/wheel pan \xB7 " : "") + "hover/click nodes \xB7 0 reset \xB7 Esc unpin \xB7 q quit";
     const footer = cfg.color ? `\x1B[90m ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
     let frame = HOME;
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";
-    frame += detail1 + ERASE_LINE_END + "\n" + detail2 + ERASE_LINE_END + "\n" + footer + ERASE_LINE_END;
+    for (const row of panelRows) frame += row + ERASE_LINE_END + "\n";
+    frame += footer + ERASE_LINE_END;
     if (frame !== lastFrame) {
       process.stdout.write(frame);
       lastFrame = frame;
@@ -1012,6 +1082,9 @@ if (process.argv[1] !== void 0 && import.meta.url === pathToFileURL(process.argv
   main();
 }
 export {
-  nodeDetails,
-  parseArgs
+  fitWidth,
+  mapPanel,
+  nodePanel,
+  parseArgs,
+  wrapWidth
 };

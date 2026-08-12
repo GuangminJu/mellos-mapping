@@ -7,14 +7,18 @@
  * this process — no sockets, no IPC, one direction of flow.
  *
  * Interaction (real TTY only; piped/CI runs stay pure output):
- *   hover a node   spotlight its wires, preview its details below the map
- *   click a node   pin it — details stay after the mouse leaves
+ *   hover a node   spotlight its wires, preview it in the detail panel
+ *   click a node   pin it — the panel stays after the mouse leaves
  *   click empty / Esc   unpin
  *   left-drag      pan when the map is larger than the pane
  *   wheel / shift+wheel, hjkl / arrows, 0   pan / nudge / reset
  *   q              quit
- * The bottom of the pane is stable: two resident detail rows plus one hint
- * row — details never float over the map and the layout never jumps.
+ *
+ * The bottom of the pane is a fixed-height detail panel: a separator, a
+ * status-colored header, evidence, both wire directions (each neighbour
+ * carrying its own status glyph), and the node's design notes word-wrapped.
+ * With nothing focused it shows the map dashboard instead. Fixed height —
+ * details never float over the map and the layout never jumps.
  *
  * Resilience contract: a torn or half-written file (only possible with
  * foreign writers; our own saves are atomic) must never crash the pane —
@@ -81,7 +85,9 @@ const MOUSE_ON = '\x1b[?1003h\x1b[?1006h';
 const MOUSE_OFF = '\x1b[?1003l\x1b[?1006l';
 const RESET = '\x1b[0m';
 
-const DETAIL_ROWS = 2;
+/** separator + 6 content rows; the hint row comes on top of these. */
+const PANEL_CONTENT_ROWS = 6;
+const PANEL_ROWS = 1 + PANEL_CONTENT_ROWS;
 
 const STATUS_GLYPH: Readonly<Record<NodeStatus, [unicode: string, ascii: string]>> = {
   planned: ['·', '.'],
@@ -98,7 +104,7 @@ const STATUS_SGR: Readonly<Record<NodeStatus, string>> = {
 };
 
 /** Truncate to a display width, ANSI-free input, appending … when cut. */
-function fitWidth(s: string, width: number): string {
+export function fitWidth(s: string, width: number): string {
   if (displayWidth(s) <= width) return s;
   let out = '';
   let w = 0;
@@ -111,20 +117,101 @@ function fitWidth(s: string, width: number): string {
   return out + '…';
 }
 
-/** The two resident detail rows for the focused node (plain text, no ANSI). */
-export function nodeDetails(map: MellosMap, focusId: string, unicode: boolean): [string, string] | undefined {
+/** Hard word-wrap by display width (CJK-aware, splits anywhere). */
+export function wrapWidth(s: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  let w = 0;
+  for (const ch of s.replace(/\r/g, '')) {
+    if (ch === '\n') {
+      lines.push(line);
+      line = '';
+      w = 0;
+      continue;
+    }
+    const cw = displayWidth(ch);
+    if (w + cw > width) {
+      lines.push(line);
+      line = '';
+      w = 0;
+    }
+    line += ch;
+    w += cw;
+  }
+  if (line !== '') lines.push(line);
+  return lines;
+}
+
+export interface PanelLine {
+  readonly text: string;
+  readonly sgr: string; // '' = default color
+}
+
+/**
+ * The detail panel for a focused node: header, evidence, both wire
+ * directions with each neighbour's status glyph, wrapped design notes.
+ * Always exactly PANEL_CONTENT_ROWS lines (padded with blanks).
+ */
+export function nodePanel(
+  map: MellosMap,
+  focusId: string,
+  unicode: boolean,
+  width: number,
+  pinned: boolean,
+): PanelLine[] | undefined {
   const node = map.nodes.find((n) => (n.id as string) === focusId);
   if (!node) return undefined;
+  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? (node.layer as string);
-  const glyph = STATUS_GLYPH[node.status][unicode ? 0 : 1];
-  const evidence = node.evidence !== undefined ? ` — ${node.evidence}` : '';
-  const labelOf = (id: string): string => map.nodes.find((n) => (n.id as string) === id)?.label ?? id;
-  const uses = map.edges.filter((e) => e.from === node.id).map((e) => labelOf(e.to as string));
-  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => labelOf(e.from as string));
-  const arrow = unicode ? ['→', '←'] : ['->', '<-'];
+  const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
+  const withGlyph = (id: string): string => {
+    const n = map.nodes.find((x) => (x.id as string) === id);
+    return n ? `${g(n.status)} ${n.label}` : id;
+  };
+  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withGlyph(e.to as string));
+  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withGlyph(e.from as string));
+
+  const pin = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
+  const lines: PanelLine[] = [
+    {
+      text: fitWidth(`${g(node.status)} ${node.label} [${node.id}] · ${layerName} · ${node.status}${pin}`, width),
+      sgr: `${STATUS_SGR[node.status]};1`,
+    },
+    { text: fitWidth(`evidence: ${node.evidence ?? '—'}`, width), sgr: '90' },
+    { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
+    { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
+  ];
+  const notes = node.detail !== undefined ? wrapWidth(node.detail, width) : ['(no design notes yet)'];
+  const room = PANEL_CONTENT_ROWS - lines.length;
+  for (let i = 0; i < room; i++) {
+    const last = i === room - 1 && notes.length > room;
+    lines.push({
+      text: last ? fitWidth(notes[i]! + '…', width) : (notes[i] ?? ''),
+      sgr: node.detail !== undefined ? '' : '90',
+    });
+  }
+  return lines;
+}
+
+/** The dashboard shown when nothing is focused. Exactly PANEL_CONTENT_ROWS lines. */
+export function mapPanel(map: MellosMap, unicode: boolean, width: number): PanelLine[] {
+  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const count = (s: NodeStatus): number => map.nodes.filter((n) => n.status === s).length;
+  const statuses: NodeStatus[] = ['done', 'in-progress', 'planned', 'regressed'];
+  const counts = statuses
+    .filter((s) => count(s) > 0)
+    .map((s) => `${g(s)} ${count(s)} ${s}`)
+    .join('   ');
   return [
-    `${glyph} ${node.label} [${node.id}] · ${layerName} · ${node.status}${evidence}`,
-    `uses ${arrow[0]} ${uses.join(', ') || '—'}   used by ${arrow[1]} ${usedBy.join(', ') || '—'}`,
+    { text: fitWidth(map.title ?? 'mellos map', width), sgr: '1' },
+    {
+      text: fitWidth(`${map.layers.length} layers · ${map.nodes.length} nodes · ${map.edges.length} edges`, width),
+      sgr: '90',
+    },
+    { text: fitWidth(counts, width), sgr: '' },
+    { text: '', sgr: '' },
+    { text: 'hover a node to inspect · click to pin', sgr: '90' },
+    { text: '', sgr: '' },
   ];
 }
 
@@ -149,13 +236,13 @@ function main(): void {
   let lastHits: readonly BoxHit[] = [];
   let pendingInput = '';
 
-  const viewHeight = (): number => Math.max(1, (process.stdout.rows ?? 30) - DETAIL_ROWS - 1);
+  const viewHeight = (): number => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1);
 
   /** Terminal cell (1-based) -> node under it, honoring the current pan. */
   const hitTest = (termX: number, termY: number): string | undefined => {
     const sx = termX - 1;
     const sy = termY - 1;
-    if (sy >= viewHeight()) return undefined; // below the map area
+    if (sy >= viewHeight()) return undefined; // inside the detail panel, not the map
     const cx = sx + offsetX;
     const cy = sy + offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
@@ -201,31 +288,34 @@ function main(): void {
     }
     if (notice !== '' && map !== undefined) body[body.length - 1] = `  ${notice}`;
 
-    // -- resident detail rows --
-    let detail1 = '';
-    let detail2 = '';
-    if (map !== undefined && focus !== undefined) {
-      const details = nodeDetails(map, focus, cfg.unicode);
-      if (details) {
-        const pin = selectedId === focus && hoverId === undefined ? (cfg.unicode ? ' ⊙' : ' *') : '';
-        const status = map.nodes.find((n) => (n.id as string) === focus)!.status;
-        const line1 = fitWidth(details[0] + pin, cols - 2);
-        const line2 = fitWidth(details[1], cols - 2);
-        detail1 = cfg.color ? ` \x1b[${STATUS_SGR[status]};1m${line1}${RESET}` : ` ${line1}`;
-        detail2 = cfg.color ? ` \x1b[90m${line2}${RESET}` : ` ${line2}`;
-      }
-    } else if (interactive) {
-      detail1 = cfg.color ? ' \x1b[90mhover a node to inspect · click to pin\x1b[0m' : '';
+    // -- detail panel --
+    const panelWidth = Math.max(10, cols - 2);
+    let panel: PanelLine[];
+    if (map === undefined) {
+      panel = Array.from({ length: PANEL_CONTENT_ROWS }, () => ({ text: '', sgr: '' }));
+    } else if (focus !== undefined) {
+      panel =
+        nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus) ?? mapPanel(map, cfg.unicode, panelWidth);
+    } else {
+      panel = mapPanel(map, cfg.unicode, panelWidth);
     }
+    const separator = (cfg.unicode ? '─' : '-').repeat(cols);
+    const panelRows = [
+      cfg.color ? `\x1b[90m${separator}${RESET}` : separator,
+      ...panel.map((l) =>
+        cfg.color && l.sgr !== '' && l.text !== '' ? ` \x1b[${l.sgr}m${l.text}${RESET}` : ` ${l.text}`,
+      ),
+    ];
 
     const hint = !interactive
       ? cfg.file
-      : (pannable ? 'drag/wheel pan · ' : 'map fits pane · ') + 'hjkl/arrows · 0 reset · Esc unpin · q quit';
+      : (pannable ? 'drag/wheel pan · ' : '') + 'hover/click nodes · 0 reset · Esc unpin · q quit';
     const footer = cfg.color ? `\x1b[90m ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
 
     let frame = HOME;
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? '') + ERASE_LINE_END + '\n';
-    frame += detail1 + ERASE_LINE_END + '\n' + detail2 + ERASE_LINE_END + '\n' + footer + ERASE_LINE_END;
+    for (const row of panelRows) frame += row + ERASE_LINE_END + '\n';
+    frame += footer + ERASE_LINE_END;
     if (frame !== lastFrame) {
       process.stdout.write(frame);
       lastFrame = frame;

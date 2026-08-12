@@ -112,7 +112,14 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     const label = optionalString(rawNode['label']);
     if (label === undefined) return err({ kind: 'bad-shape', path, detail: `nodes[${i}] needs a string label` });
 
-    const declared = declareNode(map, { id: id.value, label, layer: layer.value, status: status.value });
+    const detail = optionalString(rawNode['detail']);
+    const declared = declareNode(map, {
+      id: id.value,
+      label,
+      layer: layer.value,
+      status: status.value,
+      ...(detail !== undefined ? { detail } : {}),
+    });
     if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
     map = declared.value;
 

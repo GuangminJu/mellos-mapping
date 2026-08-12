@@ -30,7 +30,7 @@ import { STATE_FILE_RELATIVE_PATH, describeStoreError, loadMapFile, saveMapFile 
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.4.0';
+export const SERVER_VERSION = '0.5.0';
 
 const ID = z
   .string()
@@ -104,6 +104,11 @@ export function buildServer(stateFile: string): McpServer {
               label: z.string().min(1).max(60).describe('display label inside the box'),
               layer: ID.describe('id of the band this node lives in'),
               status: STATUS.optional().describe('defaults to planned'),
+              detail: z
+                .string()
+                .max(600)
+                .optional()
+                .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
             }),
           )
           .optional(),
@@ -133,6 +138,11 @@ export function buildServer(stateFile: string): McpServer {
                 .max(200)
                 .optional()
                 .describe('for done: how it was verified; for regressed: what broke'),
+              detail: z
+                .string()
+                .max(600)
+                .optional()
+                .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
             }),
           )
           .min(1),

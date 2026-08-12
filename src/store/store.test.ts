@@ -31,7 +31,15 @@ function sampleMap(): MellosMap {
   let map = setTitle(EMPTY_MAP, '梅勒斯地图');
   map = must(declareLayer(map, { id: lid('primitives'), name: '原语层', rank: 0 }));
   map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: 1 }));
-  map = must(declareNode(map, { id: nid('result'), label: 'Result<T>', layer: lid('primitives'), status: 'done' }));
+  map = must(
+    declareNode(map, {
+      id: nid('result'),
+      label: 'Result<T>',
+      layer: lid('primitives'),
+      status: 'done',
+      detail: '期望中的失败是值，不是异常。',
+    }),
+  );
   map = must(updateNode(map, { id: nid('result'), evidence: 'vitest: 23 passed' }));
   map = must(declareNode(map, { id: nid('store'), label: 'MapStore', layer: lid('contracts'), status: 'in-progress' }));
   map = must(linkNodes(map, nid('store'), nid('result')));

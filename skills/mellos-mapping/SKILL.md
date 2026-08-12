@@ -62,6 +62,11 @@ the user wants the map.
 - **Nodes are units of buildable, verifiable work** (a module, a contract, a
   renderer) — not tasks like "write tests" and not files. One node ≈ one
   thing that can be independently done.
+- **Every node carries `detail`** — one to three sentences on its
+  responsibility, its contract, and the key design decision. Write it at
+  declaration time (the user reads it in the pane's detail panel when they
+  hover the node) and update it whenever the design shifts. A node whose
+  detail no longer matches its code is a small lie on the map.
 - **Layers encode allowed dependency direction, nothing else.** If node A
   needs sibling B on the same layer, either B is really a lower-layer concept
   or A and B are one node — restructure instead of forcing an edge.

@@ -21701,7 +21701,8 @@ function declareNode(map, input) {
     id: input.id,
     label: input.label,
     layer: input.layer,
-    status: input.status ?? "planned"
+    status: input.status ?? "planned",
+    ...input.detail !== void 0 ? { detail: input.detail } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -21724,7 +21725,8 @@ function updateNode(map, input) {
     ...node,
     ...input.status !== void 0 ? { status: input.status } : {},
     ...input.label !== void 0 ? { label: input.label } : {},
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {}
+    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
+    ...input.detail !== void 0 ? { detail: input.detail } : {}
   };
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
 }
@@ -21802,7 +21804,14 @@ function parseMap(raw, path) {
     if (!status.ok) return err({ kind: "invariant-violation", path, violation: status.error });
     const label = optionalString(rawNode["label"]);
     if (label === void 0) return err({ kind: "bad-shape", path, detail: `nodes[${i}] needs a string label` });
-    const declared = declareNode(map, { id: id.value, label, layer: layer.value, status: status.value });
+    const detail = optionalString(rawNode["detail"]);
+    const declared = declareNode(map, {
+      id: id.value,
+      label,
+      layer: layer.value,
+      status: status.value,
+      ...detail !== void 0 ? { detail } : {}
+    });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
     const evidence = optionalString(rawNode["evidence"]);
@@ -21883,7 +21892,8 @@ function applyDeclare(map, input) {
       id: id.value,
       label: n.label,
       layer: layer.value,
-      ...status !== void 0 ? { status } : {}
+      ...status !== void 0 ? { status } : {},
+      ...n.detail !== void 0 ? { detail: n.detail } : {}
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -21914,7 +21924,8 @@ function applyUpdate(map, input) {
       id: id.value,
       ...status !== void 0 ? { status } : {},
       ...u.label !== void 0 ? { label: u.label } : {},
-      ...u.evidence !== void 0 ? { evidence: u.evidence } : {}
+      ...u.evidence !== void 0 ? { evidence: u.evidence } : {},
+      ...u.detail !== void 0 ? { detail: u.detail } : {}
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
@@ -21957,7 +21968,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.4.0";
+var SERVER_VERSION = "0.5.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({
@@ -22002,7 +22013,8 @@ function buildServer(stateFile) {
             id: ID,
             label: external_exports.string().min(1).max(60).describe("display label inside the box"),
             layer: ID.describe("id of the band this node lives in"),
-            status: STATUS.optional().describe("defaults to planned")
+            status: STATUS.optional().describe("defaults to planned"),
+            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions")
           })
         ).optional(),
         edges: external_exports.array(EDGE).optional()
@@ -22021,7 +22033,8 @@ function buildServer(stateFile) {
             id: ID,
             status: STATUS.optional(),
             label: external_exports.string().min(1).max(60).optional(),
-            evidence: external_exports.string().max(200).optional().describe("for done: how it was verified; for regressed: what broke")
+            evidence: external_exports.string().max(200).optional().describe("for done: how it was verified; for regressed: what broke"),
+            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions")
           })
         ).min(1)
       }

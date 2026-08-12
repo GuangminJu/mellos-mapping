@@ -44,6 +44,7 @@ export interface DeclareInput {
         readonly label: string;
         readonly layer: string;
         readonly status?: string | undefined;
+        readonly detail?: string | undefined;
       }>
     | undefined;
   readonly edges?: ReadonlyArray<{ readonly from: string; readonly to: string }> | undefined;
@@ -55,6 +56,7 @@ export interface UpdateInput {
     readonly status?: string | undefined;
     readonly label?: string | undefined;
     readonly evidence?: string | undefined;
+    readonly detail?: string | undefined;
   }>;
 }
 
@@ -92,6 +94,7 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       label: n.label,
       layer: layer.value,
       ...(status !== undefined ? { status } : {}),
+      ...(n.detail !== undefined ? { detail: n.detail } : {}),
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -127,6 +130,7 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
       ...(status !== undefined ? { status } : {}),
       ...(u.label !== undefined ? { label: u.label } : {}),
       ...(u.evidence !== undefined ? { evidence: u.evidence } : {}),
+      ...(u.detail !== undefined ? { detail: u.detail } : {}),
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;

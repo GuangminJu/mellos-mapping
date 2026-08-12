@@ -61,6 +61,7 @@ export interface DeclareNodeInput {
   readonly label: string;
   readonly layer: LayerId;
   readonly status?: NodeStatus;
+  readonly detail?: string;
 }
 
 /** Add a new node to an existing band (I2, I3). Status defaults to 'planned' — a ghost on the map. */
@@ -73,6 +74,7 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     label: input.label,
     layer: input.layer,
     status: input.status ?? 'planned',
+    ...(input.detail !== undefined ? { detail: input.detail } : {}),
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -102,12 +104,13 @@ export interface UpdateNodeInput {
   readonly status?: NodeStatus;
   readonly label?: string;
   readonly evidence?: string;
+  readonly detail?: string;
 }
 
 /**
- * Update a node's status, label and/or evidence. Absent fields are left
- * untouched. No transition rules: the ledger records whatever the caller
- * reports, whenever they report it.
+ * Update a node's status, label, evidence and/or design detail. Absent
+ * fields are left untouched. No transition rules: the ledger records
+ * whatever the caller reports, whenever they report it.
  */
 export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<MellosMap, MapError> {
   const node = findNode(map, input.id);
@@ -118,6 +121,7 @@ export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<Mello
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
+    ...(input.detail !== undefined ? { detail: input.detail } : {}),
   };
   return ok({ ...map, nodes: map.nodes.map((n) => (n.id === input.id ? updated : n)) });
 }

@@ -10,7 +10,7 @@
       "displayName": "Mellos Mapping · 梅勒斯地图",
       "source": "./",
       "description": "A live layered dependency map for bottom-up development: ghost the design first, then light nodes up from the bottom as they are built and verified",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "author": { "name": "Mellos" },
       "license": "MIT",
       "keywords": ["visualization", "bottom-up", "architecture", "dependency-map", "progress"]
