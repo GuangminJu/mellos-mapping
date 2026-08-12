@@ -12,106 +12,83 @@ description: >-
 
 # Mellos Mapping — the map discipline
 
-You have four MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`,
-`mmap_view`) that maintain a **Mellos map**: a layered dependency map of the
-system under construction, persisted in `.claude/mellos-mapping.json` and
-rendered live in a terminal split pane the user keeps beside the conversation.
+Four MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`)
+maintain a **Mellos map**: a layered dependency map of the system under
+construction, persisted in `.claude/mellos-mapping.json` and rendered live in
+a terminal split pane beside the conversation.
 
-The map is a **ledger, not a judge**. The tools only refuse structural
-corruption (edges that do not point strictly downward, unknown ids, duplicate
-ranks). Everything about *when* to declare, start, or complete nodes is YOUR
-discipline, spelled out here. The map never blocks you; it makes your process
-visible. Report honestly — an unflattering map is doing its job.
+The map is a **ledger, not a judge**: the tools only refuse structural
+corruption; *when* to declare, start, or complete nodes is YOUR discipline,
+spelled out here. Report honestly — an unflattering map is doing its job.
 
 ## When to open a map
 
 Open a map for work with real structure: several interacting modules, a new
-subsystem, layered refactoring. Skip it for trivial edits (a rename, one bug
-fix, a config tweak) — a map of one node is noise. When unsure, ask whether
-the user wants the map.
+subsystem, layered refactoring. Skip it for trivial edits — a map of one node
+is noise. When unsure, ask.
 
-Catching yourself mid-implementation without a map on work that deserves
-one? Stop, declare the map with honest statuses (written-but-unverified
-work is `in-progress`, not `done`), then continue. And if the mmap tools
-are missing from the session (plugin installed mid-session, degraded
-load), SAY SO and offer a restart — never silently skip the map.
+Caught mid-implementation without a map on work that deserves one? Stop and
+declare it with honest statuses (written-but-unverified is `in-progress`, not
+`done`). If the mmap tools are missing from the session, SAY SO and offer a
+restart — never silently skip the map.
 
 ## The working loop
 
-1. **Design first, as ghosts.** Before writing code, decompose the task
-   bottom-up and declare the WHOLE intended design in one `mmap_declare`
-   batch: a `title`, the layer bands (rank 0 = most primitive, at the bottom),
-   every planned node, and the dependency edges. Everything starts `planned` —
-   the user sees the full ghost design and can veto it before any code exists.
-2. **Offer the pane.** After the first declare, tell the user the map is live
-   and they can open the split pane with `/mellos-mapping:mmap` (or show it
-   inline anytime via `mmap_view`).
-3. **Work bottom-up, one spinner at a time.** Before implementing a node, set
-   it `in-progress`. Prefer finishing a node's lower dependencies first; if
-   you deliberately deviate, say so in conversation — the picture will show a
-   spinner above grey ghosts, and the user deserves the reason.
-4. **`done` requires evidence.** Only mark a node `done` when its
-   verification actually passed, and put what passed in `evidence`
-   (e.g. `vitest: 23 passed`, `manual: pane renders CJK aligned`). No
+1. **Design first, as ghosts.** Before writing code, decompose bottom-up and
+   declare the WHOLE intended design in one `mmap_declare` batch: `title`,
+   layer bands (rank 0 = most primitive, at the bottom), every planned node,
+   and the edges. Everything starts `planned` — the user can veto the ghost
+   design before any code exists.
+2. **Offer the pane.** After the first declare, tell the user the map is live:
+   `/mellos-mapping:mmap` opens the split pane, `mmap_view` shows it inline.
+3. **Work bottom-up, one spinner at a time.** Set a node `in-progress` before
+   implementing it. Prefer finishing its lower dependencies first; if you
+   deliberately deviate, say why in conversation.
+4. **`done` requires evidence.** Mark `done` only when verification actually
+   passed, with what passed in `evidence` (e.g. `vitest: 23 passed`). No
    evidence, no done.
-5. **Regression is map-worthy — and it spreads upward.** If later work breaks
-   a `done` node's tests, set it `regressed` with the breakage in `evidence`
-   BEFORE starting the fix, and set it back to `done` only when re-verified.
-   Then, in the same turn, walk every node that uses it (directly and
-   transitively): their `done` was proven against a foundation that no longer
-   holds, so it is now an unverified claim. Default to marking them
-   `regressed` too. Keep a dependent green only when you have a reason —
-   its own verification re-ran and still passes, or it demonstrably never
-   touches the broken behavior — and state that reason in conversation.
-   When the foundation is fixed, restore each dependent only as its own
-   verification passes again.
-6. **Revise the ghost honestly.** The initial design is a hypothesis. When
-   understanding deepens — a node splits, a missing primitive appears, a layer
-   was wrong — update the map with `mmap_declare` / `mmap_remove` in the same
-   turn you change the plan. A map that no longer matches your intent is the
-   one failure mode this system cannot survive.
+5. **Regression spreads upward.** If later work breaks a `done` node, set it
+   `regressed` (breakage in `evidence`) BEFORE fixing. Then walk every node
+   that uses it, directly or transitively: their `done` was proven against a
+   foundation that no longer holds. Default them to `regressed` too; keep one
+   green only with a stated reason (its own verification re-ran green, or it
+   never touches the broken behavior). After the fix, restore each node only
+   as its own verification passes again.
+6. **Revise the ghost honestly.** The design is a hypothesis. When a node
+   splits, a primitive appears, or a layer was wrong, update the map in the
+   same turn you change the plan. A map that no longer matches your intent is
+   the one failure mode this system cannot survive.
 
 ## Modeling guidance
 
 - **Nodes are units of buildable, verifiable work** (a module, a contract, a
-  renderer) — not tasks like "write tests" and not files. One node ≈ one
-  thing that can be independently done.
-- **Declare groups for any map beyond ~6 nodes.** A group is a labeled
-  subsystem clustering nodes WITHIN one band (`groups` in `mmap_declare`,
-  `group` on each member). The zoomed-out view renders groups instead of
-  members — a map without groups degrades into anonymous glyphs when the
-  user zooms out, which tells them nothing. Group status is derived from
-  members automatically; never invent status for a group.
-- **Every node carries `detail`** — one to three sentences on its
-  responsibility, its contract, and the key design decision. Write it at
-  declaration time (the user reads it in the pane's detail panel when they
-  hover the node) and update it whenever the design shifts. A node whose
-  detail no longer matches its code is a small lie on the map.
-- **Push state to the top.** When decomposing, design lower layers and
-  modules to hold as little internal state as possible — pure values in,
-  pure values out. Mutable state concentrates in the topmost orchestration
-  node, which owns it explicitly and hands it down as parameters. This is a
-  maintenance-cost strategy: every stateless layer below can be tested with
-  values alone, rewritten without ceremony, and never lies about what it
-  depends on. If a lower node's `detail` must describe internal state it
-  keeps between calls, treat that as a design smell — restructure before
-  building on top of it.
-- **Layers encode allowed dependency direction, nothing else.** If node A
-  needs sibling B on the same layer, either B is really a lower-layer concept
-  or A and B are one node — restructure instead of forcing an edge.
-- **Edges mean "uses".** Declare an edge when the upper node genuinely calls,
-  composes, or reads the lower one. Do not draw aspirational edges.
-- Ids are stable kebab-case slugs; labels are short display names (CJK fine)
-  and may be renamed freely without breaking edges.
-- **One effort = one page.** The default page suits a single stream of work;
-  when a genuinely separate effort starts (a parallel session, an unrelated
-  subsystem), give it its own page via the `page` parameter on every tool
-  call rather than mixing two efforts into one picture — or replacing the
-  finished map of the previous effort.
+  renderer) — not tasks like "write tests" and not files.
+- **Declare groups beyond ~6 nodes** (`groups` in `mmap_declare`, `group` on
+  members): labeled subsystems within one band. The zoomed-out view renders
+  groups; without them it degrades into anonymous glyphs. Group status is
+  derived from members — never invent it.
+- **Every node carries `detail`**: one to three sentences on responsibility,
+  contract, and the key decision. Update it when the design shifts — a stale
+  detail is a small lie on the map.
+- **Push state to the top.** Lower layers take values in, give values out;
+  mutable state concentrates in the topmost orchestrator, which owns it
+  explicitly and hands it down as parameters. Stateless layers are cheap to
+  maintain: testable with values alone, rewritable without ceremony. A lower
+  node whose `detail` must describe state it keeps between calls is a design
+  smell — restructure before building on it.
+- **Layers encode dependency direction, nothing else.** If A needs sibling B,
+  either B is really lower-layer or A and B are one node — restructure rather
+  than force an edge.
+- **Edges mean "uses"** — the upper node genuinely calls, composes, or reads
+  the lower one. No aspirational edges.
+- Ids are stable kebab-case slugs; labels are short display names (CJK fine),
+  renameable without breaking edges.
+- **One effort = one page.** A genuinely separate effort (parallel session,
+  unrelated subsystem) gets its own page via the `page` parameter — don't mix
+  efforts or overwrite a finished map.
 
 ## Standing state
 
-At any moment the pane should answer, at a glance: what is designed, what is
-built and verified, what is being worked on RIGHT NOW (the spinner), and
-whether any foundation is cracked (red). If a user glances at the map and it
-would mislead them about any of those four questions, fix the map first.
+At any moment the pane should answer at a glance: what is designed, what is
+built and verified, what is in progress RIGHT NOW, and whether any foundation
+is cracked. If a glance would mislead on any of these, fix the map first.
