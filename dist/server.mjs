@@ -21163,11 +21163,14 @@ function makeNodeId(raw) {
 function makeLayerId(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
 }
+function makeGroupId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
 var NODE_STATUSES = ["planned", "in-progress", "done", "regressed"];
 function makeNodeStatus(raw) {
   return NODE_STATUSES.includes(raw) ? ok(raw) : err({ kind: "invalid-status", raw });
 }
-var EMPTY_MAP = { layers: [], nodes: [], edges: [] };
+var EMPTY_MAP = { layers: [], groups: [], nodes: [], edges: [] };
 function describeMapError(e) {
   switch (e.kind) {
     case "invalid-id":
@@ -21190,11 +21193,141 @@ function describeMapError(e) {
       return `edge ${e.from} -> ${e.to} does not exist`;
     case "self-edge":
       return `node "${e.id}" cannot depend on itself`;
+    case "duplicate-group":
+      return `group "${e.id}" already exists`;
+    case "unknown-group":
+      return `group "${e.id}" does not exist`;
+    case "group-layer-mismatch":
+      return `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); groups cluster nodes within one band`;
     case "layer-not-empty":
       return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
+    case "layer-holds-group":
+      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups first`;
     case "edge-not-downward":
       return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; dependencies may only point to a lower layer`;
   }
+}
+
+// src/domain/ops.ts
+function findLayer(map, id) {
+  return map.layers.find((l) => l.id === id);
+}
+function findNode(map, id) {
+  return map.nodes.find((n) => n.id === id);
+}
+function findGroup(map, id) {
+  return map.groups.find((g) => g.id === id);
+}
+function checkMembership(map, node, nodeLayer, group) {
+  const g = findGroup(map, group);
+  if (!g) return { kind: "unknown-group", id: group };
+  if (g.layer !== nodeLayer)
+    return { kind: "group-layer-mismatch", node, nodeLayer, group, groupLayer: g.layer };
+  return void 0;
+}
+function hasEdge(map, from, to) {
+  return map.edges.some((e) => e.from === from && e.to === to);
+}
+function setTitle(map, title) {
+  return { ...map, title };
+}
+function declareLayer(map, input) {
+  if (findLayer(map, input.id)) return err({ kind: "duplicate-layer", id: input.id });
+  const rankHolder = map.layers.find((l) => l.rank === input.rank);
+  if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
+  return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
+}
+function declareGroup(map, input) {
+  if (findGroup(map, input.id)) return err({ kind: "duplicate-group", id: input.id });
+  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
+  return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
+}
+function removeGroup(map, id) {
+  if (!findGroup(map, id)) return err({ kind: "unknown-group", id });
+  return ok({
+    ...map,
+    groups: map.groups.filter((g) => g.id !== id),
+    nodes: map.nodes.map((n) => {
+      if (n.group !== id) return n;
+      const { group: _dropped, ...rest } = n;
+      return rest;
+    })
+  });
+}
+function groupStatus(map, id) {
+  const members = map.nodes.filter((n) => n.group === id);
+  if (members.some((n) => n.status === "regressed")) return "regressed";
+  if (members.some((n) => n.status === "in-progress")) return "in-progress";
+  if (members.length > 0 && members.every((n) => n.status === "done")) return "done";
+  return "planned";
+}
+function declareNode(map, input) {
+  if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
+  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
+  if (input.group !== void 0) {
+    const bad = checkMembership(map, input.id, input.layer, input.group);
+    if (bad) return err(bad);
+  }
+  const node = {
+    id: input.id,
+    label: input.label,
+    layer: input.layer,
+    status: input.status ?? "planned",
+    ...input.detail !== void 0 ? { detail: input.detail } : {},
+    ...input.group !== void 0 ? { group: input.group } : {}
+  };
+  return ok({ ...map, nodes: [...map.nodes, node] });
+}
+function linkNodes(map, from, to) {
+  if (from === to) return err({ kind: "self-edge", id: from });
+  const fromNode = findNode(map, from);
+  if (!fromNode) return err({ kind: "unknown-node", id: from });
+  const toNode = findNode(map, to);
+  if (!toNode) return err({ kind: "unknown-node", id: to });
+  if (hasEdge(map, from, to)) return err({ kind: "duplicate-edge", from, to });
+  const fromRank = findLayer(map, fromNode.layer).rank;
+  const toRank = findLayer(map, toNode.layer).rank;
+  if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
+  return ok({ ...map, edges: [...map.edges, { from, to }] });
+}
+function updateNode(map, input) {
+  const node = findNode(map, input.id);
+  if (!node) return err({ kind: "unknown-node", id: input.id });
+  if (input.group !== void 0 && input.group !== null) {
+    const bad = checkMembership(map, node.id, node.layer, input.group);
+    if (bad) return err(bad);
+  }
+  const { group: currentGroup, ...bare } = node;
+  const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
+  const updated = {
+    ...bare,
+    ...nextGroup !== void 0 ? { group: nextGroup } : {},
+    ...input.status !== void 0 ? { status: input.status } : {},
+    ...input.label !== void 0 ? { label: input.label } : {},
+    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
+    ...input.detail !== void 0 ? { detail: input.detail } : {}
+  };
+  return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
+}
+function removeNode(map, id) {
+  if (!findNode(map, id)) return err({ kind: "unknown-node", id });
+  return ok({
+    ...map,
+    nodes: map.nodes.filter((n) => n.id !== id),
+    edges: map.edges.filter((e) => e.from !== id && e.to !== id)
+  });
+}
+function removeEdge(map, from, to) {
+  if (!hasEdge(map, from, to)) return err({ kind: "unknown-edge", from, to });
+  return ok({ ...map, edges: map.edges.filter((e) => !(e.from === from && e.to === to)) });
+}
+function removeLayer(map, id) {
+  if (!findLayer(map, id)) return err({ kind: "unknown-layer", id });
+  const occupant = map.nodes.find((n) => n.layer === id);
+  if (occupant) return err({ kind: "layer-not-empty", id, occupant: occupant.id });
+  const groupOccupant = map.groups.find((g) => g.layer === id);
+  if (groupOccupant) return err({ kind: "layer-holds-group", id, occupant: groupOccupant.id });
+  return ok({ ...map, layers: map.layers.filter((l) => l.id !== id) });
 }
 
 // src/render/render.ts
@@ -21511,9 +21644,49 @@ function renderMap(map, opts) {
   const built = buildCanvas(map, opts);
   return built.canvas.emit(opts);
 }
+function aggregateMap(map) {
+  if (map.groups.length === 0) return void 0;
+  const representative = /* @__PURE__ */ new Map();
+  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
+  const nodes = map.groups.map((g) => {
+    const members = map.nodes.filter((n) => n.group === g.id);
+    const done = members.filter((n) => n.status === "done").length;
+    return {
+      id: g.id,
+      label: `${g.label} ${done}/${members.length}`,
+      layer: g.layer,
+      status: groupStatus(map, g.id)
+    };
+  });
+  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
+  const seen = /* @__PURE__ */ new Set();
+  const edges = [];
+  for (const e of map.edges) {
+    const from = representative.get(e.from);
+    const to = representative.get(e.to);
+    if (from === to || seen.has(`${from}->${to}`)) continue;
+    seen.add(`${from}->${to}`);
+    edges.push({ from, to });
+  }
+  return { ...map.title !== void 0 ? { title: map.title } : {}, layers: map.layers, groups: [], nodes, edges };
+}
+var AGGREGATE_GEO = {
+  mode: "boxes",
+  scale: 1,
+  pad: 0,
+  boxGap: 1,
+  breathe: 0,
+  titleGap: 0,
+  barGap: 1,
+  bandCounts: false
+};
 function buildCanvas(map, opts) {
+  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
+  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(map) : void 0;
+  return buildCanvasWith(aggregated ?? map, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo);
+}
+function buildCanvasWith(map, opts, geo) {
   const canvas = new Canvas();
-  const geo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
@@ -21788,82 +21961,6 @@ function drawBox(canvas, box, opts, focused = false) {
 // src/store/store.ts
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-
-// src/domain/ops.ts
-function findLayer(map, id) {
-  return map.layers.find((l) => l.id === id);
-}
-function findNode(map, id) {
-  return map.nodes.find((n) => n.id === id);
-}
-function hasEdge(map, from, to) {
-  return map.edges.some((e) => e.from === from && e.to === to);
-}
-function setTitle(map, title) {
-  return { ...map, title };
-}
-function declareLayer(map, input) {
-  if (findLayer(map, input.id)) return err({ kind: "duplicate-layer", id: input.id });
-  const rankHolder = map.layers.find((l) => l.rank === input.rank);
-  if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
-  return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
-}
-function declareNode(map, input) {
-  if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
-  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
-  const node = {
-    id: input.id,
-    label: input.label,
-    layer: input.layer,
-    status: input.status ?? "planned",
-    ...input.detail !== void 0 ? { detail: input.detail } : {}
-  };
-  return ok({ ...map, nodes: [...map.nodes, node] });
-}
-function linkNodes(map, from, to) {
-  if (from === to) return err({ kind: "self-edge", id: from });
-  const fromNode = findNode(map, from);
-  if (!fromNode) return err({ kind: "unknown-node", id: from });
-  const toNode = findNode(map, to);
-  if (!toNode) return err({ kind: "unknown-node", id: to });
-  if (hasEdge(map, from, to)) return err({ kind: "duplicate-edge", from, to });
-  const fromRank = findLayer(map, fromNode.layer).rank;
-  const toRank = findLayer(map, toNode.layer).rank;
-  if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
-  return ok({ ...map, edges: [...map.edges, { from, to }] });
-}
-function updateNode(map, input) {
-  const node = findNode(map, input.id);
-  if (!node) return err({ kind: "unknown-node", id: input.id });
-  const updated = {
-    ...node,
-    ...input.status !== void 0 ? { status: input.status } : {},
-    ...input.label !== void 0 ? { label: input.label } : {},
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
-    ...input.detail !== void 0 ? { detail: input.detail } : {}
-  };
-  return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
-}
-function removeNode(map, id) {
-  if (!findNode(map, id)) return err({ kind: "unknown-node", id });
-  return ok({
-    ...map,
-    nodes: map.nodes.filter((n) => n.id !== id),
-    edges: map.edges.filter((e) => e.from !== id && e.to !== id)
-  });
-}
-function removeEdge(map, from, to) {
-  if (!hasEdge(map, from, to)) return err({ kind: "unknown-edge", from, to });
-  return ok({ ...map, edges: map.edges.filter((e) => !(e.from === from && e.to === to)) });
-}
-function removeLayer(map, id) {
-  if (!findLayer(map, id)) return err({ kind: "unknown-layer", id });
-  const occupant = map.nodes.find((n) => n.layer === id);
-  if (occupant) return err({ kind: "layer-not-empty", id, occupant: occupant.id });
-  return ok({ ...map, layers: map.layers.filter((l) => l.id !== id) });
-}
-
-// src/store/store.ts
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 function describeStoreError(e) {
@@ -21908,6 +22005,18 @@ function parseMap(raw, path) {
     if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
     map = next.value;
   }
+  for (const [i, rawGroup] of asArray(raw["groups"]).entries()) {
+    if (!isRecord(rawGroup)) return err({ kind: "bad-shape", path, detail: `groups[${i}] is not an object` });
+    const id = makeGroupId(String(rawGroup["id"] ?? ""));
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const layer = makeLayerId(String(rawGroup["layer"] ?? ""));
+    if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
+    const label = optionalString(rawGroup["label"]);
+    if (label === void 0) return err({ kind: "bad-shape", path, detail: `groups[${i}] needs a string label` });
+    const declared = declareGroup(map, { id: id.value, label, layer: layer.value });
+    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
+    map = declared.value;
+  }
   for (const [i, rawNode] of asArray(raw["nodes"]).entries()) {
     if (!isRecord(rawNode)) return err({ kind: "bad-shape", path, detail: `nodes[${i}] is not an object` });
     const id = makeNodeId(String(rawNode["id"] ?? ""));
@@ -21919,12 +22028,20 @@ function parseMap(raw, path) {
     const label = optionalString(rawNode["label"]);
     if (label === void 0) return err({ kind: "bad-shape", path, detail: `nodes[${i}] needs a string label` });
     const detail = optionalString(rawNode["detail"]);
+    const rawGroup = optionalString(rawNode["group"]);
+    let group;
+    if (rawGroup !== void 0) {
+      const made = makeGroupId(rawGroup);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      group = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
       layer: layer.value,
       status: status.value,
-      ...detail !== void 0 ? { detail } : {}
+      ...detail !== void 0 ? { detail } : {},
+      ...group !== void 0 ? { group } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
@@ -21952,6 +22069,7 @@ function serializeMap(map) {
     version: STATE_FILE_VERSION,
     ...map.title !== void 0 ? { title: map.title } : {},
     layers: map.layers,
+    ...map.groups.length > 0 ? { groups: map.groups } : {},
     nodes: map.nodes,
     edges: map.edges
   };
@@ -21991,6 +22109,15 @@ function applyDeclare(map, input) {
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
+  for (const [i, g] of (input.groups ?? []).entries()) {
+    const id = makeGroupId(g.id);
+    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    const layer = makeLayerId(g.layer);
+    if (!layer.ok) return err(`groups[${i}]: ${describeMapError(layer.error)}`);
+    const declared = declareGroup(next, { id: id.value, label: g.label, layer: layer.value });
+    if (!declared.ok) return err(`groups[${i}]: ${describeMapError(declared.error)}`);
+    next = declared.value;
+  }
   for (const [i, n] of (input.nodes ?? []).entries()) {
     const id = makeNodeId(n.id);
     if (!id.ok) return err(`nodes[${i}]: ${describeMapError(id.error)}`);
@@ -22002,12 +22129,19 @@ function applyDeclare(map, input) {
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
       status = parsed.value;
     }
+    let group;
+    if (n.group !== void 0) {
+      const parsed = makeGroupId(n.group);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      group = parsed.value;
+    }
     const declared = declareNode(next, {
       id: id.value,
       label: n.label,
       layer: layer.value,
       ...status !== void 0 ? { status } : {},
-      ...n.detail !== void 0 ? { detail: n.detail } : {}
+      ...n.detail !== void 0 ? { detail: n.detail } : {},
+      ...group !== void 0 ? { group } : {}
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -22034,12 +22168,20 @@ function applyUpdate(map, input) {
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
       status = parsed.value;
     }
+    let group;
+    if (u.group === null) group = null;
+    else if (u.group !== void 0) {
+      const parsed = makeGroupId(u.group);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      group = parsed.value;
+    }
     const updated = updateNode(next, {
       id: id.value,
       ...status !== void 0 ? { status } : {},
       ...u.label !== void 0 ? { label: u.label } : {},
       ...u.evidence !== void 0 ? { evidence: u.evidence } : {},
-      ...u.detail !== void 0 ? { detail: u.detail } : {}
+      ...u.detail !== void 0 ? { detail: u.detail } : {},
+      ...group !== void 0 ? { group } : {}
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
@@ -22064,6 +22206,13 @@ function applyRemove(map, input) {
     if (!removed.ok) return err(`nodes[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
+  for (const [i, rawId] of (input.groups ?? []).entries()) {
+    const id = makeGroupId(rawId);
+    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    const removed = removeGroup(next, id.value);
+    if (!removed.ok) return err(`groups[${i}]: ${describeMapError(removed.error)}`);
+    next = removed.value;
+  }
   for (const [i, rawId] of (input.layers ?? []).entries()) {
     const id = makeLayerId(rawId);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
@@ -22077,7 +22226,7 @@ function summarize(map) {
   const byStatus = { planned: 0, "in-progress": 0, done: 0, regressed: 0 };
   for (const n of map.nodes) byStatus[n.status]++;
   const statusPart = Object.entries(byStatus).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`).join(", ");
-  return `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` + (statusPart ? ` [${statusPart}]` : "") + `, ${map.edges.length} edge(s)`;
+  return `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` + (statusPart ? ` [${statusPart}]` : "") + (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : "") + `, ${map.edges.length} edge(s)`;
 }
 
 // src/server/server.ts
@@ -22112,7 +22261,7 @@ function buildServer(stateFile) {
     "mmap_declare",
     {
       title: "Declare map structure",
-      description: "Grow the Mellos map: set the title, add layer bands, add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
+      description: "Grow the Mellos map: set the title, add layer bands, add groups (labeled subsystems within a band \u2014 the zoomed-out view renders groups, so declare them for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
       inputSchema: {
         title: external_exports.string().max(120).optional().describe("map title, e.g. the feature being built"),
         layers: external_exports.array(
@@ -22122,13 +22271,21 @@ function buildServer(stateFile) {
             rank: external_exports.number().int().min(0).max(99).describe("0 = bottom / most primitive; must be unique")
           })
         ).optional(),
+        groups: external_exports.array(
+          external_exports.object({
+            id: ID,
+            label: external_exports.string().min(1).max(60).describe("subsystem name shown at the far zoom"),
+            layer: ID.describe("band this group clusters; members must live on the same band")
+          })
+        ).optional(),
         nodes: external_exports.array(
           external_exports.object({
             id: ID,
             label: external_exports.string().min(1).max(60).describe("display label inside the box"),
             layer: ID.describe("id of the band this node lives in"),
             status: STATUS.optional().describe("defaults to planned"),
-            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions")
+            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions"),
+            group: ID.optional().describe("same-band group this node belongs to")
           })
         ).optional(),
         edges: external_exports.array(EDGE).optional()
@@ -22148,7 +22305,8 @@ function buildServer(stateFile) {
             status: STATUS.optional(),
             label: external_exports.string().min(1).max(60).optional(),
             evidence: external_exports.string().max(200).optional().describe("for done: how it was verified; for regressed: what broke"),
-            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions")
+            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions"),
+            group: ID.nullable().optional().describe("join this same-band group; null leaves the current group")
           })
         ).min(1)
       }
@@ -22159,11 +22317,12 @@ function buildServer(stateFile) {
     "mmap_remove",
     {
       title: "Revise the map",
-      description: "Remove edges, nodes and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work.",
+      description: "Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work.",
       inputSchema: {
         edges: external_exports.array(EDGE).optional(),
         nodes: external_exports.array(ID).optional(),
-        layers: external_exports.array(ID).optional().describe("bands to remove; must be empty of nodes")
+        groups: external_exports.array(ID).optional().describe("groups to remove; members stay, merely ungrouped"),
+        layers: external_exports.array(ID).optional().describe("bands to remove; must be empty of nodes and groups")
       }
     },
     (input) => mutate((map) => applyRemove(map, input))

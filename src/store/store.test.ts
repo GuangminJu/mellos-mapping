@@ -9,8 +9,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
-import { EMPTY_MAP, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
+import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
+import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
 import { loadMapFile, parseMap, saveMapFile, serializeMap } from './store.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -26,11 +26,13 @@ function mustFail<T, E>(r: Result<T, E>): E {
 /** Ids in specs are known-good literals; brands are asserted, not re-validated. */
 const lid = (raw: string): LayerId => raw as LayerId;
 const nid = (raw: string): NodeId => raw as NodeId;
+const gid = (raw: string): GroupId => raw as GroupId;
 
 function sampleMap(): MellosMap {
   let map = setTitle(EMPTY_MAP, '梅勒斯地图');
   map = must(declareLayer(map, { id: lid('primitives'), name: '原语层', rank: 0 }));
   map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: 1 }));
+  map = must(declareGroup(map, { id: gid('base'), label: '地基', layer: lid('primitives') }));
   map = must(
     declareNode(map, {
       id: nid('result'),
@@ -38,6 +40,7 @@ function sampleMap(): MellosMap {
       layer: lid('primitives'),
       status: 'done',
       detail: '期望中的失败是值，不是异常。',
+      group: gid('base'),
     }),
   );
   map = must(updateNode(map, { id: nid('result'), evidence: 'vitest: 23 passed' }));
@@ -93,6 +96,20 @@ describe('boundary validation (P1)', () => {
     raw.edges = [{ from: 'result', to: 'store' }];
     const e = mustFail(parseMap(raw, 'x'));
     expect(e).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'edge-not-downward' } });
+  });
+
+  it('rejects a hand-edited cross-band group membership', () => {
+    const raw = JSON.parse(serializeMap(sampleMap())) as { nodes: Array<{ group?: string }> };
+    raw.nodes[1]!.group = 'base'; // store lives on contracts, base groups primitives
+    const e = mustFail(parseMap(raw, 'x'));
+    expect(e).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'group-layer-mismatch' } });
+  });
+
+  it('omits the groups key entirely for group-free maps (stable old files)', () => {
+    let map = setTitle(EMPTY_MAP, 't');
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
+    expect(serializeMap(map)).not.toContain('"groups"');
+    expect(must(parseMap(JSON.parse(serializeMap(map)), 'x'))).toEqual(map);
   });
 
   it('rejects a node pointing at a missing layer', () => {

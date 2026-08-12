@@ -12,21 +12,25 @@
  */
 
 import {
+  declareGroup,
   declareLayer,
   declareNode,
   linkNodes,
   removeEdge,
+  removeGroup,
   removeLayer,
   removeNode,
   setTitle,
   updateNode,
 } from '../domain/ops.js';
 import {
+  type GroupId,
   type MellosMap,
   type NodeStatus,
   type Result,
   describeMapError,
   err,
+  makeGroupId,
   makeLayerId,
   makeNodeId,
   makeNodeStatus,
@@ -38,6 +42,9 @@ import {
 export interface DeclareInput {
   readonly title?: string | undefined;
   readonly layers?: ReadonlyArray<{ readonly id: string; readonly name: string; readonly rank: number }> | undefined;
+  readonly groups?:
+    | ReadonlyArray<{ readonly id: string; readonly label: string; readonly layer: string }>
+    | undefined;
   readonly nodes?:
     | ReadonlyArray<{
         readonly id: string;
@@ -45,6 +52,7 @@ export interface DeclareInput {
         readonly layer: string;
         readonly status?: string | undefined;
         readonly detail?: string | undefined;
+        readonly group?: string | undefined;
       }>
     | undefined;
   readonly edges?: ReadonlyArray<{ readonly from: string; readonly to: string }> | undefined;
@@ -57,16 +65,19 @@ export interface UpdateInput {
     readonly label?: string | undefined;
     readonly evidence?: string | undefined;
     readonly detail?: string | undefined;
+    /** A group id joins that group; null leaves the current one. */
+    readonly group?: string | null | undefined;
   }>;
 }
 
 export interface RemoveInput {
   readonly nodes?: ReadonlyArray<string> | undefined;
   readonly edges?: ReadonlyArray<{ readonly from: string; readonly to: string }> | undefined;
+  readonly groups?: ReadonlyArray<string> | undefined;
   readonly layers?: ReadonlyArray<string> | undefined;
 }
 
-/** Grow the map: set a title, add bands, add nodes, add edges — in that order. */
+/** Grow the map: set a title, add bands, add groups, add nodes, add edges — in that order. */
 export function applyDeclare(map: MellosMap, input: DeclareInput): Result<MellosMap, string> {
   let next = input.title !== undefined ? setTitle(map, input.title) : map;
 
@@ -75,6 +86,16 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
     const declared = declareLayer(next, { id: id.value, name: l.name, rank: l.rank });
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
+    next = declared.value;
+  }
+
+  for (const [i, g] of (input.groups ?? []).entries()) {
+    const id = makeGroupId(g.id);
+    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    const layer = makeLayerId(g.layer);
+    if (!layer.ok) return err(`groups[${i}]: ${describeMapError(layer.error)}`);
+    const declared = declareGroup(next, { id: id.value, label: g.label, layer: layer.value });
+    if (!declared.ok) return err(`groups[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
 
@@ -89,12 +110,19 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
       status = parsed.value;
     }
+    let group: GroupId | undefined;
+    if (n.group !== undefined) {
+      const parsed = makeGroupId(n.group);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      group = parsed.value;
+    }
     const declared = declareNode(next, {
       id: id.value,
       label: n.label,
       layer: layer.value,
       ...(status !== undefined ? { status } : {}),
       ...(n.detail !== undefined ? { detail: n.detail } : {}),
+      ...(group !== undefined ? { group } : {}),
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -125,12 +153,20 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
       status = parsed.value;
     }
+    let group: GroupId | null | undefined;
+    if (u.group === null) group = null;
+    else if (u.group !== undefined) {
+      const parsed = makeGroupId(u.group);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      group = parsed.value;
+    }
     const updated = updateNode(next, {
       id: id.value,
       ...(status !== undefined ? { status } : {}),
       ...(u.label !== undefined ? { label: u.label } : {}),
       ...(u.evidence !== undefined ? { evidence: u.evidence } : {}),
       ...(u.detail !== undefined ? { detail: u.detail } : {}),
+      ...(group !== undefined ? { group } : {}),
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
@@ -138,7 +174,7 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
   return ok(next);
 }
 
-/** Revise the map: drop edges, then nodes, then (empty) bands — in that order. */
+/** Revise the map: drop edges, then nodes, then groups, then (empty) bands — in that order. */
 export function applyRemove(map: MellosMap, input: RemoveInput): Result<MellosMap, string> {
   let next = map;
 
@@ -157,6 +193,14 @@ export function applyRemove(map: MellosMap, input: RemoveInput): Result<MellosMa
     if (!id.ok) return err(`nodes[${i}]: ${describeMapError(id.error)}`);
     const removed = removeNode(next, id.value);
     if (!removed.ok) return err(`nodes[${i}]: ${describeMapError(removed.error)}`);
+    next = removed.value;
+  }
+
+  for (const [i, rawId] of (input.groups ?? []).entries()) {
+    const id = makeGroupId(rawId);
+    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    const removed = removeGroup(next, id.value);
+    if (!removed.ok) return err(`groups[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
 
@@ -182,6 +226,7 @@ export function summarize(map: MellosMap): string {
   return (
     `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` +
     (statusPart ? ` [${statusPart}]` : '') +
+    (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : '') +
     `, ${map.edges.length} edge(s)`
   );
 }

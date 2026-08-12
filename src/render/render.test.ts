@@ -8,8 +8,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
-import { EMPTY_MAP, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
+import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
+import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
 import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -18,6 +18,7 @@ function must<T, E>(r: Result<T, E>): T {
 }
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
+const gid = (s: string): GroupId => s as GroupId;
 
 const MONO = { color: false, unicode: true, spinnerFrame: 0 } as const;
 
@@ -215,6 +216,26 @@ describe('renderMap', () => {
       expect(text).toContain('┏'); // done boxes still have borders
       expect(text).toContain('…'); // labels truncated, not dropped
     }
+  });
+
+  it('aggregates into labeled group boxes at the far zoom when groups exist', () => {
+    let map = sampleMap();
+    map = must(declareGroup(map, { id: gid('ground'), label: '地基子系统', layer: lid('primitives') }));
+    map = must(updateNode(map, { id: nid('domain'), group: gid('ground') }));
+    map = must(updateNode(map, { id: nid('render'), group: gid('ground') }));
+
+    const lines = renderMap(map, { ...MONO, zoom: -4 });
+    const text = lines.join('\n');
+    expect(text).toContain('地基子系统 1/2'); // one member done, one spinning
+    expect(text).toContain('⠋ 地基子系统'); // derived status: a member spins, the group spins
+    expect(text).toContain('┏'); // NOT the anonymous constellation — labeled boxes
+    expect(text).toContain('状态存储'); // ungrouped nodes stay themselves
+    // edges collapsed onto the group: store->domain and server->domain (skip)
+    // plus watch->render all land on ONE box now, deduped where equal
+    const { hits } = renderMapWindow(map, { ...MONO, zoom: -4 }, { x: 0, y: 0, width: 0, height: 0 });
+    expect(hits.some((h) => h.id === 'ground')).toBe(true); // the group is hoverable
+    expect(hits.some((h) => h.id === 'domain')).toBe(false); // members are inside it
+    expect(text).toMatchSnapshot();
   });
 
   it('switches to the glyph constellation only at the far end of the ladder', () => {

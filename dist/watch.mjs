@@ -5,6 +5,152 @@ import { statSync } from "node:fs";
 import { join as join2 } from "node:path";
 import { pathToFileURL } from "node:url";
 
+// src/domain/types.ts
+var ok = (value) => ({ ok: true, value });
+var err = (error) => ({ ok: false, error });
+var ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+var ID_RULE_TEXT = "lowercase letters, digits and dashes, starting with a letter or digit, 1-64 chars";
+function makeNodeId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
+function makeLayerId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
+function makeGroupId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
+var NODE_STATUSES = ["planned", "in-progress", "done", "regressed"];
+function makeNodeStatus(raw) {
+  return NODE_STATUSES.includes(raw) ? ok(raw) : err({ kind: "invalid-status", raw });
+}
+var EMPTY_MAP = { layers: [], groups: [], nodes: [], edges: [] };
+function describeMapError(e) {
+  switch (e.kind) {
+    case "invalid-id":
+      return `invalid id "${e.raw}" (rule: ${e.rule})`;
+    case "invalid-status":
+      return `invalid status "${e.raw}" (expected: ${NODE_STATUSES.join(" | ")})`;
+    case "duplicate-layer":
+      return `layer "${e.id}" already exists`;
+    case "duplicate-rank":
+      return `rank ${e.rank} is already taken by layer "${e.existing}"`;
+    case "duplicate-node":
+      return `node "${e.id}" already exists`;
+    case "unknown-layer":
+      return `layer "${e.id}" does not exist`;
+    case "unknown-node":
+      return `node "${e.id}" does not exist`;
+    case "duplicate-edge":
+      return `edge ${e.from} -> ${e.to} already exists`;
+    case "unknown-edge":
+      return `edge ${e.from} -> ${e.to} does not exist`;
+    case "self-edge":
+      return `node "${e.id}" cannot depend on itself`;
+    case "duplicate-group":
+      return `group "${e.id}" already exists`;
+    case "unknown-group":
+      return `group "${e.id}" does not exist`;
+    case "group-layer-mismatch":
+      return `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); groups cluster nodes within one band`;
+    case "layer-not-empty":
+      return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
+    case "layer-holds-group":
+      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups first`;
+    case "edge-not-downward":
+      return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; dependencies may only point to a lower layer`;
+  }
+}
+
+// src/domain/ops.ts
+function findLayer(map, id) {
+  return map.layers.find((l) => l.id === id);
+}
+function findNode(map, id) {
+  return map.nodes.find((n) => n.id === id);
+}
+function findGroup(map, id) {
+  return map.groups.find((g) => g.id === id);
+}
+function checkMembership(map, node, nodeLayer, group) {
+  const g = findGroup(map, group);
+  if (!g) return { kind: "unknown-group", id: group };
+  if (g.layer !== nodeLayer)
+    return { kind: "group-layer-mismatch", node, nodeLayer, group, groupLayer: g.layer };
+  return void 0;
+}
+function hasEdge(map, from, to) {
+  return map.edges.some((e) => e.from === from && e.to === to);
+}
+function setTitle(map, title) {
+  return { ...map, title };
+}
+function declareLayer(map, input) {
+  if (findLayer(map, input.id)) return err({ kind: "duplicate-layer", id: input.id });
+  const rankHolder = map.layers.find((l) => l.rank === input.rank);
+  if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
+  return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
+}
+function declareGroup(map, input) {
+  if (findGroup(map, input.id)) return err({ kind: "duplicate-group", id: input.id });
+  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
+  return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
+}
+function groupStatus(map, id) {
+  const members = map.nodes.filter((n) => n.group === id);
+  if (members.some((n) => n.status === "regressed")) return "regressed";
+  if (members.some((n) => n.status === "in-progress")) return "in-progress";
+  if (members.length > 0 && members.every((n) => n.status === "done")) return "done";
+  return "planned";
+}
+function declareNode(map, input) {
+  if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
+  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
+  if (input.group !== void 0) {
+    const bad = checkMembership(map, input.id, input.layer, input.group);
+    if (bad) return err(bad);
+  }
+  const node = {
+    id: input.id,
+    label: input.label,
+    layer: input.layer,
+    status: input.status ?? "planned",
+    ...input.detail !== void 0 ? { detail: input.detail } : {},
+    ...input.group !== void 0 ? { group: input.group } : {}
+  };
+  return ok({ ...map, nodes: [...map.nodes, node] });
+}
+function linkNodes(map, from, to) {
+  if (from === to) return err({ kind: "self-edge", id: from });
+  const fromNode = findNode(map, from);
+  if (!fromNode) return err({ kind: "unknown-node", id: from });
+  const toNode = findNode(map, to);
+  if (!toNode) return err({ kind: "unknown-node", id: to });
+  if (hasEdge(map, from, to)) return err({ kind: "duplicate-edge", from, to });
+  const fromRank = findLayer(map, fromNode.layer).rank;
+  const toRank = findLayer(map, toNode.layer).rank;
+  if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
+  return ok({ ...map, edges: [...map.edges, { from, to }] });
+}
+function updateNode(map, input) {
+  const node = findNode(map, input.id);
+  if (!node) return err({ kind: "unknown-node", id: input.id });
+  if (input.group !== void 0 && input.group !== null) {
+    const bad = checkMembership(map, node.id, node.layer, input.group);
+    if (bad) return err(bad);
+  }
+  const { group: currentGroup, ...bare } = node;
+  const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
+  const updated = {
+    ...bare,
+    ...nextGroup !== void 0 ? { group: nextGroup } : {},
+    ...input.status !== void 0 ? { status: input.status } : {},
+    ...input.label !== void 0 ? { label: input.label } : {},
+    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
+    ...input.detail !== void 0 ? { detail: input.detail } : {}
+  };
+  return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
+}
+
 // src/render/render.ts
 var ZOOM_MIN = -4;
 var ZOOM_MAX = 1;
@@ -340,9 +486,49 @@ function renderMapWindow(map, opts, viewport) {
     hits: built.hits
   };
 }
+function aggregateMap(map) {
+  if (map.groups.length === 0) return void 0;
+  const representative = /* @__PURE__ */ new Map();
+  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
+  const nodes = map.groups.map((g) => {
+    const members = map.nodes.filter((n) => n.group === g.id);
+    const done = members.filter((n) => n.status === "done").length;
+    return {
+      id: g.id,
+      label: `${g.label} ${done}/${members.length}`,
+      layer: g.layer,
+      status: groupStatus(map, g.id)
+    };
+  });
+  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
+  const seen = /* @__PURE__ */ new Set();
+  const edges = [];
+  for (const e of map.edges) {
+    const from = representative.get(e.from);
+    const to = representative.get(e.to);
+    if (from === to || seen.has(`${from}->${to}`)) continue;
+    seen.add(`${from}->${to}`);
+    edges.push({ from, to });
+  }
+  return { ...map.title !== void 0 ? { title: map.title } : {}, layers: map.layers, groups: [], nodes, edges };
+}
+var AGGREGATE_GEO = {
+  mode: "boxes",
+  scale: 1,
+  pad: 0,
+  boxGap: 1,
+  breathe: 0,
+  titleGap: 0,
+  barGap: 1,
+  bandCounts: false
+};
 function buildCanvas(map, opts) {
+  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
+  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(map) : void 0;
+  return buildCanvasWith(aggregated ?? map, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo);
+}
+function buildCanvasWith(map, opts, geo) {
   const canvas = new Canvas();
-  const geo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
@@ -617,109 +803,6 @@ function drawBox(canvas, box, opts, focused = false) {
 // src/store/store.ts
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-
-// src/domain/types.ts
-var ok = (value) => ({ ok: true, value });
-var err = (error) => ({ ok: false, error });
-var ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-var ID_RULE_TEXT = "lowercase letters, digits and dashes, starting with a letter or digit, 1-64 chars";
-function makeNodeId(raw) {
-  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
-}
-function makeLayerId(raw) {
-  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
-}
-var NODE_STATUSES = ["planned", "in-progress", "done", "regressed"];
-function makeNodeStatus(raw) {
-  return NODE_STATUSES.includes(raw) ? ok(raw) : err({ kind: "invalid-status", raw });
-}
-var EMPTY_MAP = { layers: [], nodes: [], edges: [] };
-function describeMapError(e) {
-  switch (e.kind) {
-    case "invalid-id":
-      return `invalid id "${e.raw}" (rule: ${e.rule})`;
-    case "invalid-status":
-      return `invalid status "${e.raw}" (expected: ${NODE_STATUSES.join(" | ")})`;
-    case "duplicate-layer":
-      return `layer "${e.id}" already exists`;
-    case "duplicate-rank":
-      return `rank ${e.rank} is already taken by layer "${e.existing}"`;
-    case "duplicate-node":
-      return `node "${e.id}" already exists`;
-    case "unknown-layer":
-      return `layer "${e.id}" does not exist`;
-    case "unknown-node":
-      return `node "${e.id}" does not exist`;
-    case "duplicate-edge":
-      return `edge ${e.from} -> ${e.to} already exists`;
-    case "unknown-edge":
-      return `edge ${e.from} -> ${e.to} does not exist`;
-    case "self-edge":
-      return `node "${e.id}" cannot depend on itself`;
-    case "layer-not-empty":
-      return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
-    case "edge-not-downward":
-      return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; dependencies may only point to a lower layer`;
-  }
-}
-
-// src/domain/ops.ts
-function findLayer(map, id) {
-  return map.layers.find((l) => l.id === id);
-}
-function findNode(map, id) {
-  return map.nodes.find((n) => n.id === id);
-}
-function hasEdge(map, from, to) {
-  return map.edges.some((e) => e.from === from && e.to === to);
-}
-function setTitle(map, title) {
-  return { ...map, title };
-}
-function declareLayer(map, input) {
-  if (findLayer(map, input.id)) return err({ kind: "duplicate-layer", id: input.id });
-  const rankHolder = map.layers.find((l) => l.rank === input.rank);
-  if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
-  return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
-}
-function declareNode(map, input) {
-  if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
-  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
-  const node = {
-    id: input.id,
-    label: input.label,
-    layer: input.layer,
-    status: input.status ?? "planned",
-    ...input.detail !== void 0 ? { detail: input.detail } : {}
-  };
-  return ok({ ...map, nodes: [...map.nodes, node] });
-}
-function linkNodes(map, from, to) {
-  if (from === to) return err({ kind: "self-edge", id: from });
-  const fromNode = findNode(map, from);
-  if (!fromNode) return err({ kind: "unknown-node", id: from });
-  const toNode = findNode(map, to);
-  if (!toNode) return err({ kind: "unknown-node", id: to });
-  if (hasEdge(map, from, to)) return err({ kind: "duplicate-edge", from, to });
-  const fromRank = findLayer(map, fromNode.layer).rank;
-  const toRank = findLayer(map, toNode.layer).rank;
-  if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
-  return ok({ ...map, edges: [...map.edges, { from, to }] });
-}
-function updateNode(map, input) {
-  const node = findNode(map, input.id);
-  if (!node) return err({ kind: "unknown-node", id: input.id });
-  const updated = {
-    ...node,
-    ...input.status !== void 0 ? { status: input.status } : {},
-    ...input.label !== void 0 ? { label: input.label } : {},
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
-    ...input.detail !== void 0 ? { detail: input.detail } : {}
-  };
-  return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
-}
-
-// src/store/store.ts
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 function describeStoreError(e) {
@@ -764,6 +847,18 @@ function parseMap(raw, path) {
     if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
     map = next.value;
   }
+  for (const [i, rawGroup] of asArray(raw["groups"]).entries()) {
+    if (!isRecord(rawGroup)) return err({ kind: "bad-shape", path, detail: `groups[${i}] is not an object` });
+    const id = makeGroupId(String(rawGroup["id"] ?? ""));
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const layer = makeLayerId(String(rawGroup["layer"] ?? ""));
+    if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
+    const label = optionalString(rawGroup["label"]);
+    if (label === void 0) return err({ kind: "bad-shape", path, detail: `groups[${i}] needs a string label` });
+    const declared = declareGroup(map, { id: id.value, label, layer: layer.value });
+    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
+    map = declared.value;
+  }
   for (const [i, rawNode] of asArray(raw["nodes"]).entries()) {
     if (!isRecord(rawNode)) return err({ kind: "bad-shape", path, detail: `nodes[${i}] is not an object` });
     const id = makeNodeId(String(rawNode["id"] ?? ""));
@@ -775,12 +870,20 @@ function parseMap(raw, path) {
     const label = optionalString(rawNode["label"]);
     if (label === void 0) return err({ kind: "bad-shape", path, detail: `nodes[${i}] needs a string label` });
     const detail = optionalString(rawNode["detail"]);
+    const rawGroup = optionalString(rawNode["group"]);
+    let group;
+    if (rawGroup !== void 0) {
+      const made = makeGroupId(rawGroup);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      group = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
       layer: layer.value,
       status: status.value,
-      ...detail !== void 0 ? { detail } : {}
+      ...detail !== void 0 ? { detail } : {},
+      ...group !== void 0 ? { group } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
@@ -970,9 +1073,50 @@ function nearestHit(hits, cx, cy) {
   return best;
 }
 function nodePanel(map, focusId, unicode, width, pinned) {
+  const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
+  const group = map.groups.find((gr) => gr.id === focusId);
+  if (group) {
+    const members = map.nodes.filter((n) => n.group === group.id);
+    const memberIds = new Set(members.map((n) => n.id));
+    const status = groupStatus(map, group.id);
+    const layerName2 = map.layers.find((l) => l.id === group.layer)?.name ?? group.layer;
+    const [right2, left2] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
+    const repLabel = (id) => {
+      const n = map.nodes.find((x) => x.id === id);
+      const owner = n.group !== void 0 ? map.groups.find((gr) => gr.id === n.group) : void 0;
+      return owner !== void 0 ? `${g(groupStatus(map, owner.id))} ${owner.label}` : `${g(n.status)} ${n.label}`;
+    };
+    const uses2 = [
+      ...new Set(
+        map.edges.filter((e) => memberIds.has(e.from) && !memberIds.has(e.to)).map((e) => repLabel(e.to))
+      )
+    ];
+    const usedBy2 = [
+      ...new Set(
+        map.edges.filter((e) => memberIds.has(e.to) && !memberIds.has(e.from)).map((e) => repLabel(e.from))
+      )
+    ];
+    const lines2 = [
+      {
+        text: fitWidth(
+          `${g(status)} ${group.label} [${group.id}] \xB7 ${layerName2} \xB7 ${status} \xB7 ${members.length} member(s)${pinMark}`,
+          width
+        ),
+        sgr: `${STATUS_SGR[status]};1`
+      },
+      {
+        text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join("  ") || "\u2014"}`, width),
+        sgr: ""
+      },
+      { text: fitWidth(`uses ${right2}  ${uses2.join("  ") || "\u2014"}`, width), sgr: "" },
+      { text: fitWidth(`used by ${left2}  ${usedBy2.join("  ") || "\u2014"}`, width), sgr: "" }
+    ];
+    while (lines2.length < PANEL_CONTENT_ROWS) lines2.push({ text: "", sgr: "" });
+    return lines2;
+  }
   const node = map.nodes.find((n) => n.id === focusId);
   if (!node) return void 0;
-  const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? node.layer;
   const [right, left] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
   const withGlyph = (id) => {

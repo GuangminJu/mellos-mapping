@@ -46,6 +46,46 @@ describe('applyDeclare', () => {
     expect(map.edges).toHaveLength(1);
   });
 
+  it('declares groups before nodes so members can join in the same batch', () => {
+    const map = must(
+      applyDeclare(EMPTY_MAP, {
+        layers: [{ id: 'base', name: 'Base', rank: 0 }],
+        groups: [{ id: 'g', label: '地基', layer: 'base' }],
+        nodes: [{ id: 'a', label: 'A', layer: 'base', group: 'g' }],
+      }),
+    );
+    expect(map.groups).toEqual([{ id: 'g', label: '地基', layer: 'base' }]);
+    expect(map.nodes[0]?.group).toBe('g');
+    expect(summarize(map)).toContain('1 group(s)');
+  });
+
+  it('group updates join and leave via update (null leaves)', () => {
+    let map = must(
+      applyDeclare(EMPTY_MAP, {
+        layers: [{ id: 'base', name: 'Base', rank: 0 }],
+        groups: [{ id: 'g', label: 'G', layer: 'base' }],
+        nodes: [{ id: 'a', label: 'A', layer: 'base' }],
+      }),
+    );
+    map = must(applyUpdate(map, { updates: [{ id: 'a', group: 'g' }] }));
+    expect(map.nodes[0]?.group).toBe('g');
+    map = must(applyUpdate(map, { updates: [{ id: 'a', group: null }] }));
+    expect(map.nodes[0]?.group).toBeUndefined();
+  });
+
+  it('removes groups before layers so an emptied band can go in one batch', () => {
+    const declared = must(
+      applyDeclare(EMPTY_MAP, {
+        layers: [{ id: 'base', name: 'Base', rank: 0 }],
+        groups: [{ id: 'g', label: 'G', layer: 'base' }],
+      }),
+    );
+    const removed = must(applyRemove(declared, { groups: ['g'], layers: ['base'] }));
+    expect(removed.groups).toEqual([]);
+    expect(removed.layers).toEqual([]);
+    expect(mustFail(applyRemove(declared, { layers: ['base'] }))).toContain('still holds group');
+  });
+
   it('is all-or-nothing: a bad edge at the end rejects the entire batch', () => {
     const result = applyDeclare(EMPTY_MAP, {
       layers: [

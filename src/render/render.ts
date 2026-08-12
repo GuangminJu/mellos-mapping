@@ -46,7 +46,8 @@
  * box spec (size, border, content) and the whitespace geometry change.
  */
 
-import type { MapNode, MellosMap, NodeStatus } from '../domain/types.js';
+import { groupStatus } from '../domain/ops.js';
+import type { DepEdge, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
 
 /** One wheel tick on the zoom ladder; see module header. */
 export type ZoomStep = -4 | -3 | -2 | -1 | 0 | 1;
@@ -579,9 +580,65 @@ export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: V
   };
 }
 
+/**
+ * The derived coarse picture the far zoom renders when the map declares
+ * groups: each group becomes ONE labeled node (status derived from members,
+ * label carrying done/total), ungrouped nodes stay themselves, and edges
+ * collapse onto representatives (intra-group wiring disappears into the
+ * box). Derived for rendering only — never persisted. A map without groups
+ * returns undefined and falls back to the anonymous glyph constellation.
+ */
+function aggregateMap(map: MellosMap): MellosMap | undefined {
+  if (map.groups.length === 0) return undefined;
+  // Group ids join the node-id slug space inside this derived value; the
+  // brands only guard PERSISTED maps, and this one never leaves the renderer.
+  const representative = new Map<string, string>();
+  for (const n of map.nodes) representative.set(n.id as string, (n.group ?? n.id) as string);
+
+  const nodes: MapNode[] = map.groups.map((g) => {
+    const members = map.nodes.filter((n) => n.group === g.id);
+    const done = members.filter((n) => n.status === 'done').length;
+    return {
+      id: g.id as unknown as NodeId,
+      label: `${g.label} ${done}/${members.length}`,
+      layer: g.layer,
+      status: groupStatus(map, g.id),
+    };
+  });
+  for (const n of map.nodes) if (n.group === undefined) nodes.push(n);
+
+  const seen = new Set<string>();
+  const edges: DepEdge[] = [];
+  for (const e of map.edges) {
+    const from = representative.get(e.from as string)!;
+    const to = representative.get(e.to as string)!;
+    if (from === to || seen.has(`${from}->${to}`)) continue;
+    seen.add(`${from}->${to}`);
+    edges.push({ from: from as NodeId, to: to as NodeId });
+  }
+  return { ...(map.title !== undefined ? { title: map.title } : {}), layers: map.layers, groups: [], nodes, edges };
+}
+
+/** Geometry for the aggregated far zoom: tight chrome, but FULL labels — the point is names. */
+const AGGREGATE_GEO: ZoomGeometry = {
+  mode: 'boxes',
+  scale: 1,
+  pad: 0,
+  boxGap: 1,
+  breathe: 0,
+  titleGap: 0,
+  barGap: 1,
+  bandCounts: false,
+};
+
 function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
+  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
+  const aggregated = plainGeo.mode === 'constellation' ? aggregateMap(map) : undefined;
+  return buildCanvasWith(aggregated ?? map, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo);
+}
+
+function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry): { canvas: Canvas; hits: BoxHit[] } {
   const canvas = new Canvas();
-  const geo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
 
   if (bands.length === 0) {

@@ -34,6 +34,7 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { groupStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
 import {
   type BoxHit,
@@ -161,8 +162,9 @@ export interface PanelLine {
 }
 
 /**
- * The detail panel for a focused node: header, evidence, both wire
- * directions with each neighbour's status glyph, wrapped design notes.
+ * The detail panel for a focused node OR group (the far zoom's boxes are
+ * groups): header, evidence/members, both wire directions with each
+ * neighbour's status glyph, wrapped design notes.
  * Always exactly PANEL_CONTENT_ROWS lines (padded with blanks).
  */
 export function nodePanel(
@@ -172,9 +174,57 @@ export function nodePanel(
   width: number,
   pinned: boolean,
 ): PanelLine[] | undefined {
+  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
+
+  const group = map.groups.find((gr) => (gr.id as string) === focusId);
+  if (group) {
+    const members = map.nodes.filter((n) => n.group === group.id);
+    const memberIds = new Set(members.map((n) => n.id as string));
+    const status = groupStatus(map, group.id);
+    const layerName = map.layers.find((l) => l.id === group.layer)?.name ?? (group.layer as string);
+    const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
+    // A neighbour is shown as its own group when it has one, else as itself.
+    const repLabel = (id: string): string => {
+      const n = map.nodes.find((x) => (x.id as string) === id)!;
+      const owner = n.group !== undefined ? map.groups.find((gr) => gr.id === n.group) : undefined;
+      return owner !== undefined ? `${g(groupStatus(map, owner.id))} ${owner.label}` : `${g(n.status)} ${n.label}`;
+    };
+    const uses = [
+      ...new Set(
+        map.edges
+          .filter((e) => memberIds.has(e.from as string) && !memberIds.has(e.to as string))
+          .map((e) => repLabel(e.to as string)),
+      ),
+    ];
+    const usedBy = [
+      ...new Set(
+        map.edges
+          .filter((e) => memberIds.has(e.to as string) && !memberIds.has(e.from as string))
+          .map((e) => repLabel(e.from as string)),
+      ),
+    ];
+    const lines: PanelLine[] = [
+      {
+        text: fitWidth(
+          `${g(status)} ${group.label} [${group.id}] · ${layerName} · ${status} · ${members.length} member(s)${pinMark}`,
+          width,
+        ),
+        sgr: `${STATUS_SGR[status]};1`,
+      },
+      {
+        text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join('  ') || '—'}`, width),
+        sgr: '',
+      },
+      { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
+      { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
+    ];
+    while (lines.length < PANEL_CONTENT_ROWS) lines.push({ text: '', sgr: '' });
+    return lines;
+  }
+
   const node = map.nodes.find((n) => (n.id as string) === focusId);
   if (!node) return undefined;
-  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? (node.layer as string);
   const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
   const withGlyph = (id: string): string => {

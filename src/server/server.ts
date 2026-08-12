@@ -82,10 +82,11 @@ export function buildServer(stateFile: string): McpServer {
     {
       title: 'Declare map structure',
       description:
-        'Grow the Mellos map: set the title, add layer bands, add nodes, add dependency edges. ' +
-        'Declare the whole ghost design up front, then grow it as understanding deepens. ' +
-        'Edges must point strictly downward (a node may only use nodes on lower layers); ' +
-        'the batch is all-or-nothing.',
+        'Grow the Mellos map: set the title, add layer bands, add groups (labeled subsystems ' +
+        'within a band — the zoomed-out view renders groups, so declare them for any map beyond ' +
+        'a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up ' +
+        'front, then grow it as understanding deepens. Edges must point strictly downward (a node ' +
+        'may only use nodes on lower layers); the batch is all-or-nothing.',
       inputSchema: {
         title: z.string().max(120).optional().describe('map title, e.g. the feature being built'),
         layers: z
@@ -94,6 +95,15 @@ export function buildServer(stateFile: string): McpServer {
               id: ID,
               name: z.string().min(1).max(60).describe('display name of the band'),
               rank: z.number().int().min(0).max(99).describe('0 = bottom / most primitive; must be unique'),
+            }),
+          )
+          .optional(),
+        groups: z
+          .array(
+            z.object({
+              id: ID,
+              label: z.string().min(1).max(60).describe('subsystem name shown at the far zoom'),
+              layer: ID.describe('band this group clusters; members must live on the same band'),
             }),
           )
           .optional(),
@@ -109,6 +119,7 @@ export function buildServer(stateFile: string): McpServer {
                 .max(600)
                 .optional()
                 .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
+              group: ID.optional().describe('same-band group this node belongs to'),
             }),
           )
           .optional(),
@@ -143,6 +154,9 @@ export function buildServer(stateFile: string): McpServer {
                 .max(600)
                 .optional()
                 .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
+              group: ID.nullable()
+                .optional()
+                .describe('join this same-band group; null leaves the current group'),
             }),
           )
           .min(1),
@@ -156,13 +170,15 @@ export function buildServer(stateFile: string): McpServer {
     {
       title: 'Revise the map',
       description:
-        'Remove edges, nodes and empty layer bands (in that order, all-or-nothing). ' +
-        'Removing a node also removes every edge touching it. Use when the ghost design ' +
-        'turns out wrong — the map is a hypothesis, revising it is honest work.',
+        'Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). ' +
+        'Removing a node also removes every edge touching it; removing a group merely ungroups ' +
+        'its members. Use when the ghost design turns out wrong — the map is a hypothesis, ' +
+        'revising it is honest work.',
       inputSchema: {
         edges: z.array(EDGE).optional(),
         nodes: z.array(ID).optional(),
-        layers: z.array(ID).optional().describe('bands to remove; must be empty of nodes'),
+        groups: z.array(ID).optional().describe('groups to remove; members stay, merely ungrouped'),
+        layers: z.array(ID).optional().describe('bands to remove; must be empty of nodes and groups'),
       },
     },
     (input) => mutate((map) => applyRemove(map, input)),

@@ -1,5 +1,29 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`renderMap > aggregates into labeled group boxes at the far zoom when groups exist 1`] = `
+"  梅勒斯地图 · mellos-mapping 插件
+━━━━━━━━━━━━━━━━━━━ 编排层
+
+  ╭╌╌╌╌╌╌╌╌╌╌╌╌╮
+  ╎· MCP Server╎
+  ╰╌╌┬┬╌╌╌╌┬╌╌╌╯
+     └┼────┼────────┐
+      │    └──┐     │
+━━━━━━┿━━━━━━━┿━━━━ 契约层
+      │       │     │
+  ┏━━━┷━━━━━━┓│╭╌╌╌╌┴╌╌╌╌╮
+  ┃■ 状态存储┃│╎· Watcher╎
+  ┗━━━━┯━━━━━┛│╰╌┬╌╌╌╌╌╌╌╯
+       │   ┌──┘  │
+━━━━━━━┿━━━┿━━━━━┿━ 原语层
+       │   │     │
+  ╭────┴───┴─────┴─╮
+  │⠋ 地基子系统 1/2│
+  ╰────────────────╯
+
+  · planned   ⠋ in-progress   ■ done   ✗ regressed"
+`;
+
 exports[`renderMap > renders the canonical sample (visual spec) 1`] = `
 "  梅勒斯地图 · mellos-mapping 插件
 

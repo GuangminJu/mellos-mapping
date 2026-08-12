@@ -9,10 +9,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  declareGroup,
   declareLayer,
   declareNode,
+  groupStatus,
   linkNodes,
   removeEdge,
+  removeGroup,
   removeLayer,
   removeNode,
   setTitle,
@@ -20,10 +23,12 @@ import {
 } from './ops.js';
 import {
   EMPTY_MAP,
+  type GroupId,
   type LayerId,
   type MellosMap,
   type NodeId,
   type Result,
+  makeGroupId,
   makeLayerId,
   makeNodeId,
   makeNodeStatus,
@@ -43,6 +48,7 @@ function mustFail<T, E>(r: Result<T, E>): E {
 
 const lid = (raw: string): LayerId => must(makeLayerId(raw));
 const nid = (raw: string): NodeId => must(makeNodeId(raw));
+const gid = (raw: string): GroupId => must(makeGroupId(raw));
 
 /** A three-band map: primitives(0) < contracts(1) < orchestration(2). */
 function threeBands(): MellosMap {
@@ -218,6 +224,72 @@ describe('removal keeps the map closed (no dangling references)', () => {
     map = must(linkNodes(map, nid('a'), nid('b')));
     expect(must(removeEdge(map, nid('a'), nid('b'))).edges).toEqual([]);
     expect(mustFail(removeEdge(map, nid('b'), nid('a'))).kind).toBe('unknown-edge');
+  });
+});
+
+describe('groups — band-local labeled clusters (I6, I7)', () => {
+  function grouped(): MellosMap {
+    let map = threeBands();
+    map = must(declareGroup(map, { id: gid('foundation'), label: '地基子系统', layer: lid('primitives') }));
+    map = must(
+      declareNode(map, { id: nid('a'), label: 'A', layer: lid('primitives'), status: 'done', group: gid('foundation') }),
+    );
+    map = must(
+      declareNode(map, { id: nid('b'), label: 'B', layer: lid('primitives'), status: 'planned', group: gid('foundation') }),
+    );
+    map = must(declareNode(map, { id: nid('c'), label: 'C', layer: lid('contracts') }));
+    return map;
+  }
+
+  it('declares groups on existing bands and refuses duplicates', () => {
+    const map = grouped();
+    expect(map.groups).toEqual([{ id: 'foundation', label: '地基子系统', layer: 'primitives' }]);
+    expect(mustFail(declareGroup(map, { id: gid('foundation'), label: 'again', layer: lid('contracts') })).kind).toBe(
+      'duplicate-group',
+    );
+    expect(mustFail(declareGroup(map, { id: gid('x'), label: 'X', layer: lid('nowhere') })).kind).toBe('unknown-layer');
+  });
+
+  it('refuses membership across bands — a group is band-local cohesion', () => {
+    const e = mustFail(
+      declareNode(grouped(), { id: nid('x'), label: 'X', layer: lid('contracts'), group: gid('foundation') }),
+    );
+    expect(e).toMatchObject({ kind: 'group-layer-mismatch', nodeLayer: 'contracts', groupLayer: 'primitives' });
+    const viaUpdate = mustFail(updateNode(grouped(), { id: nid('c'), group: gid('foundation') }));
+    expect(viaUpdate.kind).toBe('group-layer-mismatch');
+  });
+
+  it('joins and leaves a group via update (null leaves)', () => {
+    let map = must(updateNode(grouped(), { id: nid('b'), group: null }));
+    expect(map.nodes.find((n) => n.id === 'b')?.group).toBeUndefined();
+    map = must(updateNode(map, { id: nid('b'), group: gid('foundation') }));
+    expect(map.nodes.find((n) => n.id === 'b')?.group).toBe('foundation');
+  });
+
+  it('derives group status from members and never stores it', () => {
+    let map = grouped();
+    expect(groupStatus(map, gid('foundation'))).toBe('planned'); // done + planned
+    map = must(updateNode(map, { id: nid('b'), status: 'in-progress' }));
+    expect(groupStatus(map, gid('foundation'))).toBe('in-progress');
+    map = must(updateNode(map, { id: nid('b'), status: 'done' }));
+    expect(groupStatus(map, gid('foundation'))).toBe('done');
+    map = must(updateNode(map, { id: nid('a'), status: 'regressed' }));
+    expect(groupStatus(map, gid('foundation'))).toBe('regressed');
+    expect('status' in map.groups[0]!).toBe(false); // derived, never stored
+  });
+
+  it('removing a group merely ungroups its members', () => {
+    const after = must(removeGroup(grouped(), gid('foundation')));
+    expect(after.groups).toEqual([]);
+    expect(after.nodes.map((n) => n.group)).toEqual([undefined, undefined, undefined]);
+    expect(after.nodes).toHaveLength(3);
+  });
+
+  it('a band holding a group cannot be removed', () => {
+    let map = threeBands();
+    map = must(declareGroup(map, { id: gid('g'), label: 'G', layer: lid('orchestration') }));
+    expect(mustFail(removeLayer(map, lid('orchestration'))).kind).toBe('layer-holds-group');
+    expect(must(removeGroup(map, gid('g'))).groups).toEqual([]);
   });
 });
 

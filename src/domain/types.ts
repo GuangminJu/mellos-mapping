@@ -18,6 +18,10 @@
  *       Same-layer edges are rejected on purpose: if A needs a sibling B,
  *       either B is really a lower-layer concept or A and B are one node.
  *   I5. Node status is one of the closed vocabulary in NODE_STATUSES.
+ *   I6. Group ids are unique; every group lives in an existing layer.
+ *   I7. A node's group, when set, exists and lives in the node's own layer —
+ *       a group is band-local cohesion (a labeled subsystem the far zoom can
+ *       render); structure ACROSS bands is what layers and edges express.
  *
  * Everything here is immutable data plus pure types. No I/O, no clock, no
  * process state.
@@ -32,6 +36,7 @@ export const err = <E>(error: E): { ok: false; error: E } => ({ ok: false, error
 /** Ids are branded slugs, never raw strings, so a NodeId cannot leak into a LayerId slot. */
 export type NodeId = string & { readonly __brand: 'NodeId' };
 export type LayerId = string & { readonly __brand: 'LayerId' };
+export type GroupId = string & { readonly __brand: 'GroupId' };
 
 const ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const ID_RULE_TEXT = 'lowercase letters, digits and dashes, starting with a letter or digit, 1-64 chars';
@@ -44,6 +49,10 @@ export function makeNodeId(raw: string): Result<NodeId, InvalidId> {
 
 export function makeLayerId(raw: string): Result<LayerId, InvalidId> {
   return ID_RULE.test(raw) ? ok(raw as LayerId) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
+}
+
+export function makeGroupId(raw: string): Result<GroupId, InvalidId> {
+  return ID_RULE.test(raw) ? ok(raw as GroupId) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
 }
 
 /** Closed status vocabulary. Transitions are NOT policed — see module header. */
@@ -63,6 +72,18 @@ export interface MapLayer {
   readonly rank: number;
 }
 
+/**
+ * A labeled cluster of same-band nodes — a subsystem. The far zoom renders
+ * groups instead of members, so the overview keeps meaningful names. A
+ * group's status is always DERIVED from its members (see groupStatus),
+ * never stored.
+ */
+export interface MapGroup {
+  readonly id: GroupId;
+  readonly label: string;
+  readonly layer: LayerId;
+}
+
 /** A unit of work living in exactly one band. */
 export interface MapNode {
   readonly id: NodeId;
@@ -73,6 +94,8 @@ export interface MapNode {
   readonly evidence?: string;
   /** Design notes: responsibility, contract, key decisions. Free text. */
   readonly detail?: string;
+  /** Membership in a same-band group (I7), for the aggregated far zoom. */
+  readonly group?: GroupId;
 }
 
 /** `from` USES `to`. Must point strictly downward (invariant I4). */
@@ -85,11 +108,12 @@ export interface DepEdge {
 export interface MellosMap {
   readonly title?: string;
   readonly layers: readonly MapLayer[];
+  readonly groups: readonly MapGroup[];
   readonly nodes: readonly MapNode[];
   readonly edges: readonly DepEdge[];
 }
 
-export const EMPTY_MAP: MellosMap = { layers: [], nodes: [], edges: [] };
+export const EMPTY_MAP: MellosMap = { layers: [], groups: [], nodes: [], edges: [] };
 
 /** Every way an operation can be refused, as data. */
 export type MapError =
@@ -103,7 +127,17 @@ export type MapError =
   | { readonly kind: 'duplicate-edge'; readonly from: NodeId; readonly to: NodeId }
   | { readonly kind: 'unknown-edge'; readonly from: NodeId; readonly to: NodeId }
   | { readonly kind: 'self-edge'; readonly id: NodeId }
+  | { readonly kind: 'duplicate-group'; readonly id: GroupId }
+  | { readonly kind: 'unknown-group'; readonly id: GroupId }
+  | {
+      readonly kind: 'group-layer-mismatch';
+      readonly node: NodeId;
+      readonly nodeLayer: LayerId;
+      readonly group: GroupId;
+      readonly groupLayer: LayerId;
+    }
   | { readonly kind: 'layer-not-empty'; readonly id: LayerId; readonly occupant: NodeId }
+  | { readonly kind: 'layer-holds-group'; readonly id: LayerId; readonly occupant: GroupId }
   | {
       readonly kind: 'edge-not-downward';
       readonly from: NodeId;
@@ -135,8 +169,19 @@ export function describeMapError(e: MapError): string {
       return `edge ${e.from} -> ${e.to} does not exist`;
     case 'self-edge':
       return `node "${e.id}" cannot depend on itself`;
+    case 'duplicate-group':
+      return `group "${e.id}" already exists`;
+    case 'unknown-group':
+      return `group "${e.id}" does not exist`;
+    case 'group-layer-mismatch':
+      return (
+        `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); ` +
+        `groups cluster nodes within one band`
+      );
     case 'layer-not-empty':
       return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
+    case 'layer-holds-group':
+      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups first`;
     case 'edge-not-downward':
       return (
         `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; ` +
