@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "title": "可拖拽面板分隔线",
+  "layers": [
+    {
+      "id": "pure",
+      "name": "纯函数层",
+      "rank": 0
+    },
+    {
+      "id": "pane",
+      "name": "面板层",
+      "rank": 1
+    }
+  ],
+  "nodes": [
+    {
+      "id": "divider-math",
+      "label": "分隔线高度换算",
+      "layer": "pure",
+      "status": "done",
+      "detail": "拖到终端第 Y 行 → 面板行数 = 总行数-Y-1，夹在 [最小面板 2, 保住地图 4 行] 之间。纯函数可测。",
+      "evidence": "vitest: clampPanelRows/panelRowsFromDividerY 边界 5+2 断言全过"
+    },
+    {
+      "id": "panel-rows",
+      "label": "面板行数参数化",
+      "layer": "pure",
+      "status": "done",
+      "detail": "nodePanel/mapPanel 的固定 6 行改为 rows 参数（默认 6 兼容旧调用），行数变大时设计笔记多展开几行，变小时截断。",
+      "evidence": "vitest: rows=12 长笔记完整展开、rows=2 收缩不崩，123 tests"
+    },
+    {
+      "id": "divider-drag",
+      "label": "分隔线拖拽交互",
+      "layer": "pane",
+      "status": "done",
+      "detail": "按住分隔线行进入拖拽模式（不平移地图），拖动实时调高度，松开结束不算点击。分隔线中央画 ⋯ 把手提示可抓。",
+      "evidence": "npm run verify 全绿；拖拽=按住分隔线行，非点击，不平移地图"
+    }
+  ],
+  "edges": [
+    {
+      "from": "divider-drag",
+      "to": "divider-math"
+    },
+    {
+      "from": "divider-drag",
+      "to": "panel-rows"
+    }
+  ]
+}

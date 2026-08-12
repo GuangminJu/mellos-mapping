@@ -120,6 +120,7 @@ htop and tmux speak):
 | shift+wheel | scroll vertically |
 | `hjkl` / arrows | nudge the view |
 | `Tab` / `Shift+Tab` / `1-9` / click a tab | switch pages (parallel maps) |
+| drag the `⋯` divider | resize the detail panel — pull it up to read long design notes in full |
 | `0` | reset pan and zoom |
 | `q` | quit the pane |
 

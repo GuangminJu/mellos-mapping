@@ -1,6 +1,6 @@
 /**
  * Spec for the watcher's pure helpers: width fitting/wrapping and the
- * fixed-height detail panel (node view and map dashboard).
+ * resizable detail panel (node view and map dashboard) with its divider math.
  * (The interactive shell itself is I/O and stays untested by design.)
  */
 
@@ -12,11 +12,13 @@ import type { BoxHit } from '../render/render.js';
 import {
   type PageTab,
   anchorOffsets,
+  clampPanelRows,
   fitWidth,
   mapPanel,
   nearestHit,
   nodePanel,
   pageTabRow,
+  panelRowsFromDividerY,
   wrapWidth,
 } from './watch.js';
 
@@ -140,6 +142,40 @@ describe('pageTabRow', () => {
     expect(segments.length).toBe(2);
     expect(segments[1]!.text.endsWith('…')).toBe(true);
     expect(segments[1]!.hi).toBeLessThanOrEqual(20);
+  });
+});
+
+describe('divider drag — resizable detail panel', () => {
+  it('converts the dragged divider row into a panel height', () => {
+    // 30-row terminal, no tab bar: separator at row 23 leaves 6 panel rows
+    expect(panelRowsFromDividerY(23, 30, 0)).toBe(6);
+    expect(panelRowsFromDividerY(17, 30, 0)).toBe(12); // pulled up — bigger panel
+    expect(panelRowsFromDividerY(27, 30, 0)).toBe(2); // pushed down — clamped to minimum
+    expect(panelRowsFromDividerY(2, 30, 0)).toBe(24); // the map keeps its minimum rows
+    expect(panelRowsFromDividerY(2, 30, 1)).toBe(23); // a tab bar costs one row
+  });
+
+  it('re-clamps a remembered height when the terminal shrinks', () => {
+    expect(clampPanelRows(20, 14, 0)).toBe(8);
+    expect(clampPanelRows(1, 30, 0)).toBe(2);
+  });
+
+  it('grows the design notes into the extra panel rows', () => {
+    const six = nodePanel(sample(), 'core', true, 20, false)!;
+    expect(six).toHaveLength(6);
+    expect(six[5]!.text.endsWith('…')).toBe(true); // cramped: notes cut
+    expect(six.map((l) => l.text).join('')).not.toContain('零异常控制流。');
+
+    // Dragging the divider up gives the notes room — the tail is no longer cut.
+    const roomy = nodePanel(sample(), 'core', true, 20, false, 12)!;
+    expect(roomy).toHaveLength(12);
+    expect(roomy.map((l) => l.text).join('')).toContain('零异常控制流。');
+  });
+
+  it('shrinks panels below their fixed rows without crashing', () => {
+    expect(nodePanel(sample(), 'core', true, 80, false, 2)!).toHaveLength(2);
+    expect(mapPanel(sample(), true, 80, 3)).toHaveLength(3);
+    expect(mapPanel(sample(), true, 80, 9)).toHaveLength(9);
   });
 });
 

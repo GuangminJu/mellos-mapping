@@ -54,9 +54,17 @@ load), SAY SO and offer a restart — never silently skip the map.
    verification actually passed, and put what passed in `evidence`
    (e.g. `vitest: 23 passed`, `manual: pane renders CJK aligned`). No
    evidence, no done.
-5. **Regression is map-worthy.** If later work breaks a `done` node's tests,
-   set it `regressed` with the breakage in `evidence` BEFORE starting the fix,
-   and set it back to `done` only when re-verified.
+5. **Regression is map-worthy — and it spreads upward.** If later work breaks
+   a `done` node's tests, set it `regressed` with the breakage in `evidence`
+   BEFORE starting the fix, and set it back to `done` only when re-verified.
+   Then, in the same turn, walk every node that uses it (directly and
+   transitively): their `done` was proven against a foundation that no longer
+   holds, so it is now an unverified claim. Default to marking them
+   `regressed` too. Keep a dependent green only when you have a reason —
+   its own verification re-ran and still passes, or it demonstrably never
+   touches the broken behavior — and state that reason in conversation.
+   When the foundation is fixed, restore each dependent only as its own
+   verification passes again.
 6. **Revise the ghost honestly.** The initial design is a hypothesis. When
    understanding deepens — a node splits, a missing primitive appears, a layer
    was wrong — update the map with `mmap_declare` / `mmap_remove` in the same
@@ -79,6 +87,15 @@ load), SAY SO and offer a restart — never silently skip the map.
   declaration time (the user reads it in the pane's detail panel when they
   hover the node) and update it whenever the design shifts. A node whose
   detail no longer matches its code is a small lie on the map.
+- **Push state to the top.** When decomposing, design lower layers and
+  modules to hold as little internal state as possible — pure values in,
+  pure values out. Mutable state concentrates in the topmost orchestration
+  node, which owns it explicitly and hands it down as parameters. This is a
+  maintenance-cost strategy: every stateless layer below can be tested with
+  values alone, rewritten without ceremony, and never lies about what it
+  depends on. If a lower node's `detail` must describe internal state it
+  keeps between calls, treat that as a design smell — restructure before
+  building on top of it.
 - **Layers encode allowed dependency direction, nothing else.** If node A
   needs sibling B on the same layer, either B is really a lower-layer concept
   or A and B are one node — restructure instead of forcing an edge.
@@ -86,8 +103,11 @@ load), SAY SO and offer a restart — never silently skip the map.
   composes, or reads the lower one. Do not draw aspirational edges.
 - Ids are stable kebab-case slugs; labels are short display names (CJK fine)
   and may be renamed freely without breaking edges.
-- One map per project at a time. Starting a new effort? Propose replacing the
-  map (declare a new title and structure) rather than mixing two efforts.
+- **One effort = one page.** The default page suits a single stream of work;
+  when a genuinely separate effort starts (a parallel session, an unrelated
+  subsystem), give it its own page via the `page` parameter on every tool
+  call rather than mixing two efforts into one picture — or replacing the
+  finished map of the previous effort.
 
 ## Standing state
 

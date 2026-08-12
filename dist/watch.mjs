@@ -1068,7 +1068,15 @@ var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
 var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
 var RESET = "\x1B[0m";
 var PANEL_CONTENT_ROWS = 6;
-var PANEL_ROWS = 1 + PANEL_CONTENT_ROWS;
+var PANEL_ROWS_MIN = 2;
+var MAP_ROWS_MIN = 4;
+function clampPanelRows(wanted, totalRows, tabRows) {
+  const largest = totalRows - tabRows - MAP_ROWS_MIN - 2;
+  return Math.max(PANEL_ROWS_MIN, Math.min(wanted, largest));
+}
+function panelRowsFromDividerY(termY, totalRows, tabRows) {
+  return clampPanelRows(totalRows - termY - 1, totalRows, tabRows);
+}
 var STATUS_GLYPH = {
   planned: ["\xB7", "."],
   "in-progress": ["\u283F", "*"],
@@ -1126,7 +1134,7 @@ function nearestHit(hits, cx, cy) {
   }
   return best;
 }
-function nodePanel(map, focusId, unicode, width, pinned) {
+function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS) {
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
   const group = map.groups.find((gr) => gr.id === focusId);
@@ -1166,8 +1174,8 @@ function nodePanel(map, focusId, unicode, width, pinned) {
       { text: fitWidth(`uses ${right2}  ${uses2.join("  ") || "\u2014"}`, width), sgr: "" },
       { text: fitWidth(`used by ${left2}  ${usedBy2.join("  ") || "\u2014"}`, width), sgr: "" }
     ];
-    while (lines2.length < PANEL_CONTENT_ROWS) lines2.push({ text: "", sgr: "" });
-    return lines2;
+    while (lines2.length < rows) lines2.push({ text: "", sgr: "" });
+    return lines2.slice(0, rows);
   }
   const node = map.nodes.find((n) => n.id === focusId);
   if (!node) return void 0;
@@ -1190,7 +1198,7 @@ function nodePanel(map, focusId, unicode, width, pinned) {
     { text: fitWidth(`used by ${left}  ${usedBy.join("  ") || "\u2014"}`, width), sgr: "" }
   ];
   const notes = node.detail !== void 0 ? wrapWidth(node.detail, width) : ["(no design notes yet)"];
-  const room = PANEL_CONTENT_ROWS - lines.length;
+  const room = Math.max(0, rows - lines.length);
   for (let i = 0; i < room; i++) {
     const last = i === room - 1 && notes.length > room;
     lines.push({
@@ -1198,14 +1206,14 @@ function nodePanel(map, focusId, unicode, width, pinned) {
       sgr: node.detail !== void 0 ? "" : "90"
     });
   }
-  return lines;
+  return lines.slice(0, rows);
 }
-function mapPanel(map, unicode, width) {
+function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const count = (s) => map.nodes.filter((n) => n.status === s).length;
   const statuses = ["done", "in-progress", "planned", "regressed"];
   const counts = statuses.filter((s) => count(s) > 0).map((s) => `${g(s)} ${count(s)} ${s}`).join("   ");
-  return [
+  const lines = [
     { text: fitWidth(map.title ?? "mellos map", width), sgr: "1" },
     {
       text: fitWidth(`${map.layers.length} layers \xB7 ${map.nodes.length} nodes \xB7 ${map.edges.length} edges`, width),
@@ -1213,9 +1221,10 @@ function mapPanel(map, unicode, width) {
     },
     { text: fitWidth(counts, width), sgr: "" },
     { text: "", sgr: "" },
-    { text: "hover a node to inspect \xB7 click to pin", sgr: "90" },
-    { text: "", sgr: "" }
+    { text: "hover a node to inspect \xB7 click to pin", sgr: "90" }
   ];
+  while (lines.length < rows) lines.push({ text: "", sgr: "" });
+  return lines.slice(0, rows);
 }
 function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
@@ -1243,8 +1252,11 @@ function main() {
   let lastHits = [];
   let lastContent = { w: 0, h: 0 };
   let pendingInput = "";
+  let panelContentRows = PANEL_CONTENT_ROWS;
+  let dividerDrag = false;
   const tabRows = () => pageFiles.length > 1 ? 1 : 0;
-  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1 - tabRows());
+  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
+  const dividerY = () => tabRows() + viewHeight() + 1;
   const switchPage = (file) => {
     if (activeFile !== void 0) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
     activeFile = file;
@@ -1276,6 +1288,7 @@ function main() {
   process.on("SIGTERM", restore);
   const paint = () => {
     const cols = process.stdout.columns ?? 100;
+    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
     let body;
@@ -1309,13 +1322,16 @@ function main() {
     const panelWidth = Math.max(10, cols - 2);
     let panel;
     if (map === void 0) {
-      panel = Array.from({ length: PANEL_CONTENT_ROWS }, () => ({ text: "", sgr: "" }));
+      panel = Array.from({ length: panelContentRows }, () => ({ text: "", sgr: "" }));
     } else if (focus !== void 0) {
-      panel = nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus) ?? mapPanel(map, cfg.unicode, panelWidth);
+      panel = nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows) ?? mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     } else {
-      panel = mapPanel(map, cfg.unicode, panelWidth);
+      panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
-    const separator = (cfg.unicode ? "\u2500" : "-").repeat(cols);
+    const grip = cfg.unicode ? " \u22EF " : " ~ ";
+    const bar = (cfg.unicode ? "\u2500" : "-").repeat(cols);
+    const gripAt = Math.max(0, Math.floor((cols - grip.length) / 2));
+    const separator = cols > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
     const panelRows = [
       cfg.color ? `\x1B[90m${separator}${RESET}` : separator,
       ...panel.map(
@@ -1460,10 +1476,22 @@ function main() {
             break;
           }
           case "mouse-down":
+            if (event.y === dividerY()) {
+              dividerDrag = true;
+              break;
+            }
             dragAnchor = { x: event.x, y: event.y, ox: offsetX, oy: offsetY };
             press = { moved: false };
             break;
           case "mouse-drag":
+            if (dividerDrag) {
+              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? 30, tabRows());
+              if (next !== panelContentRows) {
+                panelContentRows = next;
+                dirty = true;
+              }
+              break;
+            }
             if (dragAnchor) {
               const nx = dragAnchor.ox - (event.x - dragAnchor.x);
               const ny = dragAnchor.oy - (event.y - dragAnchor.y);
@@ -1476,6 +1504,10 @@ function main() {
             }
             break;
           case "mouse-up":
+            if (dividerDrag) {
+              dividerDrag = false;
+              break;
+            }
             if (press && !press.moved) {
               const tabHit = tabRows() > 0 && event.y === 1 ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi) : void 0;
               if (tabHit !== void 0) {
@@ -1520,12 +1552,15 @@ if (process.argv[1] !== void 0 && import.meta.url === pathToFileURL(process.argv
   main();
 }
 export {
+  PANEL_ROWS_MIN,
   anchorOffsets,
+  clampPanelRows,
   fitWidth,
   mapPanel,
   nearestHit,
   nodePanel,
   pageTabRow,
+  panelRowsFromDividerY,
   parseArgs,
   wrapWidth
 };
