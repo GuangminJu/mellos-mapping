@@ -1,7 +1,6 @@
 {
   "version": 1,
   "title": "梅勒斯地图 · 功能总览",
-  "kind": "architecture",
   "layers": [
     {
       "id": "base",
@@ -19,7 +18,7 @@
       "id": "zoom",
       "label": "语义缩放",
       "layer": "base",
-      "status": "planned",
+      "status": "done",
       "detail": "滚轮阶梯:先几何缩放,内容失去意义才切模式;最远端分组聚合。双击下潜看它的开发图。",
       "submap": "semantic-zoom"
     },
@@ -27,15 +26,22 @@
       "id": "pages",
       "label": "多页",
       "layer": "base",
-      "status": "planned",
-      "detail": "页=文件,一 effort 一页;标签栏切换,后台页变化亮灯。子图链接指向面板分隔线开发页作示例。",
+      "status": "done",
+      "detail": "页=文件,一 effort 一页;标签栏只列顶层页,被引用为子图的页藏进节点内部。"
+    },
+    {
+      "id": "divider",
+      "label": "分隔线拖拽",
+      "layer": "base",
+      "status": "done",
+      "detail": "地图/详情面板间 ⋯ 把手,拖动调高度,长设计笔记完整可读。",
       "submap": "panel-divider"
     },
     {
       "id": "kinds",
       "label": "图种",
       "layer": "upper",
-      "status": "planned",
+      "status": "done",
       "detail": "同一台分层 DAG 机器的五种读法:dev/架构/数据流/行为树/时序。双击看它的开发图。",
       "submap": "diagram-kinds"
     },
@@ -43,15 +49,15 @@
       "id": "dive",
       "label": "子图下潜",
       "layer": "upper",
-      "status": "planned",
-      "detail": "节点 submap 指向子页,⊞ 徽标,双击下潜,Backspace 返回。图中图,全部由页组合而成。",
+      "status": "done",
+      "detail": "节点 submap 指向子页:⊞ 徽标,双击下潜,⌫ 面包屑返回;子图页不占标签栏。",
       "submap": "submaps"
     },
     {
       "id": "seq-demo",
       "label": "时序示例",
       "layer": "upper",
-      "status": "planned",
+      "status": "done",
       "detail": "经典调用/返回时序的活例子:一次 mmap 调用的往返。双击观看。",
       "submap": "demo-sequence"
     }
@@ -71,6 +77,11 @@
       "from": "dive",
       "to": "pages",
       "label": "下潜=切页"
+    },
+    {
+      "from": "seq-demo",
+      "to": "zoom",
+      "label": "泳道布局共用缩放几何"
     }
   ]
 }

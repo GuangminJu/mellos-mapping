@@ -190,6 +190,11 @@ A node can link a child page with `submap: <page-slug>` — the pane badges it
 map of maps, built entirely from pages: no new storage, no new invariants.
 Whether a node deserves a sub-map is the AI's judgment call — most don't.
 
+Sub-maps are interior detail, not siblings: a page referenced as a submap
+never occupies a tab. Inside a dive the tab row becomes a breadcrumb —
+`⌫ parent map ▸ node` — and clicking it (or `Backspace`) climbs back out.
+When a hidden sub-map changes in the background, the footer says so.
+
 ## MCP tools
 
 | Tool | Purpose |

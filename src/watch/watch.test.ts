@@ -24,12 +24,14 @@ import {
   type PageTab,
   anchorOffsets,
   clampPanelRows,
+  diveOrigin,
   fitWidth,
   mapPanel,
   nearestHit,
   nodePanel,
   pageTabRow,
   panelRowsFromDividerY,
+  topLevelFiles,
   wrapWidth,
 } from './watch.js';
 
@@ -208,6 +210,32 @@ describe('diagram kinds in the panel', () => {
     expect(segments[0]!.sgr).toBe('36');
     expect(segments[1]!.text).toBe(' ● ■ 开发页 '); // dev tabs unchanged
     expect(segments[1]!.sgr).toBe('32;1');
+  });
+});
+
+describe('sub-map hierarchy — interior pages are not sibling tabs', () => {
+  const DEFAULT = '/p/.claude/mellos-mapping.json';
+  const child = '/p/.claude/mellos-mapping.pages/core-internals.json';
+  const effort = '/p/.claude/mellos-mapping.pages/new-effort.json';
+
+  function overview(): MellosMap {
+    let map = sample();
+    map = must(updateNode(map, { id: nid('core'), submap: 'core-internals' as SubmapRef }));
+    return map;
+  }
+
+  it('hides pages referenced as submaps from the tab bar; the default page never hides', () => {
+    const mapOf = new Map<string, MellosMap | undefined>([[DEFAULT, overview()]]);
+    expect(topLevelFiles(DEFAULT, [DEFAULT, child, effort], mapOf)).toEqual([DEFAULT, effort]);
+    // an unloaded map hides nothing
+    expect(topLevelFiles(DEFAULT, [DEFAULT, child], new Map([[DEFAULT, undefined]]))).toEqual([DEFAULT, child]);
+  });
+
+  it('derives where a sub-map was dived from: parent file and linking node label', () => {
+    const mapOf = new Map<string, MellosMap | undefined>([[DEFAULT, overview()]]);
+    expect(diveOrigin(DEFAULT, child, [DEFAULT, child], mapOf)).toEqual({ parent: DEFAULT, label: '核心' });
+    expect(diveOrigin(DEFAULT, effort, [DEFAULT, child, effort], mapOf)).toBeUndefined();
+    expect(diveOrigin(DEFAULT, DEFAULT, [DEFAULT], mapOf)).toBeUndefined(); // the default page has no parent
   });
 });
 
