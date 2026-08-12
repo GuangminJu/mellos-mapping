@@ -22511,7 +22511,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.10.0";
+var SERVER_VERSION = "0.10.1";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var PAGE = ID.optional().describe(
   "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."

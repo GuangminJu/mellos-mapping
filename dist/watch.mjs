@@ -1322,6 +1322,26 @@ function pageTabRow(tabs, width, unicode) {
   }
   return segments;
 }
+function topLevelFiles(defaultFile, files, mapOf) {
+  const refs = /* @__PURE__ */ new Set();
+  for (const m of mapOf.values()) {
+    for (const n of m?.nodes ?? []) if (n.submap !== void 0) refs.add(n.submap);
+  }
+  return files.filter((f) => {
+    const id = pageIdOfFile(defaultFile, f);
+    return id === void 0 || !refs.has(id);
+  });
+}
+function diveOrigin(defaultFile, file, files, mapOf) {
+  const id = pageIdOfFile(defaultFile, file);
+  if (id === void 0) return void 0;
+  for (const f of files) {
+    if (f === file) continue;
+    const node = mapOf.get(f)?.nodes.find((n) => n.submap === id);
+    if (node !== void 0) return { parent: f, label: node.label };
+  }
+  return void 0;
+}
 function nearestHit(hits, cx, cy) {
   let best;
   let bestDistance = Infinity;
@@ -1470,7 +1490,23 @@ function main() {
   let lastClick;
   const diveStack = [];
   let flash;
-  const tabRows = () => pageFiles.length > 1 ? 1 : 0;
+  let lastTabFiles = [];
+  const maps = () => new Map([...pageData].map(([f, e]) => [f, e.map]));
+  const topFiles = () => topLevelFiles(cfg.file, pageFiles, maps());
+  const inSubmap = () => activeFile !== void 0 && !topFiles().includes(activeFile);
+  const tabRows = () => topFiles().length > 1 || inSubmap() ? 1 : 0;
+  const climbBack = () => {
+    let parent = diveStack.pop();
+    while (parent !== void 0 && !pageFiles.includes(parent)) parent = diveStack.pop();
+    if (parent === void 0 && activeFile !== void 0) {
+      parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
+    }
+    if (parent !== void 0 && parent !== activeFile) {
+      switchPage(parent);
+      return true;
+    }
+    return false;
+  };
   const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
   const dividerY = () => tabRows() + viewHeight() + 1;
   const switchPage = (file) => {
@@ -1555,8 +1591,27 @@ function main() {
       )
     ];
     let tabLine;
-    if (tabRows() > 0) {
-      const tabs = pageFiles.map((f) => {
+    lastTabFiles = topFiles();
+    if (inSubmap() && activeFile !== void 0) {
+      const stackParent = [...diveStack].reverse().find((f) => pageFiles.includes(f));
+      const scanned = diveOrigin(cfg.file, activeFile, pageFiles, maps());
+      const parentFile = stackParent ?? scanned?.parent;
+      const parentTitle = parentFile !== void 0 ? pageData.get(parentFile)?.map?.title ?? (pageIdOfFile(cfg.file, parentFile) ?? "main") : "main";
+      const nodeLabel = scanned?.label ?? map?.title ?? "";
+      const crumbHead = ` ${cfg.unicode ? "\u232B" : "<"} ${parentTitle} ${cfg.unicode ? "\u25B8" : ">"} `;
+      const head = { text: crumbHead, sgr: "90", lo: 1, hi: displayWidth(crumbHead), index: -1 };
+      const tailText = fitWidth(`${nodeLabel} `, Math.max(1, cols - displayWidth(crumbHead)));
+      const tail = {
+        text: tailText,
+        sgr: "1",
+        lo: head.hi + 1,
+        hi: head.hi + displayWidth(tailText),
+        index: -1
+      };
+      lastTabSegments = [head, tail];
+      tabLine = lastTabSegments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
+    } else if (tabRows() > 0) {
+      const tabs = lastTabFiles.map((f) => {
         const m = pageData.get(f)?.map;
         return {
           title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? "main"),
@@ -1616,10 +1671,14 @@ function main() {
       if (mtimeMs === entry?.mtimeMs) continue;
       const loaded = loadMapFile(file);
       if (loaded.ok) {
-        pageData.set(file, { map: loaded.value, mtimeMs, fresh: !firstScan && file !== activeFile });
+        const becameFresh = !firstScan && file !== activeFile;
+        pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
         if (file === activeFile) {
           map = loaded.value;
           notice = "";
+        } else if (becameFresh && !topFiles().includes(file)) {
+          const title = loaded.value.title ?? (pageIdOfFile(cfg.file, file) ?? "?");
+          flash = { text: `${cfg.unicode ? "\u229E " : ""}${title} updated`, until: Date.now() + 4e3 };
         }
       } else if (loaded.error.kind === "malformed-json") {
       } else {
@@ -1729,8 +1788,12 @@ function main() {
             if (press && !press.moved) {
               const tabHit = tabRows() > 0 && event.y === 1 ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi) : void 0;
               if (tabHit !== void 0) {
-                const target = pageFiles[tabHit.index];
-                if (target !== void 0 && target !== activeFile) switchPage(target);
+                if (tabHit.index === -1) {
+                  climbBack();
+                } else {
+                  const target = lastTabFiles[tabHit.index];
+                  if (target !== void 0 && target !== activeFile) switchPage(target);
+                }
               } else {
                 const id = hitTest(event.x, event.y);
                 const now = Date.now();
@@ -1738,10 +1801,10 @@ function main() {
                   const submap = map?.nodes.find((n) => n.id === id)?.submap;
                   if (submap !== void 0 && activeFile !== void 0) {
                     const target = pageFilePath(cfg.file, submap);
-                    if (pageFiles.includes(target)) {
+                    if (pageFiles.includes(target) && target !== activeFile) {
                       diveStack.push(activeFile);
                       switchPage(target);
-                    } else {
+                    } else if (!pageFiles.includes(target)) {
                       flash = { text: `submap "${submap}" has no page yet`, until: now + 2500 };
                     }
                   }
@@ -1758,31 +1821,29 @@ function main() {
             break;
           case "next-page":
           case "prev-page": {
-            if (pageFiles.length > 1 && activeFile !== void 0) {
-              const current = pageFiles.indexOf(activeFile);
+            const top = topFiles();
+            if (top.length > 0 && activeFile !== void 0) {
+              const current = top.indexOf(activeFile);
               const step = event.kind === "next-page" ? 1 : -1;
-              switchPage(pageFiles[(current + step + pageFiles.length) % pageFiles.length]);
-              dirty = true;
+              const target = top[(current + step + top.length) % top.length];
+              if (target !== activeFile) {
+                switchPage(target);
+                dirty = true;
+              }
             }
             break;
           }
           case "page": {
-            const target = pageFiles[event.index];
+            const target = topFiles()[event.index];
             if (target !== void 0 && target !== activeFile) {
               switchPage(target);
               dirty = true;
             }
             break;
           }
-          case "back": {
-            let parent = diveStack.pop();
-            while (parent !== void 0 && !pageFiles.includes(parent)) parent = diveStack.pop();
-            if (parent !== void 0 && parent !== activeFile) {
-              switchPage(parent);
-              dirty = true;
-            }
+          case "back":
+            if (climbBack()) dirty = true;
             break;
-          }
         }
       }
       if (dirty) paint();
@@ -1799,6 +1860,7 @@ export {
   PANEL_ROWS_MIN,
   anchorOffsets,
   clampPanelRows,
+  diveOrigin,
   fitWidth,
   mapPanel,
   nearestHit,
@@ -1806,5 +1868,6 @@ export {
   pageTabRow,
   panelRowsFromDividerY,
   parseArgs,
+  topLevelFiles,
   wrapWidth
 };

@@ -230,6 +230,48 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
   return segments;
 }
 
+/**
+ * Pages that deserve a tab: those NO node of any page dives into. A page
+ * referenced as some node's submap is interior detail — it is reached by
+ * double-clicking that node, never by sitting beside its parent as a
+ * sibling. The default page is never hidden.
+ */
+export function topLevelFiles(
+  defaultFile: string,
+  files: readonly string[],
+  mapOf: ReadonlyMap<string, MellosMap | undefined>,
+): string[] {
+  const refs = new Set<string>();
+  for (const m of mapOf.values()) {
+    for (const n of m?.nodes ?? []) if (n.submap !== undefined) refs.add(n.submap as string);
+  }
+  return files.filter((f) => {
+    const id = pageIdOfFile(defaultFile, f);
+    return id === undefined || !refs.has(id as string);
+  });
+}
+
+/**
+ * Where a sub-map page was dived into from: the parent page and the label
+ * of the node that links it. Derived by scan, so the breadcrumb survives a
+ * watcher restart with an empty dive stack.
+ */
+export function diveOrigin(
+  defaultFile: string,
+  file: string,
+  files: readonly string[],
+  mapOf: ReadonlyMap<string, MellosMap | undefined>,
+): { parent: string; label: string } | undefined {
+  const id = pageIdOfFile(defaultFile, file);
+  if (id === undefined) return undefined;
+  for (const f of files) {
+    if (f === file) continue;
+    const node = mapOf.get(f)?.nodes.find((n) => (n.submap as string | undefined) === (id as string));
+    if (node !== undefined) return { parent: f, label: node.label };
+  }
+  return undefined;
+}
+
 /** The hit whose center is nearest to (cx, cy) by Manhattan distance. */
 export function nearestHit(hits: readonly BoxHit[], cx: number, cy: number): BoxHit | undefined {
   let best: BoxHit | undefined;
@@ -442,8 +484,28 @@ function main(): void {
   let lastClick: { id: string; at: number } | undefined;
   const diveStack: string[] = [];
   let flash: { text: string; until: number } | undefined;
+  /** Tab-bar files as painted (top-level pages only), for click hit-testing. */
+  let lastTabFiles: string[] = [];
 
-  const tabRows = (): number => (pageFiles.length > 1 ? 1 : 0);
+  const maps = (): ReadonlyMap<string, MellosMap | undefined> =>
+    new Map([...pageData].map(([f, e]) => [f, e.map]));
+  const topFiles = (): string[] => topLevelFiles(cfg.file, pageFiles, maps());
+  /** Inside a sub-map the tab row becomes the breadcrumb instead. */
+  const inSubmap = (): boolean => activeFile !== undefined && !topFiles().includes(activeFile);
+  const tabRows = (): number => (topFiles().length > 1 || inSubmap() ? 1 : 0);
+  /** Climb out of the last dive; with no stack, derive the parent by scan. */
+  const climbBack = (): boolean => {
+    let parent = diveStack.pop();
+    while (parent !== undefined && !pageFiles.includes(parent)) parent = diveStack.pop();
+    if (parent === undefined && activeFile !== undefined) {
+      parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
+    }
+    if (parent !== undefined && parent !== activeFile) {
+      switchPage(parent);
+      return true;
+    }
+    return false;
+  };
   const viewHeight = (): number =>
     Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
   /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
@@ -544,10 +606,38 @@ function main(): void {
       ),
     ];
 
-    // -- page tab bar (only when there is more than one page) --
+    // -- top row: tab bar over top-level pages, or the breadcrumb of a dive --
     let tabLine: string | undefined;
-    if (tabRows() > 0) {
-      const tabs: PageTab[] = pageFiles.map((f) => {
+    lastTabFiles = topFiles();
+    if (inSubmap() && activeFile !== undefined) {
+      // ⌫ parent title ▸ node label — the whole row is one "back" target.
+      // The stack knows where we dived from; the scan supplies the linking
+      // node's label and survives a restart with an empty stack.
+      const stackParent = [...diveStack].reverse().find((f) => pageFiles.includes(f));
+      const scanned = diveOrigin(cfg.file, activeFile, pageFiles, maps());
+      const parentFile = stackParent ?? scanned?.parent;
+      const parentTitle =
+        parentFile !== undefined
+          ? (pageData.get(parentFile)?.map?.title ??
+            ((pageIdOfFile(cfg.file, parentFile) as string | undefined) ?? 'main'))
+          : 'main';
+      const nodeLabel = scanned?.label ?? map?.title ?? '';
+      const crumbHead = ` ${cfg.unicode ? '⌫' : '<'} ${parentTitle} ${cfg.unicode ? '▸' : '>'} `;
+      const head: TabSegment = { text: crumbHead, sgr: '90', lo: 1, hi: displayWidth(crumbHead), index: -1 };
+      const tailText = fitWidth(`${nodeLabel} `, Math.max(1, cols - displayWidth(crumbHead)));
+      const tail: TabSegment = {
+        text: tailText,
+        sgr: '1',
+        lo: head.hi + 1,
+        hi: head.hi + displayWidth(tailText),
+        index: -1,
+      };
+      lastTabSegments = [head, tail];
+      tabLine = lastTabSegments
+        .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
+        .join('');
+    } else if (tabRows() > 0) {
+      const tabs: PageTab[] = lastTabFiles.map((f) => {
         const m = pageData.get(f)?.map;
         return {
           title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
@@ -630,10 +720,15 @@ function main(): void {
       const loaded = loadMapFile(file);
       if (loaded.ok) {
         // background pages light their tab up; the startup scan is not news
-        pageData.set(file, { map: loaded.value, mtimeMs, fresh: !firstScan && file !== activeFile });
+        const becameFresh = !firstScan && file !== activeFile;
+        pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
         if (file === activeFile) {
           map = loaded.value;
           notice = '';
+        } else if (becameFresh && !topFiles().includes(file)) {
+          // a hidden sub-map changed — it has no tab to light, so surface it here
+          const title = loaded.value.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? '?');
+          flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + 4000 };
         }
       } else if (loaded.error.kind === 'malformed-json') {
         // plausible torn read from a foreign writer — retry next tick, keep the picture
@@ -754,9 +849,13 @@ function main(): void {
                   ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi)
                   : undefined;
               if (tabHit !== undefined) {
-                // a click on the tab bar switches pages instead of pinning
-                const target = pageFiles[tabHit.index];
-                if (target !== undefined && target !== activeFile) switchPage(target);
+                // top row: a breadcrumb click climbs back, a tab click switches
+                if (tabHit.index === -1) {
+                  climbBack();
+                } else {
+                  const target = lastTabFiles[tabHit.index];
+                  if (target !== undefined && target !== activeFile) switchPage(target);
+                }
               } else {
                 // a press that never dragged is a click: pin, or unpin on empty.
                 // A second click on the same node within the window is a
@@ -767,10 +866,10 @@ function main(): void {
                   const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
                   if (submap !== undefined && activeFile !== undefined) {
                     const target = pageFilePath(cfg.file, submap as unknown as PageId);
-                    if (pageFiles.includes(target)) {
+                    if (pageFiles.includes(target) && target !== activeFile) {
                       diveStack.push(activeFile);
                       switchPage(target);
-                    } else {
+                    } else if (!pageFiles.includes(target)) {
                       flash = { text: `submap "${submap as string}" has no page yet`, until: now + 2500 };
                     }
                   }
@@ -787,32 +886,30 @@ function main(): void {
             break;
           case 'next-page':
           case 'prev-page': {
-            if (pageFiles.length > 1 && activeFile !== undefined) {
-              const current = pageFiles.indexOf(activeFile);
+            // pages cycle over the TOP-LEVEL tabs; sub-maps are reached by diving
+            const top = topFiles();
+            if (top.length > 0 && activeFile !== undefined) {
+              const current = top.indexOf(activeFile); // -1 inside a sub-map — steps to an end tab
               const step = event.kind === 'next-page' ? 1 : -1;
-              switchPage(pageFiles[(current + step + pageFiles.length) % pageFiles.length]!);
-              dirty = true;
+              const target = top[(current + step + top.length) % top.length]!;
+              if (target !== activeFile) {
+                switchPage(target);
+                dirty = true;
+              }
             }
             break;
           }
           case 'page': {
-            const target = pageFiles[event.index];
+            const target = topFiles()[event.index];
             if (target !== undefined && target !== activeFile) {
               switchPage(target);
               dirty = true;
             }
             break;
           }
-          case 'back': {
-            // climb out of the last dive; a stale parent (page deleted) is skipped
-            let parent = diveStack.pop();
-            while (parent !== undefined && !pageFiles.includes(parent)) parent = diveStack.pop();
-            if (parent !== undefined && parent !== activeFile) {
-              switchPage(parent);
-              dirty = true;
-            }
+          case 'back':
+            if (climbBack()) dirty = true;
             break;
-          }
         }
       }
       if (dirty) paint();

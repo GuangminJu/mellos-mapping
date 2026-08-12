@@ -173,6 +173,10 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 下潜进子图，`Backspace` 爬回父图。图中图，完全由页组合而成：没有新存储、
 没有新不变量。一个节点值不值得配子图，由 AI 自行判断——大多数不需要。
 
+子图是节点的内部细节，不是兄弟页：被引用为子图的页**不占标签栏**。下潜
+之后标签行变成面包屑——`⌫ 父图 ▸ 节点`——点击它（或按 `Backspace`）爬
+回去。隐藏的子图在后台有变化时，底栏会提示。
+
 ## MCP 工具
 
 | 工具 | 用途 |
