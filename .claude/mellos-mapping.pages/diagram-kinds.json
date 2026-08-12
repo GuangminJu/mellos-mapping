@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "title": "图种支持 v0.9.0",
+  "layers": [
+    {
+      "id": "domain",
+      "name": "领域层",
+      "rank": 0
+    },
+    {
+      "id": "store",
+      "name": "存储层",
+      "rank": 1
+    },
+    {
+      "id": "tx",
+      "name": "事务层",
+      "rank": 2
+    },
+    {
+      "id": "mcp",
+      "name": "服务层",
+      "rank": 3
+    },
+    {
+      "id": "present",
+      "name": "呈现层",
+      "rank": 4
+    }
+  ],
+  "groups": [
+    {
+      "id": "domain-prims",
+      "label": "领域新原语",
+      "layer": "domain"
+    },
+    {
+      "id": "render-ext",
+      "label": "渲染扩展",
+      "layer": "present"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "edge-label",
+      "label": "边标签",
+      "layer": "domain",
+      "status": "done",
+      "detail": "DepEdge 增可选 label；linkNodes 收可选标签。无新不变量，纯附注语义（协议/消息/数据名）。",
+      "group": "domain-prims",
+      "evidence": "vitest: 边可携标签,裸边无label键"
+    },
+    {
+      "id": "map-kind",
+      "label": "页面图种",
+      "layer": "domain",
+      "status": "done",
+      "detail": "闭合词汇 dev|architecture|dataflow|behavior-tree|sequence，存于 MellosMap.kind，缺省 dev。决定图例与中性渲染，不改任何结构不变量。",
+      "group": "domain-prims",
+      "evidence": "vitest: 闭合词汇,setKind不动结构"
+    },
+    {
+      "id": "node-kind",
+      "label": "节点字形种类",
+      "layer": "domain",
+      "status": "done",
+      "detail": "节点可选 kind（ID_RULE slug，开放词汇）。领域只存储；已知 kind 由渲染层映射字形，未知的进详情面板。",
+      "group": "domain-prims",
+      "evidence": "vitest: 开放slug,null清除"
+    },
+    {
+      "id": "lanes",
+      "label": "泳道",
+      "layer": "domain",
+      "status": "done",
+      "detail": "跨层纵列 MapLane{id,label}+节点可选 lane。I8 泳道 id 唯一，I9 节点 lane 必须存在；removeLane 级联解除成员。声明序=左右序。",
+      "group": "domain-prims",
+      "evidence": "vitest: I8/I9+级联解除,39 domain tests"
+    },
+    {
+      "id": "store-roundtrip",
+      "label": "存储回放",
+      "layer": "store",
+      "status": "done",
+      "detail": "kind/lanes/node.kind/node.lane/edge.label 的 parse（重放校验）与 serialize（空则省略键，旧文件字节稳定）。",
+      "evidence": "vitest: 时序图全字段往返+坏kind/坏lane拒收, 18 store tests"
+    },
+    {
+      "id": "apply-inputs",
+      "label": "事务入参",
+      "layer": "tx",
+      "status": "done",
+      "detail": "declare 增 kind/lanes/边label/节点kind+lane，remove 增 lanes；顺序 title→kind→layers→lanes→groups→nodes→edges，整批全有或全无。",
+      "evidence": "vitest: 一批声明整张时序图+坏kind无部分变更, 24 server tests"
+    },
+    {
+      "id": "mcp-schemas",
+      "label": "工具schema",
+      "layer": "mcp",
+      "status": "done",
+      "detail": "四工具 zod schema 扩展 + 描述教 AI 何时用哪种图种；SERVER_VERSION 0.9.0。",
+      "evidence": "vitest: 24 server tests; schema描述教AI选图种/泳道/边标签"
+    },
+    {
+      "id": "render-kind-glyph",
+      "label": "字形与图例",
+      "layer": "present",
+      "status": "done",
+      "detail": "已知 node.kind → 宽度1安全字形前缀（行为树 ?»‖◇· / 数据流 ○◐●），图例行按在场 kind 生成；unicode/ascii 双表。",
+      "group": "render-ext",
+      "evidence": "vitest: 行为树字形入槽/入标签+图例, 27 render tests"
+    },
+    {
+      "id": "render-neutral",
+      "label": "中性渲染",
+      "layer": "present",
+      "status": "done",
+      "detail": "kind≠dev 的文档图：全部节点画中性实线盒（无幽灵/spinner/红绿），图例换图种名。dev 页字节不变（快照守卫）。",
+      "group": "render-ext",
+      "evidence": "vitest: 中性盒无幽灵无状态图例; dev页快照字节不变"
+    },
+    {
+      "id": "render-lanes",
+      "label": "泳道布局",
+      "layer": "present",
+      "status": "done",
+      "detail": "按 lane 列对齐盒子：列宽=各带该列行宽最大值，顶部泳道表头。无 lane 节点排在列区之后。布线机器不变。",
+      "group": "render-ext",
+      "evidence": "vitest: 泳道表头+跨带列对齐+列序"
+    },
+    {
+      "id": "panel-edge-labels",
+      "label": "面板边标签",
+      "layer": "present",
+      "status": "done",
+      "detail": "详情面板 uses/used-by 行携带边标签；文档图种隐藏状态词。tab 对文档页用中性配色。",
+      "group": "render-ext",
+      "evidence": "vitest 148 tests + dist端到端: demo-sequence 页泳道/边标签/中性渲染冒烟通过"
+    }
+  ],
+  "edges": [
+    {
+      "from": "store-roundtrip",
+      "to": "edge-label"
+    },
+    {
+      "from": "store-roundtrip",
+      "to": "map-kind"
+    },
+    {
+      "from": "store-roundtrip",
+      "to": "node-kind"
+    },
+    {
+      "from": "store-roundtrip",
+      "to": "lanes"
+    },
+    {
+      "from": "apply-inputs",
+      "to": "store-roundtrip"
+    },
+    {
+      "from": "mcp-schemas",
+      "to": "apply-inputs"
+    },
+    {
+      "from": "render-kind-glyph",
+      "to": "node-kind"
+    },
+    {
+      "from": "render-neutral",
+      "to": "map-kind"
+    },
+    {
+      "from": "render-lanes",
+      "to": "lanes"
+    },
+    {
+      "from": "panel-edge-labels",
+      "to": "edge-label"
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   declareGroup,
+  declareLane,
   declareLayer,
   declareNode,
   groupStatus,
@@ -17,21 +18,28 @@ import {
   mapStatus,
   removeEdge,
   removeGroup,
+  removeLane,
   removeLayer,
   removeNode,
+  setKind,
   setTitle,
   updateNode,
 } from './ops.js';
 import {
   EMPTY_MAP,
   type GroupId,
+  type LaneId,
   type LayerId,
   type MellosMap,
   type NodeId,
+  type NodeKind,
   type Result,
   makeGroupId,
+  makeLaneId,
   makeLayerId,
+  makeMapKind,
   makeNodeId,
+  makeNodeKind,
   makeNodeStatus,
 } from './types.js';
 
@@ -50,6 +58,8 @@ function mustFail<T, E>(r: Result<T, E>): E {
 const lid = (raw: string): LayerId => must(makeLayerId(raw));
 const nid = (raw: string): NodeId => must(makeNodeId(raw));
 const gid = (raw: string): GroupId => must(makeGroupId(raw));
+const laid = (raw: string): LaneId => must(makeLaneId(raw));
+const nkind = (raw: string): NodeKind => must(makeNodeKind(raw));
 
 /** A three-band map: primitives(0) < contracts(1) < orchestration(2). */
 function threeBands(): MellosMap {
@@ -299,6 +309,81 @@ describe('groups — band-local labeled clusters (I6, I7)', () => {
     map = must(declareGroup(map, { id: gid('g'), label: 'G', layer: lid('orchestration') }));
     expect(mustFail(removeLayer(map, lid('orchestration'))).kind).toBe('layer-holds-group');
     expect(must(removeGroup(map, gid('g'))).groups).toEqual([]);
+  });
+});
+
+describe('map kind — presentation intent, never structure', () => {
+  it('accepts only the closed vocabulary', () => {
+    expect(must(makeMapKind('sequence'))).toBe('sequence');
+    expect(mustFail(makeMapKind('state-machine')).kind).toBe('invalid-map-kind');
+  });
+
+  it('setKind returns a copy with the kind; structure is untouched', () => {
+    const map = setKind(threeBands(), must(makeMapKind('architecture')));
+    expect(map.kind).toBe('architecture');
+    expect(map.layers).toHaveLength(3);
+  });
+});
+
+describe('lanes — cross-band columns (I8, I9)', () => {
+  function laned(): MellosMap {
+    let map = threeBands();
+    map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
+    map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
+    map = must(declareNode(map, { id: nid('req'), label: '发请求', layer: lid('primitives'), lane: laid('client') }));
+    return map;
+  }
+
+  it('lane ids are unique (I8); declaration order is preserved', () => {
+    const map = laned();
+    expect(mustFail(declareLane(map, { id: laid('client'), label: '重复' })).kind).toBe('duplicate-lane');
+    expect(map.lanes.map((l) => l.id)).toEqual(['client', 'server']);
+  });
+
+  it("a node's lane must exist (I9), at declare and at update", () => {
+    const map = laned();
+    expect(
+      mustFail(declareNode(map, { id: nid('x'), label: 'X', layer: lid('contracts'), lane: laid('ghost') })).kind,
+    ).toBe('unknown-lane');
+    expect(mustFail(updateNode(map, { id: nid('req'), lane: laid('ghost') })).kind).toBe('unknown-lane');
+  });
+
+  it('lane membership moves with update; null leaves the lane', () => {
+    let map = laned();
+    map = must(updateNode(map, { id: nid('req'), lane: laid('server') }));
+    expect(map.nodes[0]!.lane).toBe('server');
+    map = must(updateNode(map, { id: nid('req'), lane: null }));
+    expect(map.nodes[0]!.lane).toBeUndefined();
+  });
+
+  it('removing a lane merely un-lanes its members (work records survive)', () => {
+    const map = must(removeLane(laned(), laid('client')));
+    expect(map.lanes.map((l) => l.id)).toEqual(['server']);
+    expect(map.nodes[0]!.lane).toBeUndefined();
+    expect(map.nodes[0]!.label).toBe('发请求');
+    expect(mustFail(removeLane(map, laid('client'))).kind).toBe('unknown-lane');
+  });
+});
+
+describe('node kind and edge label — annotation, not structure', () => {
+  it('a node carries an open-vocabulary kind; null clears it', () => {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('sel'), label: '选根', layer: lid('contracts'), kind: nkind('selector') }));
+    expect(map.nodes[0]!.kind).toBe('selector');
+    map = must(updateNode(map, { id: nid('sel'), kind: null }));
+    expect(map.nodes[0]!.kind).toBeUndefined();
+  });
+
+  it('an edge may carry a label saying what flows along it', () => {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('low'), label: 'L', layer: lid('primitives') }));
+    map = must(declareNode(map, { id: nid('high'), label: 'H', layer: lid('contracts') }));
+    map = must(linkNodes(map, nid('high'), nid('low'), '登录请求'));
+    expect(map.edges[0]).toEqual({ from: 'high', to: 'low', label: '登录请求' });
+    // unlabeled edges stay bare — no label key at all
+    map = must(declareNode(map, { id: nid('top'), label: 'T', layer: lid('orchestration') }));
+    map = must(linkNodes(map, nid('top'), nid('low')));
+    expect('label' in map.edges[1]!).toBe(false);
   });
 });
 

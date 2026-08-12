@@ -149,13 +149,29 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 `.claude/mellos-mapping.pages/<页名>.json`（命名页）——纯 JSON，想在 git
 里留下地图的历史就把它们提交进去。
 
+### 图种
+
+缺省图种 `dev` 就是上文那本活的进度账本。同一套分层 DAG 机器也能画文档型
+图：在 `mmap_declare` 里传 `kind`，该页即以中性方式渲染——素色实线盒子，
+没有幽灵、没有 spinner、不数进度。
+
+| 图种 | 读法 | 专属能力 |
+| --- | --- | --- |
+| `architecture` | 分层组件（也适合模块依赖、调用图） | 边标签标协议 |
+| `dataflow` | 管线阶段即层，源头在最底 | 边标签标数据 |
+| `behavior-tree` | 叶子（动作）在最底，根在顶（也适合思维导图、WBS） | 节点 kind `selector` `sequence` `parallel` `decorator` `condition` `action` 渲染为字形 |
+| `sequence` | rank = 时间步，最早的在最底——后来的事件站在先前事件之上 | `lanes` 即参与者泳道；边标签即消息 |
+
+节点 kind 和边标签在 `dev` 图上同样可用。状态机是有意不支持的：状态迁移
+成环，而这里的边只许向下。
+
 ## MCP 工具
 
 | 工具 | 用途 |
 | --- | --- |
-| `mmap_declare` | 生长地图：标题、层级横条、分组（子系统）、节点、边（批量，全有或全无） |
-| `mmap_update` | 记录进度：`planned → in-progress → done`（附证据）、`regressed`、分组归属 |
-| `mmap_remove` | 修订：删除边、节点、分组、空层 |
+| `mmap_declare` | 生长地图：标题、图种、层级横条、泳道、分组（子系统）、节点、边（可带标签；批量，全有或全无） |
+| `mmap_update` | 记录进度：`planned → in-progress → done`（附证据）、`regressed`、分组/泳道归属、节点 kind |
+| `mmap_remove` | 修订：删除边、节点、分组、泳道、空层 |
 | `mmap_view` | 把当前地图渲染成文本，直接在对话里看（可选 `zoom` 参数） |
 
 工具强制的结构不变量：层按 rank 构成全序；每个节点恰好属于一层；边**严格

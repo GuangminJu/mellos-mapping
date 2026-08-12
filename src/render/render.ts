@@ -425,6 +425,45 @@ function glyphFor(status: NodeStatus, opts: RenderOptions): string {
   }
 }
 
+/**
+ * Known node kinds -> [unicode, ascii] glyphs (all display width 1).
+ * Behavior trees, dataflow and architecture vocabularies; an unknown kind
+ * renders without a glyph and stays readable in the detail panel.
+ */
+const NODE_KIND_GLYPHS: Readonly<Record<string, readonly [string, string]>> = {
+  selector: ['?', '?'],
+  sequence: ['»', '>'],
+  parallel: ['‖', '='],
+  decorator: ['◌', 'o'],
+  condition: ['◇', 'c'],
+  action: ['·', '.'],
+  source: ['○', 'o'],
+  transform: ['◐', '%'],
+  sink: ['●', '*'],
+  service: ['◆', 'S'],
+  db: ['▤', 'D'],
+  queue: ['≣', 'Q'],
+  ui: ['▣', 'U'],
+};
+
+/** Glyph for a node kind, or undefined for unknown kinds. Shared with the watcher's panel. */
+export function kindGlyph(kind: string, unicode: boolean): string | undefined {
+  const pair = NODE_KIND_GLYPHS[kind];
+  return pair === undefined ? undefined : unicode ? pair[0] : pair[1];
+}
+
+/** Documentation kinds render neutrally: no status skins, no progress counts. */
+export function isNeutralKind(map: MellosMap): boolean {
+  return map.kind !== undefined && map.kind !== 'dev';
+}
+
+/** Plain solid box for documentation diagrams — presence, not progress. */
+function neutralSkin(unicode: boolean): BoxSkin {
+  return unicode
+    ? { h: '─', v: '│', corners: ['╭', '╮', '╰', '╯'], style: 'none' }
+    : { h: '-', v: '|', corners: ['+', '+', '+', '+'], style: 'none' };
+}
+
 // ---------------------------------------------------------------------------
 // layout
 // ---------------------------------------------------------------------------
@@ -476,7 +515,8 @@ interface ExtraRow {
 
 interface BoxLayout {
   readonly node: MapNode;
-  readonly x: number;
+  /** filled in during column assignment */
+  x: number;
   readonly w: number;
   readonly h: number;
   /** Label truncated to the zoom's budget; '' in constellation mode. */
@@ -494,12 +534,16 @@ const DETAIL_NOTE_ROWS = 3;
 const LABEL_BUDGET_MIN = 4;
 
 /** Size and content of one node's box under the given zoom geometry. */
-function boxSpec(node: MapNode, geo: ZoomGeometry): Omit<BoxLayout, 'node' | 'x' | 'y'> {
+function boxSpec(node: MapNode, geo: ZoomGeometry, unicode: boolean, neutral: boolean): Omit<BoxLayout, 'node' | 'x' | 'y'> {
+  // On dev pages the glyph slot belongs to the status, so a known kind glyph
+  // joins the label text; on neutral pages the kind takes the slot itself.
+  const glyph = node.kind !== undefined ? kindGlyph(node.kind as string, unicode) : undefined;
+  const text = !neutral && glyph !== undefined ? `${glyph} ${node.label}` : node.label;
   if (geo.mode === 'constellation') {
     return { w: 3, h: 1, label: '', pad: 0, borderless: true, extra: [] };
   }
   if (geo.mode === 'detail') {
-    const innerW = Math.min(Math.max(displayWidth(node.label) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+    const innerW = Math.min(Math.max(displayWidth(text) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
     const extra: ExtraRow[] = [];
     if (node.evidence !== undefined) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: 'faint' });
     if (node.detail !== undefined) {
@@ -512,14 +556,14 @@ function boxSpec(node: MapNode, geo: ZoomGeometry): Omit<BoxLayout, 'node' | 'x'
     return {
       w: innerW + 2,
       h: BOX_H + extra.length,
-      label: fitWidth(node.label, innerW - 4),
+      label: fitWidth(text, innerW - 4),
       pad: 1,
       borderless: false,
       extra,
     };
   }
-  const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(node.label) * geo.scale));
-  const label = fitWidth(node.label, budget);
+  const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(text) * geo.scale));
+  const label = fitWidth(text, budget);
   return {
     w: displayWidth(label) + 4 + 2 * geo.pad,
     h: BOX_H,
@@ -600,7 +644,8 @@ function aggregateMap(map: MellosMap): MellosMap | undefined {
     const done = members.filter((n) => n.status === 'done').length;
     return {
       id: g.id as unknown as NodeId,
-      label: `${g.label} ${done}/${members.length}`,
+      // neutral kinds document structure, not progress — no member counts
+      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
       layer: g.layer,
       status: groupStatus(map, g.id),
     };
@@ -616,7 +661,15 @@ function aggregateMap(map: MellosMap): MellosMap | undefined {
     seen.add(`${from}->${to}`);
     edges.push({ from: from as NodeId, to: to as NodeId });
   }
-  return { ...(map.title !== undefined ? { title: map.title } : {}), layers: map.layers, groups: [], nodes, edges };
+  return {
+    ...(map.title !== undefined ? { title: map.title } : {}),
+    ...(map.kind !== undefined ? { kind: map.kind } : {}),
+    layers: map.layers,
+    groups: [],
+    lanes: map.lanes,
+    nodes,
+    edges,
+  };
 }
 
 /** Geometry for the aggregated far zoom: tight chrome, but FULL labels — the point is names. */
@@ -639,6 +692,7 @@ function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hit
 
 function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry): { canvas: Canvas; hits: BoxHit[] } {
   const canvas = new Canvas();
+  const neutral = isNeutralKind(map);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
 
   if (bands.length === 0) {
@@ -653,24 +707,71 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   const bandBoxes: BoxLayout[][] = bands.map(() => []);
   for (const node of map.nodes) {
     const band = bandIndexOf.get(node.layer as string)!;
-    const row = bandBoxes[band]!;
-    const prev = row[row.length - 1];
-    const box: BoxLayout = {
-      node,
-      ...boxSpec(node, geo),
-      x: prev ? prev.x + prev.w + geo.boxGap : LEFT_MARGIN,
-      y: 0,
-    };
-    row.push(box);
+    const box: BoxLayout = { node, ...boxSpec(node, geo, opts.unicode, neutral), x: LEFT_MARGIN, y: 0 };
+    bandBoxes[band]!.push(box);
     boxes.set(node.id as string, box);
   }
 
+  // Column assignment. Without lanes each band packs left-to-right in
+  // declaration order. With lanes every band is partitioned into the lane
+  // columns (plus a trailing off-lane region); a lane is as wide as its
+  // widest band row or its own header label, so members align vertically
+  // under their column across all bands.
+  const laneCount = map.lanes.length;
+  const laneX: number[] = [];
+  const laneW: number[] = [];
+  if (laneCount === 0) {
+    for (const row of bandBoxes) {
+      let x = LEFT_MARGIN;
+      for (const box of row) {
+        box.x = x;
+        x += box.w + geo.boxGap;
+      }
+    }
+  } else {
+    const laneGap = geo.boxGap + 2;
+    const laneIndexOf = new Map<string, number>(map.lanes.map((l, i) => [l.id as string, i]));
+    const regions = laneCount + 1; // trailing region for off-lane nodes
+    const grouped: BoxLayout[][][] = bandBoxes.map((row) => {
+      const cells: BoxLayout[][] = Array.from({ length: regions }, () => []);
+      for (const box of row) {
+        const lane = box.node.lane;
+        cells[lane !== undefined ? laneIndexOf.get(lane as string)! : regions - 1]!.push(box);
+      }
+      return cells;
+    });
+    const regionW: number[] = Array.from({ length: regions }, () => 0);
+    for (const cells of grouped) {
+      for (let i = 0; i < regions; i++) {
+        const rowW = cells[i]!.reduce((sum, b, k) => sum + b.w + (k > 0 ? geo.boxGap : 0), 0);
+        regionW[i] = Math.max(regionW[i]!, rowW);
+      }
+    }
+    for (let i = 0; i < laneCount; i++) regionW[i] = Math.max(regionW[i]!, displayWidth(map.lanes[i]!.label) + 2);
+    let x0 = LEFT_MARGIN;
+    for (let i = 0; i < regions; i++) {
+      laneX.push(x0);
+      laneW.push(regionW[i]!);
+      x0 += regionW[i]! + laneGap;
+    }
+    for (const cells of grouped) {
+      for (let i = 0; i < regions; i++) {
+        let x = laneX[i]!;
+        for (const box of cells[i]!) {
+          box.x = x;
+          x += box.w + geo.boxGap;
+        }
+      }
+    }
+  }
+
   // Band bar labels; at small scales the boxes go mute, so the bars carry
-  // the aggregate progress (done/total) for their band instead.
+  // the aggregate progress (done/total) for their band instead. Neutral
+  // documentation kinds never count progress.
   const bandLabel = bands.map((l, i) => {
     const row = bandBoxes[i]!;
     const done = row.filter((b) => b.node.status === 'done').length;
-    return geo.bandCounts && row.length > 0 ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
+    return geo.bandCounts && row.length > 0 && !neutral ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
   });
 
   let contentWidth = LEFT_MARGIN;
@@ -678,6 +779,7 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     const last = row[row.length - 1];
     if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
   }
+  for (let i = 0; i < laneCount; i++) contentWidth = Math.max(contentWidth, laneX[i]! + laneW[i]!);
   for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
 
   // -- edge analysis (see module header for the routing preference order) --
@@ -814,6 +916,11 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   // -- vertical layout --
   let y = 0;
   if (map.title !== undefined) y += 1 + geo.titleGap;
+  let laneHeaderY: number | undefined;
+  if (laneCount > 0) {
+    laneHeaderY = y;
+    y += 1 + geo.barGap;
+  }
   const barY: number[] = [];
   const gapTrackStartY: number[] = [];
   for (let b = 0; b < bands.length; b++) {
@@ -832,8 +939,16 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   const legendY = y + 1;
   const rowYOf = (gap: number, s: GapSegment): number => gapTrackStartY[gap]! + segmentRow.get(s)!;
 
-  // -- draw: title, band bars, boxes --
+  // -- draw: title, lane headers, band bars, boxes --
   if (map.title !== undefined) canvas.text(LEFT_MARGIN, 0, map.title, 'none', true);
+
+  if (laneHeaderY !== undefined) {
+    for (let i = 0; i < laneCount; i++) {
+      const label = fitWidth(map.lanes[i]!.label, laneW[i]!);
+      const cx = laneX[i]! + Math.max(0, Math.floor((laneW[i]! - displayWidth(label)) / 2));
+      canvas.text(cx, laneHeaderY, label, 'faint', true);
+    }
+  }
 
   for (let b = 0; b < bands.length; b++) {
     const label = bandLabel[b]!;
@@ -844,7 +959,7 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   }
 
   for (const box of boxes.values()) {
-    drawBox(canvas, box, opts, opts.focus !== undefined && (box.node.id as string) === opts.focus);
+    drawBox(canvas, box, opts, neutral, opts.focus !== undefined && (box.node.id as string) === opts.focus);
   }
 
   // -- draw: edges (wires touching the focused node render bright) --
@@ -901,18 +1016,30 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     }
   }
 
-  // -- legend, each glyph in its real color --
-  const legendOpts: RenderOptions = { ...opts, spinnerFrame: 0 };
+  // -- legend: status vocabulary on dev pages, kind vocabulary on neutral pages --
   let lx = LEFT_MARGIN;
-  const legendEntries: ReadonlyArray<readonly [NodeStatus, Style]> = [
-    ['planned', 'dim'],
-    ['in-progress', 'amber'],
-    ['done', 'green'],
-    ['regressed', 'red'],
-  ];
-  for (const [status, style] of legendEntries) {
-    if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, '   ', 'none');
-    lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+  if (neutral) {
+    lx = canvas.text(lx, legendY, map.kind!, 'faint');
+    const seen = new Set<string>();
+    for (const n of map.nodes) {
+      const k = n.kind as string | undefined;
+      if (k === undefined || seen.has(k) || kindGlyph(k, opts.unicode) === undefined) continue;
+      seen.add(k);
+      lx = canvas.text(lx, legendY, '   ', 'none');
+      lx = canvas.text(lx, legendY, `${kindGlyph(k, opts.unicode)} ${k}`, 'none');
+    }
+  } else {
+    const legendOpts: RenderOptions = { ...opts, spinnerFrame: 0 };
+    const legendEntries: ReadonlyArray<readonly [NodeStatus, Style]> = [
+      ['planned', 'dim'],
+      ['in-progress', 'amber'],
+      ['done', 'green'],
+      ['regressed', 'red'],
+    ];
+    for (const [status, style] of legendEntries) {
+      if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, '   ', 'none');
+      lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+    }
   }
 
   const hits: BoxHit[] = [...boxes.values()].map((b) => ({
@@ -925,14 +1052,19 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   return { canvas, hits };
 }
 
-function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions, focused = false): void {
+function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions, neutral: boolean, focused = false): void {
   const { node, x, y, w } = box;
-  const skin = skinFor(node.status, opts.unicode);
+  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(node.status, opts.unicode);
+  // Neutral pages give the glyph slot to the node kind (a bullet when kindless).
+  const slotGlyph = neutral
+    ? (node.kind !== undefined ? kindGlyph(node.kind as string, opts.unicode) : undefined) ??
+      (opts.unicode ? '·' : '.')
+    : glyphFor(node.status, opts);
 
   if (box.borderless) {
-    // Constellation mode: the node IS its status glyph. Wires simply end
+    // Constellation mode: the node IS its glyph. Wires simply end
     // beside it — a glyph is not a border, so no junction chars appear.
-    canvas.text(x + 1, y, glyphFor(node.status, opts), skin.style, true);
+    canvas.text(x + 1, y, slotGlyph, skin.style, true);
     return;
   }
 
@@ -940,7 +1072,7 @@ function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions, focused = 
   const pad = box.pad === 1 ? ' ' : '';
   canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
   canvas.text(x, y + 1, skin.v, skin.style, focused);
-  canvas.text(x + 1, y + 1, `${pad}${glyphFor(node.status, opts)} ${box.label}${pad}`, skin.style, true);
+  canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
   canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
   for (let i = 0; i < box.extra.length; i++) {
     const row = box.extra[i]!;

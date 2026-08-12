@@ -164,13 +164,30 @@ State lives in `.claude/mellos-mapping.json` (the default page) plus
 `.claude/mellos-mapping.pages/<page>.json` for named pages — plain JSON,
 safe to commit if you want the maps' history in git.
 
+### Diagram kinds
+
+The default kind, `dev`, is the living progress ledger described above. The
+same layered-DAG machinery also draws documentation diagrams: pass `kind`
+in `mmap_declare` and the page renders neutrally — plain solid boxes, no
+ghosts, no spinners, no progress counts.
+
+| Kind | Reading | Extras |
+| --- | --- | --- |
+| `architecture` | layered components (also module deps, call graphs) | edge labels for protocols |
+| `dataflow` | pipeline stages as layers, sources at the bottom | edge labels for the data |
+| `behavior-tree` | leaves (actions) at the bottom, root on top (also mind maps, WBS) | node kinds `selector` `sequence` `parallel` `decorator` `condition` `action` render as glyphs |
+| `sequence` | rank = time step, earliest at the bottom — later events stand on earlier ones | `lanes` are participants; edge labels are messages |
+
+Node kinds and edge labels work on `dev` maps too. State machines are out
+of scope on purpose: transitions cycle, and edges here only point downward.
+
 ## MCP tools
 
 | Tool | Purpose |
 | --- | --- |
-| `mmap_declare` | Grow the map: title, layer bands, groups (subsystems), nodes, edges (all-or-nothing batch) |
-| `mmap_update` | Record progress: `planned → in-progress → done` (+evidence), `regressed`, group membership |
-| `mmap_remove` | Revise: drop edges, nodes, groups, empty bands |
+| `mmap_declare` | Grow the map: title, diagram kind, layer bands, lanes, groups (subsystems), nodes, edges — optionally labeled (all-or-nothing batch) |
+| `mmap_update` | Record progress: `planned → in-progress → done` (+evidence), `regressed`, group/lane membership, node kind |
+| `mmap_remove` | Revise: drop edges, nodes, groups, lanes, empty bands |
 | `mmap_view` | Render the current map as text inline (optional `zoom`) |
 
 Structural invariants enforced by the tools: layers form a total order by

@@ -21,7 +21,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
+import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
 import {
   EMPTY_MAP,
   ID_RULE,
@@ -33,8 +33,11 @@ import {
   describeMapError,
   err,
   makeGroupId,
+  makeLaneId,
   makeLayerId,
+  makeMapKind,
   makeNodeId,
+  makeNodeKind,
   makeNodeStatus,
   ok,
 } from '../domain/types.js';
@@ -125,7 +128,7 @@ function optionalString(v: unknown): string | undefined {
 /**
  * Rebuild a MellosMap from untrusted raw data by replaying it through the
  * Layer 0 operations (P1). Field order in the file does not matter; replay
- * order (layers -> groups -> nodes -> edges) supplies the required
+ * order (layers -> lanes -> groups -> nodes -> edges) supplies the required
  * declaration order.
  */
 export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreError> {
@@ -137,6 +140,12 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
   let map = EMPTY_MAP;
   const title = optionalString(raw['title']);
   if (title !== undefined) map = setTitle(map, title);
+  const rawKind = optionalString(raw['kind']);
+  if (rawKind !== undefined) {
+    const kind = makeMapKind(rawKind);
+    if (!kind.ok) return err({ kind: 'invariant-violation', path, violation: kind.error });
+    map = setKind(map, kind.value);
+  }
 
   for (const [i, rawLayer] of asArray(raw['layers']).entries()) {
     if (!isRecord(rawLayer)) return err({ kind: 'bad-shape', path, detail: `layers[${i}] is not an object` });
@@ -150,6 +159,17 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     const next = declareLayer(map, { id: id.value, name, rank });
     if (!next.ok) return err({ kind: 'invariant-violation', path, violation: next.error });
     map = next.value;
+  }
+
+  for (const [i, rawLane] of asArray(raw['lanes']).entries()) {
+    if (!isRecord(rawLane)) return err({ kind: 'bad-shape', path, detail: `lanes[${i}] is not an object` });
+    const id = makeLaneId(String(rawLane['id'] ?? ''));
+    if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
+    const label = optionalString(rawLane['label']);
+    if (label === undefined) return err({ kind: 'bad-shape', path, detail: `lanes[${i}] needs a string label` });
+    const declared = declareLane(map, { id: id.value, label });
+    if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
+    map = declared.value;
   }
 
   for (const [i, rawGroup] of asArray(raw['groups']).entries()) {
@@ -184,6 +204,20 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
       group = made.value;
     }
+    const rawNodeKind = optionalString(rawNode['kind']);
+    let nodeKind;
+    if (rawNodeKind !== undefined) {
+      const made = makeNodeKind(rawNodeKind);
+      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
+      nodeKind = made.value;
+    }
+    const rawLane = optionalString(rawNode['lane']);
+    let lane;
+    if (rawLane !== undefined) {
+      const made = makeLaneId(rawLane);
+      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
+      lane = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
@@ -191,6 +225,8 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       status: status.value,
       ...(detail !== undefined ? { detail } : {}),
       ...(group !== undefined ? { group } : {}),
+      ...(nodeKind !== undefined ? { kind: nodeKind } : {}),
+      ...(lane !== undefined ? { lane } : {}),
     });
     if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
     map = declared.value;
@@ -209,7 +245,7 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     if (!from.ok) return err({ kind: 'invariant-violation', path, violation: from.error });
     const to = makeNodeId(String(rawEdge['to'] ?? ''));
     if (!to.ok) return err({ kind: 'invariant-violation', path, violation: to.error });
-    const linked = linkNodes(map, from.value, to.value);
+    const linked = linkNodes(map, from.value, to.value, optionalString(rawEdge['label']));
     if (!linked.ok) return err({ kind: 'invariant-violation', path, violation: linked.error });
     map = linked.value;
   }
@@ -222,7 +258,9 @@ export function serializeMap(map: MellosMap): string {
   const body = {
     version: STATE_FILE_VERSION,
     ...(map.title !== undefined ? { title: map.title } : {}),
+    ...(map.kind !== undefined ? { kind: map.kind } : {}),
     layers: map.layers,
+    ...(map.lanes.length > 0 ? { lanes: map.lanes } : {}),
     ...(map.groups.length > 0 ? { groups: map.groups } : {}),
     nodes: map.nodes,
     edges: map.edges,

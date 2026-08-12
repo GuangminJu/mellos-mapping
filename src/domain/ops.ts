@@ -5,7 +5,7 @@
  * before any new value is built, and the commit expression can no longer
  * fail. Inputs are never mutated; the result always carries a fresh map.
  *
- * These functions enforce the structural invariants I1-I5 documented in
+ * These functions enforce the structural invariants I1-I9 documented in
  * types.ts and nothing else. In particular there are no workflow rules here:
  * any status may be set at any time, in any order. Discipline lives with the
  * caller; this layer only keeps the map structurally true.
@@ -13,13 +13,17 @@
 
 import {
   type GroupId,
+  type LaneId,
   type LayerId,
   type MapError,
   type MapGroup,
+  type MapKind,
+  type MapLane,
   type MapLayer,
   type MapNode,
   type MellosMap,
   type NodeId,
+  type NodeKind,
   type NodeStatus,
   type Result,
   err,
@@ -54,6 +58,44 @@ function hasEdge(map: MellosMap, from: NodeId, to: NodeId): boolean {
 /** Set or replace the map title. */
 export function setTitle(map: MellosMap, title: string): MellosMap {
   return { ...map, title };
+}
+
+/** Set or replace the map kind (presentation intent — never structural). */
+export function setKind(map: MellosMap, kind: MapKind): MellosMap {
+  return { ...map, kind };
+}
+
+function findLane(map: MellosMap, id: LaneId): MapLane | undefined {
+  return map.lanes.find((l) => l.id === id);
+}
+
+export interface DeclareLaneInput {
+  readonly id: LaneId;
+  readonly label: string;
+}
+
+/** Add a new lane (I8). Declaration order is left-to-right render order. */
+export function declareLane(map: MellosMap, input: DeclareLaneInput): Result<MellosMap, MapError> {
+  if (findLane(map, input.id)) return err({ kind: 'duplicate-lane', id: input.id });
+  return ok({ ...map, lanes: [...map.lanes, { id: input.id, label: input.label }] });
+}
+
+/**
+ * Remove a lane.
+ * Postcondition: former members stay on the map, merely off-lane — removing
+ * a column label never destroys work records (same contract as removeGroup).
+ */
+export function removeLane(map: MellosMap, id: LaneId): Result<MellosMap, MapError> {
+  if (!findLane(map, id)) return err({ kind: 'unknown-lane', id });
+  return ok({
+    ...map,
+    lanes: map.lanes.filter((l) => l.id !== id),
+    nodes: map.nodes.map((n) => {
+      if (n.lane !== id) return n;
+      const { lane: _dropped, ...rest } = n;
+      return rest;
+    }),
+  });
 }
 
 export interface DeclareLayerInput {
@@ -137,9 +179,14 @@ export interface DeclareNodeInput {
   readonly status?: NodeStatus;
   readonly detail?: string;
   readonly group?: GroupId;
+  readonly kind?: NodeKind;
+  readonly lane?: LaneId;
 }
 
-/** Add a new node to an existing band (I2, I3), optionally joining a same-band group (I7). */
+/**
+ * Add a new node to an existing band (I2, I3), optionally joining a same-band
+ * group (I7) and/or an existing lane (I9).
+ */
 export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<MellosMap, MapError> {
   if (findNode(map, input.id)) return err({ kind: 'duplicate-node', id: input.id });
   if (!findLayer(map, input.layer)) return err({ kind: 'unknown-layer', id: input.layer });
@@ -147,6 +194,7 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     const bad = checkMembership(map, input.id, input.layer, input.group);
     if (bad) return err(bad);
   }
+  if (input.lane !== undefined && !findLane(map, input.lane)) return err({ kind: 'unknown-lane', id: input.lane });
 
   const node: MapNode = {
     id: input.id,
@@ -155,15 +203,18 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     status: input.status ?? 'planned',
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     ...(input.group !== undefined ? { group: input.group } : {}),
+    ...(input.kind !== undefined ? { kind: input.kind } : {}),
+    ...(input.lane !== undefined ? { lane: input.lane } : {}),
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
 
 /**
- * Add the dependency edge `from USES to`. Refuses self-edges, duplicates and
- * any edge that does not point strictly downward (I4).
+ * Add the dependency edge `from USES to`, optionally labeled with what flows
+ * along it. Refuses self-edges, duplicates and any edge that does not point
+ * strictly downward (I4).
  */
-export function linkNodes(map: MellosMap, from: NodeId, to: NodeId): Result<MellosMap, MapError> {
+export function linkNodes(map: MellosMap, from: NodeId, to: NodeId, label?: string): Result<MellosMap, MapError> {
   if (from === to) return err({ kind: 'self-edge', id: from });
   const fromNode = findNode(map, from);
   if (!fromNode) return err({ kind: 'unknown-node', id: from });
@@ -176,7 +227,7 @@ export function linkNodes(map: MellosMap, from: NodeId, to: NodeId): Result<Mell
   const toRank = findLayer(map, toNode.layer)!.rank;
   if (fromRank <= toRank) return err({ kind: 'edge-not-downward', from, fromRank, to, toRank });
 
-  return ok({ ...map, edges: [...map.edges, { from, to }] });
+  return ok({ ...map, edges: [...map.edges, { from, to, ...(label !== undefined ? { label } : {}) }] });
 }
 
 export interface UpdateNodeInput {
@@ -187,12 +238,16 @@ export interface UpdateNodeInput {
   readonly detail?: string;
   /** A GroupId joins that group (I7 validated); null leaves the current group. */
   readonly group?: GroupId | null;
+  /** A NodeKind sets the presentation kind; null clears it. */
+  readonly kind?: NodeKind | null;
+  /** A LaneId joins that lane (I9 validated); null leaves the current lane. */
+  readonly lane?: LaneId | null;
 }
 
 /**
- * Update a node's status, label, evidence, design detail and/or group
- * membership. Absent fields are left untouched. No transition rules: the
- * ledger records whatever the caller reports, whenever they report it.
+ * Update a node's status, label, evidence, design detail, group membership,
+ * kind and/or lane. Absent fields are left untouched. No transition rules:
+ * the ledger records whatever the caller reports, whenever they report it.
  */
 export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<MellosMap, MapError> {
   const node = findNode(map, input.id);
@@ -201,12 +256,19 @@ export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<Mello
     const bad = checkMembership(map, node.id, node.layer, input.group);
     if (bad) return err(bad);
   }
+  if (input.lane !== undefined && input.lane !== null && !findLane(map, input.lane)) {
+    return err({ kind: 'unknown-lane', id: input.lane });
+  }
 
-  const { group: currentGroup, ...bare } = node;
+  const { group: currentGroup, kind: currentKind, lane: currentLane, ...bare } = node;
   const nextGroup = input.group === undefined ? currentGroup : input.group === null ? undefined : input.group;
+  const nextKind = input.kind === undefined ? currentKind : input.kind === null ? undefined : input.kind;
+  const nextLane = input.lane === undefined ? currentLane : input.lane === null ? undefined : input.lane;
   const updated: MapNode = {
     ...bare,
     ...(nextGroup !== undefined ? { group: nextGroup } : {}),
+    ...(nextKind !== undefined ? { kind: nextKind } : {}),
+    ...(nextLane !== undefined ? { lane: nextLane } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),

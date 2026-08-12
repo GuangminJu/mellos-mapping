@@ -22,6 +22,15 @@
  *   I7. A node's group, when set, exists and lives in the node's own layer —
  *       a group is band-local cohesion (a labeled subsystem the far zoom can
  *       render); structure ACROSS bands is what layers and edges express.
+ *   I8. Lane ids are unique. A lane is a named vertical column CROSSING all
+ *       bands (a sequence participant, a swim lane); lane declaration order
+ *       is left-to-right render order.
+ *   I9. A node's lane, when set, exists.
+ *
+ * The map kind (dev | architecture | dataflow | behavior-tree | sequence) is
+ * presentation intent, not structure: every kind shares the same invariants,
+ * and the renderer alone decides what the kind changes (legend, neutral
+ * status skins, lane emphasis).
  *
  * Everything here is immutable data plus pure types. No I/O, no clock, no
  * process state.
@@ -37,8 +46,11 @@ export const err = <E>(error: E): { ok: false; error: E } => ({ ok: false, error
 export type NodeId = string & { readonly __brand: 'NodeId' };
 export type LayerId = string & { readonly __brand: 'LayerId' };
 export type GroupId = string & { readonly __brand: 'GroupId' };
+export type LaneId = string & { readonly __brand: 'LaneId' };
+/** Open per-node vocabulary (selector, action, db …); known kinds get a glyph in the renderer. */
+export type NodeKind = string & { readonly __brand: 'NodeKind' };
 
-/** The shared slug grammar for every id in the system (nodes, layers, groups, store pages). */
+/** The shared slug grammar for every id in the system (nodes, layers, groups, lanes, kinds, store pages). */
 export const ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const ID_RULE_TEXT = 'lowercase letters, digits and dashes, starting with a letter or digit, 1-64 chars';
 
@@ -54,6 +66,26 @@ export function makeLayerId(raw: string): Result<LayerId, InvalidId> {
 
 export function makeGroupId(raw: string): Result<GroupId, InvalidId> {
   return ID_RULE.test(raw) ? ok(raw as GroupId) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
+}
+
+export function makeLaneId(raw: string): Result<LaneId, InvalidId> {
+  return ID_RULE.test(raw) ? ok(raw as LaneId) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
+}
+
+export function makeNodeKind(raw: string): Result<NodeKind, InvalidId> {
+  return ID_RULE.test(raw) ? ok(raw as NodeKind) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
+}
+
+/**
+ * Closed vocabulary of map kinds — the diagram's presentation intent.
+ * 'dev' (the default) is the progress ledger; the rest are documentation
+ * diagrams rendered with neutral skins. Structure is identical for all.
+ */
+export const MAP_KINDS = ['dev', 'architecture', 'dataflow', 'behavior-tree', 'sequence'] as const;
+export type MapKind = (typeof MAP_KINDS)[number];
+
+export function makeMapKind(raw: string): Result<MapKind, { kind: 'invalid-map-kind'; raw: string }> {
+  return (MAP_KINDS as readonly string[]).includes(raw) ? ok(raw as MapKind) : err({ kind: 'invalid-map-kind', raw });
 }
 
 /** Closed status vocabulary. Transitions are NOT policed — see module header. */
@@ -85,6 +117,15 @@ export interface MapGroup {
   readonly layer: LayerId;
 }
 
+/**
+ * A named vertical column crossing all bands (I8) — a sequence participant
+ * or an architecture swim lane. Declaration order is left-to-right.
+ */
+export interface MapLane {
+  readonly id: LaneId;
+  readonly label: string;
+}
+
 /** A unit of work living in exactly one band. */
 export interface MapNode {
   readonly id: NodeId;
@@ -97,24 +138,33 @@ export interface MapNode {
   readonly detail?: string;
   /** Membership in a same-band group (I7), for the aggregated far zoom. */
   readonly group?: GroupId;
+  /** Per-node kind (selector, action, db …); known kinds render as a glyph prefix. */
+  readonly kind?: NodeKind;
+  /** Column membership (I9), for laned kinds such as sequence. */
+  readonly lane?: LaneId;
 }
 
 /** `from` USES `to`. Must point strictly downward (invariant I4). */
 export interface DepEdge {
   readonly from: NodeId;
   readonly to: NodeId;
+  /** What flows along the edge: a protocol, a message, a data name. */
+  readonly label?: string;
 }
 
 /** The whole map. A plain immutable value — operations return new maps. */
 export interface MellosMap {
   readonly title?: string;
+  /** Presentation intent; absent means 'dev' (the progress ledger). */
+  readonly kind?: MapKind;
   readonly layers: readonly MapLayer[];
   readonly groups: readonly MapGroup[];
+  readonly lanes: readonly MapLane[];
   readonly nodes: readonly MapNode[];
   readonly edges: readonly DepEdge[];
 }
 
-export const EMPTY_MAP: MellosMap = { layers: [], groups: [], nodes: [], edges: [] };
+export const EMPTY_MAP: MellosMap = { layers: [], groups: [], lanes: [], nodes: [], edges: [] };
 
 /** Every way an operation can be refused, as data. */
 export type MapError =
@@ -130,6 +180,9 @@ export type MapError =
   | { readonly kind: 'self-edge'; readonly id: NodeId }
   | { readonly kind: 'duplicate-group'; readonly id: GroupId }
   | { readonly kind: 'unknown-group'; readonly id: GroupId }
+  | { readonly kind: 'invalid-map-kind'; readonly raw: string }
+  | { readonly kind: 'duplicate-lane'; readonly id: LaneId }
+  | { readonly kind: 'unknown-lane'; readonly id: LaneId }
   | {
       readonly kind: 'group-layer-mismatch';
       readonly node: NodeId;
@@ -174,6 +227,12 @@ export function describeMapError(e: MapError): string {
       return `group "${e.id}" already exists`;
     case 'unknown-group':
       return `group "${e.id}" does not exist`;
+    case 'invalid-map-kind':
+      return `invalid map kind "${e.raw}" (expected: ${MAP_KINDS.join(' | ')})`;
+    case 'duplicate-lane':
+      return `lane "${e.id}" already exists`;
+    case 'unknown-lane':
+      return `lane "${e.id}" does not exist`;
     case 'group-layer-mismatch':
       return (
         `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); ` +

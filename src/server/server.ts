@@ -37,7 +37,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.8.0';
+export const SERVER_VERSION = '0.9.0';
 
 const ID = z
   .string()
@@ -58,6 +58,23 @@ const EDGE = z.object({
   from: ID.describe('the node that USES the other (must live on a higher layer)'),
   to: ID.describe('the node being used (must live on a strictly lower layer)'),
 });
+
+const KIND = z
+  .enum(['dev', 'architecture', 'dataflow', 'behavior-tree', 'sequence'])
+  .describe(
+    'diagram kind. dev (default) = the live progress ledger with status skins. ' +
+      'The rest are documentation diagrams rendered neutrally: architecture (layered components; ' +
+      'also fits call graphs and module dependencies), dataflow (source→transform→sink, stages as layers), ' +
+      'behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), ' +
+      'sequence (rank = time step, EARLIEST at rank 0 = bottom — later events stand on earlier ones; ' +
+      'declare lanes as participants). State machines are unsupported: cycles cannot enter a Mellos map.',
+  );
+
+const NODE_KIND = ID.describe(
+  'node kind rendered as a glyph prefix. Known: selector | sequence | parallel | decorator | ' +
+    'condition | action (behavior trees); source | transform | sink (dataflow); ' +
+    'service | db | queue | ui (architecture). Unknown kinds are kept and shown in the detail panel.',
+);
 
 interface ToolText {
   [key: string]: unknown;
@@ -100,14 +117,24 @@ export function buildServer(stateFile: string): McpServer {
     {
       title: 'Declare map structure',
       description:
-        'Grow the Mellos map: set the title, add layer bands, add groups (labeled subsystems ' +
-        'within a band — the zoomed-out view renders groups, so declare them for any map beyond ' +
-        'a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up ' +
-        'front, then grow it as understanding deepens. Edges must point strictly downward (a node ' +
-        'may only use nodes on lower layers); the batch is all-or-nothing.',
+        'Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups ' +
+        '(labeled subsystems within a band — the zoomed-out view renders groups, so declare them ' +
+        'for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the ' +
+        'whole ghost design up front, then grow it as understanding deepens. Edges must point ' +
+        'strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.',
       inputSchema: {
         page: PAGE,
         title: z.string().max(120).optional().describe('map title, e.g. the feature being built'),
+        kind: KIND.optional(),
+        lanes: z
+          .array(
+            z.object({
+              id: ID,
+              label: z.string().min(1).max(60).describe('column name, e.g. a sequence participant'),
+            }),
+          )
+          .optional()
+          .describe('vertical columns crossing all bands; declaration order = left-to-right'),
         layers: z
           .array(
             z.object({
@@ -139,10 +166,14 @@ export function buildServer(stateFile: string): McpServer {
                 .optional()
                 .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
               group: ID.optional().describe('same-band group this node belongs to'),
+              kind: NODE_KIND.optional(),
+              lane: ID.optional().describe('lane (column) this node belongs to'),
             }),
           )
           .optional(),
-        edges: z.array(EDGE).optional(),
+        edges: z
+          .array(EDGE.extend({ label: z.string().max(80).optional().describe('what flows along the edge') }))
+          .optional(),
       },
     },
     (input) => mutate(input.page, (map) => applyDeclare(map, input)),
@@ -177,6 +208,8 @@ export function buildServer(stateFile: string): McpServer {
               group: ID.nullable()
                 .optional()
                 .describe('join this same-band group; null leaves the current group'),
+              kind: NODE_KIND.nullable().optional().describe('set the node kind; null clears it'),
+              lane: ID.nullable().optional().describe('join this lane; null leaves the current lane'),
             }),
           )
           .min(1),
@@ -199,6 +232,7 @@ export function buildServer(stateFile: string): McpServer {
         edges: z.array(EDGE).optional(),
         nodes: z.array(ID).optional(),
         groups: z.array(ID).optional().describe('groups to remove; members stay, merely ungrouped'),
+        lanes: z.array(ID).optional().describe('lanes to remove; members stay, merely off-lane'),
         layers: z.array(ID).optional().describe('bands to remove; must be empty of nodes and groups'),
       },
     },

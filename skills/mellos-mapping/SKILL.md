@@ -87,6 +87,27 @@ restart — never silently skip the map.
   unrelated subsystem) gets its own page via the `page` parameter — don't mix
   efforts or overwrite a finished map.
 
+## Diagram kinds
+
+The default kind is `dev` — the living progress ledger described above.
+`mmap_declare` also accepts documentation kinds, rendered neutrally (no
+ghosts, no spinners, no progress counts). Use them when the user asks for a
+picture of a system rather than a picture of work; one diagram = one page.
+
+- `architecture` — layered components; also module dependencies, call graphs.
+- `dataflow` — pipeline stages as layers, sources at rank 0; label edges
+  with the data that flows.
+- `behavior-tree` — leaves (actions) at rank 0, root on top; node `kind`
+  selector | sequence | parallel | decorator | condition | action renders
+  as a glyph. Also fits mind maps and WBS.
+- `sequence` — rank = time step, EARLIEST at rank 0: later events stand on
+  earlier ones. Declare participants as `lanes`, put each event node in its
+  participant's lane, label edges with the message.
+- State machines are out of scope: transitions cycle, and edges here only
+  point downward. Say so rather than forcing one in.
+
+Edge labels and node kinds work on `dev` maps too.
+
 ## Standing state
 
 At any moment the pane should answer at a glance: what is designed, what is
