@@ -1712,7 +1712,8 @@ function main() {
             dirty = true;
             break;
           case "clear":
-            selectedId = void 0;
+            if (selectedId !== void 0) selectedId = void 0;
+            else climbBack();
             dirty = true;
             break;
           case "pan":

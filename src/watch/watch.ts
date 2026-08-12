@@ -767,7 +767,9 @@ function main(): void {
             dirty = true;
             break;
           case 'clear':
-            selectedId = undefined;
+            // Esc peels one layer: a pinned node first, then the dive itself
+            if (selectedId !== undefined) selectedId = undefined;
+            else climbBack();
             dirty = true;
             break;
           case 'pan':

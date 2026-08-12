@@ -37,7 +37,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.10.1';
+export const SERVER_VERSION = '0.10.2';
 
 const ID = z
   .string()
