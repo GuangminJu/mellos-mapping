@@ -25,6 +25,9 @@ function makeLaneId(raw) {
 function makeNodeKind(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
 }
+function makeSubmapRef(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
 var MAP_KINDS = ["dev", "architecture", "dataflow", "behavior-tree", "sequence"];
 function makeMapKind(raw) {
   return MAP_KINDS.includes(raw) ? ok(raw) : err({ kind: "invalid-map-kind", raw });
@@ -149,7 +152,8 @@ function declareNode(map, input) {
     ...input.detail !== void 0 ? { detail: input.detail } : {},
     ...input.group !== void 0 ? { group: input.group } : {},
     ...input.kind !== void 0 ? { kind: input.kind } : {},
-    ...input.lane !== void 0 ? { lane: input.lane } : {}
+    ...input.lane !== void 0 ? { lane: input.lane } : {},
+    ...input.submap !== void 0 ? { submap: input.submap } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -175,15 +179,17 @@ function updateNode(map, input) {
   if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
     return err({ kind: "unknown-lane", id: input.lane });
   }
-  const { group: currentGroup, kind: currentKind, lane: currentLane, ...bare } = node;
+  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
   const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
   const nextKind = input.kind === void 0 ? currentKind : input.kind === null ? void 0 : input.kind;
   const nextLane = input.lane === void 0 ? currentLane : input.lane === null ? void 0 : input.lane;
+  const nextSubmap = input.submap === void 0 ? currentSubmap : input.submap === null ? void 0 : input.submap;
   const updated = {
     ...bare,
     ...nextGroup !== void 0 ? { group: nextGroup } : {},
     ...nextKind !== void 0 ? { kind: nextKind } : {},
     ...nextLane !== void 0 ? { lane: nextLane } : {},
+    ...nextSubmap !== void 0 ? { submap: nextSubmap } : {},
     ...input.status !== void 0 ? { status: input.status } : {},
     ...input.label !== void 0 ? { label: input.label } : {},
     ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
@@ -510,12 +516,14 @@ var DETAIL_NOTE_ROWS = 3;
 var LABEL_BUDGET_MIN = 4;
 function boxSpec(node, geo, unicode, neutral) {
   const glyph = node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0;
+  const badge = node.submap !== void 0 ? unicode ? " \u229E" : " +" : "";
+  const badgeW = displayWidth(badge);
   const text = !neutral && glyph !== void 0 ? `${glyph} ${node.label}` : node.label;
   if (geo.mode === "constellation") {
     return { w: 3, h: 1, label: "", pad: 0, borderless: true, extra: [] };
   }
   if (geo.mode === "detail") {
-    const innerW = Math.min(Math.max(displayWidth(text) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+    const innerW = Math.min(Math.max(displayWidth(text) + badgeW + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
     const extra = [];
     if (node.evidence !== void 0) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: "faint" });
     if (node.detail !== void 0) {
@@ -528,14 +536,14 @@ function boxSpec(node, geo, unicode, neutral) {
     return {
       w: innerW + 2,
       h: BOX_H + extra.length,
-      label: fitWidth(text, innerW - 4),
+      label: fitWidth(text, innerW - 4 - badgeW) + badge,
       pad: 1,
       borderless: false,
       extra
     };
   }
   const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(text) * geo.scale));
-  const label = fitWidth(text, budget);
+  const label = fitWidth(text, budget) + badge;
   return {
     w: displayWidth(label) + 4 + 2 * geo.pad,
     h: BOX_H,
@@ -599,10 +607,19 @@ var AGGREGATE_GEO = {
   barGap: 1,
   bandCounts: false
 };
+function flipForSequence(map) {
+  if (map.kind !== "sequence") return map;
+  return {
+    ...map,
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
+  };
+}
 function buildCanvas(map, opts) {
+  const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
-  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(map) : void 0;
-  return buildCanvasWith(aggregated ?? map, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo);
+  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
+  return buildCanvasWith(aggregated ?? oriented, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo);
 }
 function buildCanvasWith(map, opts, geo) {
   const canvas = new Canvas();
@@ -950,6 +967,9 @@ import { basename, dirname, join } from "node:path";
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 var PAGES_DIR_NAME = "mellos-mapping.pages";
+function pageFilePath(defaultFile, page) {
+  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+}
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
   const name = basename(path);
@@ -1070,6 +1090,13 @@ function parseMap(raw, path) {
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       lane = made.value;
     }
+    const rawSubmap = optionalString(rawNode["submap"]);
+    let submap;
+    if (rawSubmap !== void 0) {
+      const made = makeSubmapRef(rawSubmap);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      submap = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
@@ -1078,7 +1105,8 @@ function parseMap(raw, path) {
       ...detail !== void 0 ? { detail } : {},
       ...group !== void 0 ? { group } : {},
       ...nodeKind !== void 0 ? { kind: nodeKind } : {},
-      ...lane !== void 0 ? { lane } : {}
+      ...lane !== void 0 ? { lane } : {},
+      ...submap !== void 0 ? { submap } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
@@ -1193,6 +1221,7 @@ function parseInput(chunk) {
     else if (ch === "+" || ch === "=") events.push({ kind: "zoom", delta: 1 });
     else if (ch === "-") events.push({ kind: "zoom", delta: -1 });
     else if (ch === "	") events.push({ kind: "next-page" });
+    else if (ch === "\x7F" || ch === "\b") events.push({ kind: "back" });
     else if (ch >= "1" && ch <= "9") events.push({ kind: "page", index: ch.charCodeAt(0) - "1".charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: "pan", ...KEY_PAN[ch] });
     i += 1;
@@ -1368,16 +1397,18 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
     layerName,
     ...laneLabel !== void 0 ? [laneLabel] : [],
     ...node.kind !== void 0 ? [node.kind] : [],
-    ...neutral ? [] : [node.status]
+    ...neutral ? [] : [node.status],
+    ...node.submap !== void 0 ? [`${unicode ? "\u229E" : "+"} ${node.submap}`] : []
   ];
+  const [usesWord, usedByWord] = map.kind === "sequence" ? ["after", "before"] : ["uses", "used by"];
   const lines = [
     {
       text: fitWidth(`${headParts.join(" \xB7 ")}${pin}`, width),
       sgr: neutral ? "1" : `${STATUS_SGR[node.status]};1`
     },
     { text: fitWidth(`evidence: ${node.evidence ?? "\u2014"}`, width), sgr: "90" },
-    { text: fitWidth(`uses ${right}  ${uses.join("  ") || "\u2014"}`, width), sgr: "" },
-    { text: fitWidth(`used by ${left}  ${usedBy.join("  ") || "\u2014"}`, width), sgr: "" }
+    { text: fitWidth(`${usesWord} ${right}  ${uses.join("  ") || "\u2014"}`, width), sgr: "" },
+    { text: fitWidth(`${usedByWord} ${left}  ${usedBy.join("  ") || "\u2014"}`, width), sgr: "" }
   ];
   const notes = node.detail !== void 0 ? wrapWidth(node.detail, width) : ["(no design notes yet)"];
   const room = Math.max(0, rows - lines.length);
@@ -1436,6 +1467,9 @@ function main() {
   let pendingInput = "";
   let panelContentRows = PANEL_CONTENT_ROWS;
   let dividerDrag = false;
+  let lastClick;
+  const diveStack = [];
+  let flash;
   const tabRows = () => pageFiles.length > 1 ? 1 : 0;
   const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
   const dividerY = () => tabRows() + viewHeight() + 1;
@@ -1539,7 +1573,7 @@ function main() {
       lastTabSegments = [];
     }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
-    const hint = !interactive ? cfg.file : `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
+    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
     let frame = HOME;
@@ -1596,6 +1630,7 @@ function main() {
     firstScan = false;
     if (activeFile === void 0 || !pageFiles.includes(activeFile)) switchPage(pageFiles[0]);
     if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === "in-progress"))) spinnerFrame++;
+    if (flash !== void 0 && Date.now() > flash.until) flash = void 0;
     paint();
   };
   if (interactive) {
@@ -1697,7 +1732,24 @@ function main() {
                 const target = pageFiles[tabHit.index];
                 if (target !== void 0 && target !== activeFile) switchPage(target);
               } else {
-                selectedId = hitTest(event.x, event.y);
+                const id = hitTest(event.x, event.y);
+                const now = Date.now();
+                if (id !== void 0 && lastClick?.id === id && now - lastClick.at <= 450) {
+                  const submap = map?.nodes.find((n) => n.id === id)?.submap;
+                  if (submap !== void 0 && activeFile !== void 0) {
+                    const target = pageFilePath(cfg.file, submap);
+                    if (pageFiles.includes(target)) {
+                      diveStack.push(activeFile);
+                      switchPage(target);
+                    } else {
+                      flash = { text: `submap "${submap}" has no page yet`, until: now + 2500 };
+                    }
+                  }
+                  lastClick = void 0;
+                } else {
+                  lastClick = id !== void 0 ? { id, at: now } : void 0;
+                }
+                selectedId = id;
               }
               dirty = true;
             }
@@ -1718,6 +1770,15 @@ function main() {
             const target = pageFiles[event.index];
             if (target !== void 0 && target !== activeFile) {
               switchPage(target);
+              dirty = true;
+            }
+            break;
+          }
+          case "back": {
+            let parent = diveStack.pop();
+            while (parent !== void 0 && !pageFiles.includes(parent)) parent = diveStack.pop();
+            if (parent !== void 0 && parent !== activeFile) {
+              switchPage(parent);
               dirty = true;
             }
             break;

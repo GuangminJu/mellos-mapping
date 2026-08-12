@@ -49,6 +49,12 @@ export type GroupId = string & { readonly __brand: 'GroupId' };
 export type LaneId = string & { readonly __brand: 'LaneId' };
 /** Open per-node vocabulary (selector, action, db …); known kinds get a glyph in the renderer. */
 export type NodeKind = string & { readonly __brand: 'NodeKind' };
+/**
+ * Wiki-style link from a node to a child map's page. No existence invariant
+ * on purpose: declaring the reference before the page is legal — the pane
+ * simply has nowhere to dive until the page appears.
+ */
+export type SubmapRef = string & { readonly __brand: 'SubmapRef' };
 
 /** The shared slug grammar for every id in the system (nodes, layers, groups, lanes, kinds, store pages). */
 export const ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -74,6 +80,10 @@ export function makeLaneId(raw: string): Result<LaneId, InvalidId> {
 
 export function makeNodeKind(raw: string): Result<NodeKind, InvalidId> {
   return ID_RULE.test(raw) ? ok(raw as NodeKind) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
+}
+
+export function makeSubmapRef(raw: string): Result<SubmapRef, InvalidId> {
+  return ID_RULE.test(raw) ? ok(raw as SubmapRef) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
 }
 
 /**
@@ -142,6 +152,8 @@ export interface MapNode {
   readonly kind?: NodeKind;
   /** Column membership (I9), for laned kinds such as sequence. */
   readonly lane?: LaneId;
+  /** Child map page: the pane badges the node ⊞ and double-click dives in. */
+  readonly submap?: SubmapRef;
 }
 
 /** `from` USES `to`. Must point strictly downward (invariant I4). */

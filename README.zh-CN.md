@@ -111,6 +111,8 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 | shift+滚轮 | 垂直滚动 |
 | `hjkl` / 方向键 | 微移视口 |
 | `Tab` / `Shift+Tab` / `1-9` / 点击标签 | 切换页（并行的多张地图） |
+| 双击带 `⊞` 的节点 | 下潜进它的子图（一个子页面） |
+| `Backspace` | 从上一次下潜爬回父图 |
 | 拖动 `⋯` 分隔线 | 调整详情面板高度——向上拉，完整阅读长设计笔记 |
 | `0` | 重置平移和缩放 |
 | `q` | 退出面板 |
@@ -160,10 +162,16 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 | `architecture` | 分层组件（也适合模块依赖、调用图） | 边标签标协议 |
 | `dataflow` | 管线阶段即层，源头在最底 | 边标签标数据 |
 | `behavior-tree` | 叶子（动作）在最底，根在顶（也适合思维导图、WBS） | 节点 kind `selector` `sequence` `parallel` `decorator` `condition` `action` 渲染为字形 |
-| `sequence` | rank = 时间步，最早的在最底——后来的事件站在先前事件之上 | `lanes` 即参与者泳道；边标签即消息 |
+| `sequence` | 经典的调用/返回时序：时间自上而下流，参与者是顶部泳道表头；每次进入和每次返回都是"当事参与者泳道里"的一个事件 | `lanes` 即参与者泳道；边标签即消息 |
 
 节点 kind 和边标签在 `dev` 图上同样可用。状态机是有意不支持的：状态迁移
 成环，而这里的边只许向下。
+
+### 子图
+
+节点可以用 `submap: <页名>` 链接一个子页面——面板给它戴上 `⊞` 徽标；双击
+下潜进子图，`Backspace` 爬回父图。图中图，完全由页组合而成：没有新存储、
+没有新不变量。一个节点值不值得配子图，由 AI 自行判断——大多数不需要。
 
 ## MCP 工具
 

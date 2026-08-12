@@ -39,6 +39,7 @@ import {
   makeNodeId,
   makeNodeKind,
   makeNodeStatus,
+  makeSubmapRef,
   ok,
 } from '../domain/types.js';
 
@@ -218,6 +219,13 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
       lane = made.value;
     }
+    const rawSubmap = optionalString(rawNode['submap']);
+    let submap;
+    if (rawSubmap !== undefined) {
+      const made = makeSubmapRef(rawSubmap);
+      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
+      submap = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
@@ -227,6 +235,7 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       ...(group !== undefined ? { group } : {}),
       ...(nodeKind !== undefined ? { kind: nodeKind } : {}),
       ...(lane !== undefined ? { lane } : {}),
+      ...(submap !== undefined ? { submap } : {}),
     });
     if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
     map = declared.value;

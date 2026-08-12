@@ -34,6 +34,7 @@ import {
   type NodeId,
   type NodeKind,
   type Result,
+  type SubmapRef,
   makeGroupId,
   makeLaneId,
   makeLayerId,
@@ -372,6 +373,16 @@ describe('node kind and edge label — annotation, not structure', () => {
     expect(map.nodes[0]!.kind).toBe('selector');
     map = must(updateNode(map, { id: nid('sel'), kind: null }));
     expect(map.nodes[0]!.kind).toBeUndefined();
+  });
+
+  it('a node may link a child map page; the reference needs no page to exist yet', () => {
+    let map = threeBands();
+    map = must(
+      declareNode(map, { id: nid('store'), label: '存储', layer: lid('primitives'), submap: 'store-internals' as SubmapRef }),
+    );
+    expect(map.nodes[0]!.submap).toBe('store-internals');
+    map = must(updateNode(map, { id: nid('store'), submap: null }));
+    expect(map.nodes[0]!.submap).toBeUndefined();
   });
 
   it('an edge may carry a label saying what flows along it', () => {

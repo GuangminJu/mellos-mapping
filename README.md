@@ -120,6 +120,8 @@ htop and tmux speak):
 | shift+wheel | scroll vertically |
 | `hjkl` / arrows | nudge the view |
 | `Tab` / `Shift+Tab` / `1-9` / click a tab | switch pages (parallel maps) |
+| double-click a `⊞` node | dive into its sub-map (a child page) |
+| `Backspace` | climb back out of the last dive |
 | drag the `⋯` divider | resize the detail panel — pull it up to read long design notes in full |
 | `0` | reset pan and zoom |
 | `q` | quit the pane |
@@ -176,10 +178,17 @@ ghosts, no spinners, no progress counts.
 | `architecture` | layered components (also module deps, call graphs) | edge labels for protocols |
 | `dataflow` | pipeline stages as layers, sources at the bottom | edge labels for the data |
 | `behavior-tree` | leaves (actions) at the bottom, root on top (also mind maps, WBS) | node kinds `selector` `sequence` `parallel` `decorator` `condition` `action` render as glyphs |
-| `sequence` | rank = time step, earliest at the bottom — later events stand on earlier ones | `lanes` are participants; edge labels are messages |
+| `sequence` | classic call/return: time flows top-down, participants as lane headers; every call and every return is an event in the acting participant's lane | `lanes` are participants; edge labels are messages |
 
 Node kinds and edge labels work on `dev` maps too. State machines are out
 of scope on purpose: transitions cycle, and edges here only point downward.
+
+### Sub-maps
+
+A node can link a child page with `submap: <page-slug>` — the pane badges it
+`⊞`; double-click dives into the child map, `Backspace` climbs back out. A
+map of maps, built entirely from pages: no new storage, no new invariants.
+Whether a node deserves a sub-map is the AI's judgment call — most don't.
 
 ## MCP tools
 

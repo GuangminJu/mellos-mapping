@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "title": "子图下潜 v0.10.0",
+  "layers": [
+    {
+      "id": "domain",
+      "name": "领域层",
+      "rank": 0
+    },
+    {
+      "id": "io",
+      "name": "存储与工具层",
+      "rank": 1
+    },
+    {
+      "id": "present",
+      "name": "呈现层",
+      "rank": 2
+    }
+  ],
+  "nodes": [
+    {
+      "id": "submap-ref",
+      "label": "子图引用",
+      "layer": "domain",
+      "status": "done",
+      "detail": "节点可选 submap（ID_RULE slug 品牌类型）指向一页。不设存在性不变量——引用先于页面存在是合法的，如同 wiki 链接。null 清除。",
+      "evidence": "vitest: 声明/更新/null清除,wiki式无存在性不变量"
+    },
+    {
+      "id": "submap-io",
+      "label": "往返与入参",
+      "layer": "io",
+      "status": "done",
+      "detail": "store 序列化/回放 submap；declare/update 收 submap（update 可 null）；zod schema 教 AI：节点内部值得单独一张图时才建子图。",
+      "evidence": "vitest: 全字段往返+schema教AI审慎建子图, 147+ tests"
+    },
+    {
+      "id": "render-badge",
+      "label": "子图徽标",
+      "layer": "present",
+      "status": "done",
+      "detail": "带 submap 的节点标签尾缀 ⊞（ASCII 为 +）——盒模式与详情模式可见，星座模式不加。详情面板头部也显示。",
+      "evidence": "vitest: ⊞徽标在-3缩放截断后存活"
+    },
+    {
+      "id": "watch-dive",
+      "label": "双击下潜与返回",
+      "layer": "present",
+      "status": "done",
+      "detail": "同一节点 450ms 内两次按下=下潜：子图页存在则切页并压导航栈，不存在则提示。Backspace 弹栈返回父图。",
+      "evidence": "npm run verify 全绿;总览索引页5节点全带⊞待真机双击"
+    }
+  ],
+  "edges": [
+    {
+      "from": "submap-io",
+      "to": "submap-ref"
+    },
+    {
+      "from": "render-badge",
+      "to": "submap-ref"
+    },
+    {
+      "from": "watch-dive",
+      "to": "submap-io",
+      "label": "页文件解析"
+    }
+  ]
+}

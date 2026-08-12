@@ -537,13 +537,17 @@ const LABEL_BUDGET_MIN = 4;
 function boxSpec(node: MapNode, geo: ZoomGeometry, unicode: boolean, neutral: boolean): Omit<BoxLayout, 'node' | 'x' | 'y'> {
   // On dev pages the glyph slot belongs to the status, so a known kind glyph
   // joins the label text; on neutral pages the kind takes the slot itself.
+  // A node with a child map wears the dive badge at the end of its label —
+  // appended AFTER width fitting, so truncation can never eat the badge.
   const glyph = node.kind !== undefined ? kindGlyph(node.kind as string, unicode) : undefined;
+  const badge = node.submap !== undefined ? (unicode ? ' ⊞' : ' +') : '';
+  const badgeW = displayWidth(badge);
   const text = !neutral && glyph !== undefined ? `${glyph} ${node.label}` : node.label;
   if (geo.mode === 'constellation') {
     return { w: 3, h: 1, label: '', pad: 0, borderless: true, extra: [] };
   }
   if (geo.mode === 'detail') {
-    const innerW = Math.min(Math.max(displayWidth(text) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+    const innerW = Math.min(Math.max(displayWidth(text) + badgeW + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
     const extra: ExtraRow[] = [];
     if (node.evidence !== undefined) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: 'faint' });
     if (node.detail !== undefined) {
@@ -556,14 +560,14 @@ function boxSpec(node: MapNode, geo: ZoomGeometry, unicode: boolean, neutral: bo
     return {
       w: innerW + 2,
       h: BOX_H + extra.length,
-      label: fitWidth(text, innerW - 4),
+      label: fitWidth(text, innerW - 4 - badgeW) + badge,
       pad: 1,
       borderless: false,
       extra,
     };
   }
   const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(text) * geo.scale));
-  const label = fitWidth(text, budget);
+  const label = fitWidth(text, budget) + badge;
   return {
     w: displayWidth(label) + 4 + 2 * geo.pad,
     h: BOX_H,
@@ -684,10 +688,29 @@ const AGGREGATE_GEO: ZoomGeometry = {
   bandCounts: false,
 };
 
+/**
+ * Sequence pages read like the classic diagram: time flows DOWNWARD, the
+ * earliest step right under the participant headers. The stored map keeps
+ * rank 0 = earliest with edges pointing later -> earlier ("later stands on
+ * earlier"); this derived value inverts the ranks and reverses the edges so
+ * the unchanged top-down machinery draws top-down time — each wire now runs
+ * from the sender's moment down into the receiver's. Derived for rendering
+ * only, never persisted (same contract as aggregateMap).
+ */
+function flipForSequence(map: MellosMap): MellosMap {
+  if (map.kind !== 'sequence') return map;
+  return {
+    ...map,
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...(e.label !== undefined ? { label: e.label } : {}) })),
+  };
+}
+
 function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
+  const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
-  const aggregated = plainGeo.mode === 'constellation' ? aggregateMap(map) : undefined;
-  return buildCanvasWith(aggregated ?? map, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo);
+  const aggregated = plainGeo.mode === 'constellation' ? aggregateMap(oriented) : undefined;
+  return buildCanvasWith(aggregated ?? oriented, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo);
 }
 
 function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry): { canvas: Canvas; hits: BoxHit[] } {

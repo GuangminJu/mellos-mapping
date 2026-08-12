@@ -26,6 +26,7 @@ import {
   type NodeKind,
   type NodeStatus,
   type Result,
+  type SubmapRef,
   err,
   ok,
 } from './types.js';
@@ -181,6 +182,7 @@ export interface DeclareNodeInput {
   readonly group?: GroupId;
   readonly kind?: NodeKind;
   readonly lane?: LaneId;
+  readonly submap?: SubmapRef;
 }
 
 /**
@@ -205,6 +207,7 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     ...(input.group !== undefined ? { group: input.group } : {}),
     ...(input.kind !== undefined ? { kind: input.kind } : {}),
     ...(input.lane !== undefined ? { lane: input.lane } : {}),
+    ...(input.submap !== undefined ? { submap: input.submap } : {}),
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -242,6 +245,8 @@ export interface UpdateNodeInput {
   readonly kind?: NodeKind | null;
   /** A LaneId joins that lane (I9 validated); null leaves the current lane. */
   readonly lane?: LaneId | null;
+  /** A SubmapRef links a child map page; null unlinks it. */
+  readonly submap?: SubmapRef | null;
 }
 
 /**
@@ -260,15 +265,17 @@ export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<Mello
     return err({ kind: 'unknown-lane', id: input.lane });
   }
 
-  const { group: currentGroup, kind: currentKind, lane: currentLane, ...bare } = node;
+  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
   const nextGroup = input.group === undefined ? currentGroup : input.group === null ? undefined : input.group;
   const nextKind = input.kind === undefined ? currentKind : input.kind === null ? undefined : input.kind;
   const nextLane = input.lane === undefined ? currentLane : input.lane === null ? undefined : input.lane;
+  const nextSubmap = input.submap === undefined ? currentSubmap : input.submap === null ? undefined : input.submap;
   const updated: MapNode = {
     ...bare,
     ...(nextGroup !== undefined ? { group: nextGroup } : {}),
     ...(nextKind !== undefined ? { kind: nextKind } : {}),
     ...(nextLane !== undefined ? { lane: nextLane } : {}),
+    ...(nextSubmap !== undefined ? { submap: nextSubmap } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),

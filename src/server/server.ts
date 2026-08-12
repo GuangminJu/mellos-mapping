@@ -37,7 +37,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.9.0';
+export const SERVER_VERSION = '0.10.0';
 
 const ID = z
   .string()
@@ -66,8 +66,10 @@ const KIND = z
       'The rest are documentation diagrams rendered neutrally: architecture (layered components; ' +
       'also fits call graphs and module dependencies), dataflow (source→transform→sink, stages as layers), ' +
       'behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), ' +
-      'sequence (rank = time step, EARLIEST at rank 0 = bottom — later events stand on earlier ones; ' +
-      'declare lanes as participants). State machines are unsupported: cycles cannot enter a Mellos map.',
+      'sequence (classic call/return: rank = time step with rank 0 = EARLIEST, drawn top-down; ' +
+      'declare lanes as participants and make every call AND every return its own event node in ' +
+      "the acting participant's lane, edges labeled with the message). " +
+      'State machines are unsupported: cycles cannot enter a Mellos map.',
   );
 
 const NODE_KIND = ID.describe(
@@ -168,6 +170,11 @@ export function buildServer(stateFile: string): McpServer {
               group: ID.optional().describe('same-band group this node belongs to'),
               kind: NODE_KIND.optional(),
               lane: ID.optional().describe('lane (column) this node belongs to'),
+              submap: ID.optional().describe(
+                'page slug of this node\'s child map — the pane badges the node ⊞ and double-click ' +
+                  'dives in. Declare the child page separately. Create a sub-map only when the ' +
+                  "node's internals genuinely deserve their own picture; most nodes need none.",
+              ),
             }),
           )
           .optional(),
@@ -210,6 +217,7 @@ export function buildServer(stateFile: string): McpServer {
                 .describe('join this same-band group; null leaves the current group'),
               kind: NODE_KIND.nullable().optional().describe('set the node kind; null clears it'),
               lane: ID.nullable().optional().describe('join this lane; null leaves the current lane'),
+              submap: ID.nullable().optional().describe('link a child map page; null unlinks it'),
             }),
           )
           .min(1),

@@ -25,6 +25,8 @@ export type InputEvent =
   | { readonly kind: 'prev-page' }
   /** Jump straight to a page by number key 1-9 (0-based index). */
   | { readonly kind: 'page'; readonly index: number }
+  /** Backspace: climb back out of a sub-map dive. */
+  | { readonly kind: 'back' }
   /** Left button pressed at terminal cell (1-based). */
   | { readonly kind: 'mouse-down'; readonly x: number; readonly y: number }
   /** Motion while the left button is held. */
@@ -131,6 +133,7 @@ export function parseInput(chunk: string): ParsedInput {
     else if (ch === '+' || ch === '=') events.push({ kind: 'zoom', delta: 1 });
     else if (ch === '-') events.push({ kind: 'zoom', delta: -1 });
     else if (ch === '\t') events.push({ kind: 'next-page' });
+    else if (ch === '\x7f' || ch === '\x08') events.push({ kind: 'back' });
     else if (ch >= '1' && ch <= '9') events.push({ kind: 'page', index: ch.charCodeAt(0) - '1'.charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: 'pan', ...KEY_PAN[ch]! });
     // anything else (including unknown escape sequences' stray bytes) is ignored

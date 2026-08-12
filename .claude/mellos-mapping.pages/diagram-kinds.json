@@ -125,8 +125,8 @@
       "layer": "present",
       "status": "done",
       "detail": "按 lane 列对齐盒子：列宽=各带该列行宽最大值，顶部泳道表头。无 lane 节点排在列区之后。布线机器不变。",
-      "group": "render-ext",
-      "evidence": "vitest: 泳道表头+跨带列对齐+列序"
+      "evidence": "vitest: 时序页派生翻转(时间向下,最早在顶),泳道表头居顶;demo往返之字形冒烟通过",
+      "group": "render-ext"
     },
     {
       "id": "panel-edge-labels",

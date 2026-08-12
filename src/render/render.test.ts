@@ -19,6 +19,7 @@ import {
   type NodeId,
   type NodeKind,
   type Result,
+  type SubmapRef,
 } from '../domain/types.js';
 import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
@@ -354,6 +355,13 @@ describe('diagram kinds', () => {
     map = must(declareNode(map, { id: nid('show'), label: '显示结果', layer: lid('t1'), lane: laid('client') }));
     map = must(linkNodes(map, nid('check'), nid('req'), '用户名+口令'));
 
+    const text = renderMap(map, MONO).join('\n');
+    // Classic sequence reading: time flows DOWNWARD — the earliest step
+    // sits on top, right under the participant headers (dev maps keep
+    // rank 0 at the bottom; this flip is derived at render time only).
+    expect(text.indexOf('第1步')).toBeLessThan(text.indexOf('第2步'));
+    expect(text.indexOf('客户端')).toBeLessThan(text.indexOf('第1步'));
+
     const lines = renderMap(map, MONO);
     const header = lines.find((l) => l.includes('客户端'))!;
     expect(header).toContain('服务端'); // both lane headers on one row
@@ -366,5 +374,23 @@ describe('diagram kinds', () => {
     expect(showRow.indexOf('显示结果')).toBeLessThan(showRow.indexOf('校验凭证'));
     // and the lane headers sit in the same left-to-right order
     expect(header.indexOf('客户端')).toBeLessThan(header.indexOf('服务端'));
+  });
+
+  it('a node linking a sub-map wears the ⊞ badge, surviving label truncation', () => {
+    let map = setTitle(EMPTY_MAP, 'demo');
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
+    map = must(
+      declareNode(map, {
+        id: nid('store'),
+        label: '一个特别长的存储子系统名字',
+        layer: lid('base'),
+        submap: 'store-internals' as SubmapRef,
+      }),
+    );
+    const full = renderMap(map, MONO).join('\n');
+    expect(full).toContain('一个特别长的存储子系统名字 ⊞');
+    // -3 zoom truncates the label, but never the badge
+    const tight = renderMap(map, { ...MONO, zoom: -3 }).join('\n');
+    expect(tight).toContain('… ⊞');
   });
 });
