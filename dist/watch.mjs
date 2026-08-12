@@ -95,12 +95,17 @@ function declareGroup(map, input) {
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
   return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
 }
-function groupStatus(map, id) {
-  const members = map.nodes.filter((n) => n.group === id);
-  if (members.some((n) => n.status === "regressed")) return "regressed";
-  if (members.some((n) => n.status === "in-progress")) return "in-progress";
-  if (members.length > 0 && members.every((n) => n.status === "done")) return "done";
+function aggregateStatus(nodes) {
+  if (nodes.some((n) => n.status === "regressed")) return "regressed";
+  if (nodes.some((n) => n.status === "in-progress")) return "in-progress";
+  if (nodes.length > 0 && nodes.every((n) => n.status === "done")) return "done";
   return "planned";
+}
+function groupStatus(map, id) {
+  return aggregateStatus(map.nodes.filter((n) => n.group === id));
+}
+function mapStatus(map) {
+  return aggregateStatus(map.nodes);
 }
 function declareNode(map, input) {
   if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
@@ -801,10 +806,29 @@ function drawBox(canvas, box, opts, focused = false) {
 }
 
 // src/store/store.ts
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var PAGES_DIR_NAME = "mellos-mapping.pages";
+function pageIdOfFile(defaultFile, path) {
+  if (path === defaultFile) return void 0;
+  const name = basename(path);
+  return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+}
+function listPageFiles(defaultFile) {
+  const out = [];
+  if (existsSync(defaultFile)) out.push(defaultFile);
+  let entries = [];
+  try {
+    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+  } catch {
+  }
+  for (const e of entries.sort()) {
+    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+  }
+  return out;
+}
 function describeStoreError(e) {
   switch (e.kind) {
     case "not-found":
@@ -934,6 +958,7 @@ var SHIFT = 4;
 var BUTTON_BITS = 3;
 var SGR_MOUSE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
 var ARROW = /^\x1b\[([ABCD])/;
+var SHIFT_TAB = /^\x1b\[Z/;
 var PARTIAL_ESCAPE = /(?:\x1b|\x1b\[|\x1b\[<[\d;]*)$/;
 var ARROW_PAN = {
   A: { dx: 0, dy: -KEY_V_STEP },
@@ -981,6 +1006,12 @@ function parseInput(chunk) {
       i += arrow[0].length;
       continue;
     }
+    const shiftTab = SHIFT_TAB.exec(slice);
+    if (shiftTab) {
+      events.push({ kind: "prev-page" });
+      i += shiftTab[0].length;
+      continue;
+    }
     const partial = PARTIAL_ESCAPE.exec(slice);
     if (partial && partial.index === 0) {
       return { events, rest: slice };
@@ -990,6 +1021,8 @@ function parseInput(chunk) {
     else if (ch === "0") events.push({ kind: "reset" });
     else if (ch === "+" || ch === "=") events.push({ kind: "zoom", delta: 1 });
     else if (ch === "-") events.push({ kind: "zoom", delta: -1 });
+    else if (ch === "	") events.push({ kind: "next-page" });
+    else if (ch >= "1" && ch <= "9") events.push({ kind: "page", index: ch.charCodeAt(0) - "1".charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: "pan", ...KEY_PAN[ch] });
     i += 1;
   }
@@ -1059,6 +1092,27 @@ function anchorOffsets(anchor, offset, before, after) {
     x: before.w > 0 ? Math.round(offset.x * after.w / before.w) : 0,
     y: before.h > 0 ? Math.round(offset.y * after.h / before.h) : 0
   };
+}
+function pageTabRow(tabs, width, unicode) {
+  const segments = [];
+  let col = 1;
+  for (const [index, tab] of tabs.entries()) {
+    const room = width - (col - 1);
+    if (room <= 3) break;
+    const marker = tab.active ? unicode ? "\u25CF" : "*" : unicode ? "\u25CB" : "o";
+    const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
+    const text = fitWidth(` ${marker} ${glyph} ${tab.title} `, room);
+    const w = displayWidth(text);
+    segments.push({
+      text,
+      sgr: tab.active ? `${STATUS_SGR[tab.status]};1` : tab.fresh ? STATUS_SGR[tab.status] : "90",
+      lo: col,
+      hi: col + w - 1,
+      index
+    });
+    col += w;
+  }
+  return segments;
 }
 function nearestHit(hits, cx, cy) {
   let best;
@@ -1167,13 +1221,18 @@ function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
-  let lastMtimeMs = -1;
   let lastFrame = "";
   let spinnerFrame = 0;
   let map;
   let notice = `waiting for ${cfg.file} ...`;
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
+  let pageFiles = [cfg.file];
+  const pageData = /* @__PURE__ */ new Map();
+  const pageViews = /* @__PURE__ */ new Map();
+  let activeFile;
+  let firstScan = true;
+  let lastTabSegments = [];
   let offsetX = 0;
   let offsetY = 0;
   let zoom = ZOOM_DEFAULT;
@@ -1184,11 +1243,26 @@ function main() {
   let lastHits = [];
   let lastContent = { w: 0, h: 0 };
   let pendingInput = "";
-  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1);
+  const tabRows = () => pageFiles.length > 1 ? 1 : 0;
+  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1 - tabRows());
+  const switchPage = (file) => {
+    if (activeFile !== void 0) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
+    activeFile = file;
+    const view = pageViews.get(file);
+    offsetX = view?.offsetX ?? 0;
+    offsetY = view?.offsetY ?? 0;
+    zoom = view?.zoom ?? ZOOM_DEFAULT;
+    selectedId = view?.selectedId;
+    hoverId = void 0;
+    const entry = pageData.get(file);
+    if (entry !== void 0 && entry.fresh) pageData.set(file, { ...entry, fresh: false });
+    map = entry?.map;
+    notice = map === void 0 ? `waiting for ${file} ...` : "";
+  };
   const hitTest = (termX, termY) => {
     const sx = termX - 1;
-    const sy = termY - 1;
-    if (sy >= viewHeight()) return void 0;
+    const sy = termY - 1 - tabRows();
+    if (sy < 0 || sy >= viewHeight()) return void 0;
     const cx = sx + offsetX;
     const cy = sy + offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
@@ -1248,11 +1322,29 @@ function main() {
         (l) => cfg.color && l.sgr !== "" && l.text !== "" ? ` \x1B[${l.sgr}m${l.text}${RESET}` : ` ${l.text}`
       )
     ];
+    let tabLine;
+    if (tabRows() > 0) {
+      const tabs = pageFiles.map((f) => {
+        const m = pageData.get(f)?.map;
+        return {
+          title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? "main"),
+          status: m !== void 0 ? mapStatus(m) : "planned",
+          active: f === activeFile,
+          fresh: pageData.get(f)?.fresh ?? false
+        };
+      });
+      const segments = pageTabRow(tabs, cols, cfg.unicode);
+      lastTabSegments = segments;
+      tabLine = segments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
+    } else {
+      lastTabSegments = [];
+    }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
     const hint = !interactive ? cfg.file : `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
     let frame = HOME;
+    if (tabLine !== void 0) frame += tabLine + ERASE_LINE_END + "\n";
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";
     for (const row of panelRows) frame += row + ERASE_LINE_END + "\n";
     frame += footer + ERASE_LINE_END;
@@ -1272,25 +1364,39 @@ function main() {
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
-    let mtimeMs;
-    try {
-      mtimeMs = statSync(cfg.file).mtimeMs;
-    } catch {
-      mtimeMs = void 0;
-    }
-    if (mtimeMs !== void 0 && mtimeMs !== lastMtimeMs) {
-      const loaded = loadMapFile(cfg.file);
-      if (loaded.ok) {
-        map = loaded.value;
-        notice = "";
-        lastMtimeMs = mtimeMs;
-      } else if (loaded.error.kind === "malformed-json") {
-      } else {
-        notice = describeStoreError(loaded.error);
-        lastMtimeMs = mtimeMs;
+    const discovered = listPageFiles(cfg.file);
+    pageFiles = discovered.length > 0 ? discovered : [cfg.file];
+    for (const known of [...pageData.keys()]) {
+      if (!pageFiles.includes(known)) {
+        pageData.delete(known);
+        pageViews.delete(known);
       }
     }
-    if (map?.nodes.some((n) => n.status === "in-progress")) spinnerFrame++;
+    for (const file of pageFiles) {
+      let mtimeMs;
+      try {
+        mtimeMs = statSync(file).mtimeMs;
+      } catch {
+        continue;
+      }
+      const entry = pageData.get(file);
+      if (mtimeMs === entry?.mtimeMs) continue;
+      const loaded = loadMapFile(file);
+      if (loaded.ok) {
+        pageData.set(file, { map: loaded.value, mtimeMs, fresh: !firstScan && file !== activeFile });
+        if (file === activeFile) {
+          map = loaded.value;
+          notice = "";
+        }
+      } else if (loaded.error.kind === "malformed-json") {
+      } else {
+        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false });
+        if (file === activeFile) notice = describeStoreError(loaded.error);
+      }
+    }
+    firstScan = false;
+    if (activeFile === void 0 || !pageFiles.includes(activeFile)) switchPage(pageFiles[0]);
+    if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === "in-progress"))) spinnerFrame++;
     paint();
   };
   if (interactive) {
@@ -1371,12 +1477,36 @@ function main() {
             break;
           case "mouse-up":
             if (press && !press.moved) {
-              selectedId = hitTest(event.x, event.y);
+              const tabHit = tabRows() > 0 && event.y === 1 ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi) : void 0;
+              if (tabHit !== void 0) {
+                const target = pageFiles[tabHit.index];
+                if (target !== void 0 && target !== activeFile) switchPage(target);
+              } else {
+                selectedId = hitTest(event.x, event.y);
+              }
               dirty = true;
             }
             dragAnchor = void 0;
             press = void 0;
             break;
+          case "next-page":
+          case "prev-page": {
+            if (pageFiles.length > 1 && activeFile !== void 0) {
+              const current = pageFiles.indexOf(activeFile);
+              const step = event.kind === "next-page" ? 1 : -1;
+              switchPage(pageFiles[(current + step + pageFiles.length) % pageFiles.length]);
+              dirty = true;
+            }
+            break;
+          }
+          case "page": {
+            const target = pageFiles[event.index];
+            if (target !== void 0 && target !== activeFile) {
+              switchPage(target);
+              dirty = true;
+            }
+            break;
+          }
         }
       }
       if (dirty) paint();
@@ -1395,6 +1525,7 @@ export {
   mapPanel,
   nearestHit,
   nodePanel,
+  pageTabRow,
   parseArgs,
   wrapWidth
 };

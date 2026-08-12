@@ -18,12 +18,15 @@
  * allowed to propagate as exceptions.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
 import {
   EMPTY_MAP,
+  ID_RULE,
+  ID_RULE_TEXT,
+  type InvalidId,
   type MapError,
   type MellosMap,
   type Result,
@@ -39,8 +42,54 @@ import {
 /** On-disk format version. Bump only with a documented migration. */
 export const STATE_FILE_VERSION = 1;
 
-/** Project-relative location of the state file. */
+/** Project-relative location of the DEFAULT page's state file. */
 export const STATE_FILE_RELATIVE_PATH = join('.claude', 'mellos-mapping.json');
+
+// ---------------------------------------------------------------------------
+// pages — a project may keep several maps side by side (one effort = one page)
+// ---------------------------------------------------------------------------
+//
+// The default page IS the classic mellos-mapping.json, so existing maps stay
+// where they are. Named pages live in a sibling directory, one file each:
+// file-per-page keeps concurrent sessions isolated — two writers on two pages
+// can never clobber each other, because every save renames a whole file.
+
+/** Directory (next to the default file) holding the named pages. */
+export const PAGES_DIR_NAME = 'mellos-mapping.pages';
+
+export type PageId = string & { readonly __brand: 'PageId' };
+
+export function makePageId(raw: string): Result<PageId, InvalidId> {
+  return ID_RULE.test(raw) ? ok(raw as PageId) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
+}
+
+/** Where a page's map file lives, given the default page's file path. */
+export function pageFilePath(defaultFile: string, page?: PageId): string {
+  return page === undefined ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+}
+
+/** The page id a file path denotes; undefined = the default page. */
+export function pageIdOfFile(defaultFile: string, path: string): PageId | undefined {
+  if (path === defaultFile) return undefined;
+  const name = basename(path);
+  return name.endsWith('.json') ? (name.slice(0, -'.json'.length) as PageId) : (name as PageId);
+}
+
+/** Existing page files: the default page first (when present), then named pages sorted by slug. */
+export function listPageFiles(defaultFile: string): string[] {
+  const out: string[] = [];
+  if (existsSync(defaultFile)) out.push(defaultFile);
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+  } catch {
+    // no pages directory — a single-page project, the common case
+  }
+  for (const e of entries.sort()) {
+    if (e.endsWith('.json')) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+  }
+  return out;
+}
 
 export type StoreError =
   | { readonly kind: 'not-found'; readonly path: string }

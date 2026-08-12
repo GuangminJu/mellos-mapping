@@ -20,6 +20,11 @@ export type InputEvent =
   | { readonly kind: 'pan'; readonly dx: number; readonly dy: number }
   /** One step on the zoom ladder (wheel / +/- keys); +1 = closer. */
   | { readonly kind: 'zoom'; readonly delta: 1 | -1 }
+  /** Cycle pages: Tab forward, Shift+Tab back. */
+  | { readonly kind: 'next-page' }
+  | { readonly kind: 'prev-page' }
+  /** Jump straight to a page by number key 1-9 (0-based index). */
+  | { readonly kind: 'page'; readonly index: number }
   /** Left button pressed at terminal cell (1-based). */
   | { readonly kind: 'mouse-down'; readonly x: number; readonly y: number }
   /** Motion while the left button is held. */
@@ -46,6 +51,7 @@ const BUTTON_BITS = 3;
 
 const SGR_MOUSE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
 const ARROW = /^\x1b\[([ABCD])/;
+const SHIFT_TAB = /^\x1b\[Z/;
 /** A prefix that could still grow into a sequence we understand. */
 const PARTIAL_ESCAPE = /(?:\x1b|\x1b\[|\x1b\[<[\d;]*)$/;
 
@@ -107,6 +113,13 @@ export function parseInput(chunk: string): ParsedInput {
       continue;
     }
 
+    const shiftTab = SHIFT_TAB.exec(slice);
+    if (shiftTab) {
+      events.push({ kind: 'prev-page' });
+      i += shiftTab[0].length;
+      continue;
+    }
+
     const partial = PARTIAL_ESCAPE.exec(slice);
     if (partial && partial.index === 0) {
       return { events, rest: slice }; // incomplete sequence — wait for more bytes
@@ -117,6 +130,8 @@ export function parseInput(chunk: string): ParsedInput {
     else if (ch === '0') events.push({ kind: 'reset' });
     else if (ch === '+' || ch === '=') events.push({ kind: 'zoom', delta: 1 });
     else if (ch === '-') events.push({ kind: 'zoom', delta: -1 });
+    else if (ch === '\t') events.push({ kind: 'next-page' });
+    else if (ch >= '1' && ch <= '9') events.push({ kind: 'page', index: ch.charCodeAt(0) - '1'.charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: 'pan', ...KEY_PAN[ch]! });
     // anything else (including unknown escape sequences' stray bytes) is ignored
     i += 1;

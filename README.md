@@ -119,6 +119,7 @@ htop and tmux speak):
 | left-drag | grab and pan when the map outgrows the pane |
 | shift+wheel | scroll vertically |
 | `hjkl` / arrows | nudge the view |
+| `Tab` / `Shift+Tab` / `1-9` / click a tab | switch pages (parallel maps) |
 | `0` | reset pan and zoom |
 | `q` | quit the pane |
 
@@ -147,8 +148,20 @@ the focused node's status, layer, evidence and both wire directions
 `--no-mouse` disables mouse reporting if your terminal multiplexer wants the
 mouse for itself.
 
-State lives in `.claude/mellos-mapping.json` in your project — plain JSON,
-one map per project, safe to commit if you want the map's history in git.
+### Pages
+
+A project can keep several maps side by side — **one effort = one page**.
+Claude targets a page by passing `page` to any `mmap_*` tool; the pane grows
+a tab bar as soon as a second page exists. The active tab is bold in its
+map's aggregate status color; when a background page's file changes, its tab
+lights up in status color instead of stealing your view. Each page remembers
+its own pan, zoom and pinned node. Because every page is its own file, two
+Claude sessions writing two pages can never clobber each other — this is
+also the answer to running several Claude sessions in one project.
+
+State lives in `.claude/mellos-mapping.json` (the default page) plus
+`.claude/mellos-mapping.pages/<page>.json` for named pages — plain JSON,
+safe to commit if you want the maps' history in git.
 
 ## MCP tools
 

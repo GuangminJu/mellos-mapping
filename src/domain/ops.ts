@@ -108,17 +108,26 @@ export function removeGroup(map: MellosMap, id: GroupId): Result<MellosMap, MapE
   });
 }
 
+/** Aggregate status over a set of nodes: regression trumps, then activity, then completion. */
+function aggregateStatus(nodes: readonly MapNode[]): NodeStatus {
+  if (nodes.some((n) => n.status === 'regressed')) return 'regressed';
+  if (nodes.some((n) => n.status === 'in-progress')) return 'in-progress';
+  if (nodes.length > 0 && nodes.every((n) => n.status === 'done')) return 'done';
+  return 'planned';
+}
+
 /**
  * Derived, never stored: a group's aggregate status. Any regressed member
  * cracks the group; else any spinner spins it; else all-done (non-empty)
  * completes it; anything else is planned.
  */
 export function groupStatus(map: MellosMap, id: GroupId): NodeStatus {
-  const members = map.nodes.filter((n) => n.group === id);
-  if (members.some((n) => n.status === 'regressed')) return 'regressed';
-  if (members.some((n) => n.status === 'in-progress')) return 'in-progress';
-  if (members.length > 0 && members.every((n) => n.status === 'done')) return 'done';
-  return 'planned';
+  return aggregateStatus(map.nodes.filter((n) => n.group === id));
+}
+
+/** Derived, never stored: the whole map's aggregate status (same rules as groupStatus). */
+export function mapStatus(map: MellosMap): NodeStatus {
+  return aggregateStatus(map.nodes);
 }
 
 export interface DeclareNodeInput {

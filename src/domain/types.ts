@@ -38,7 +38,8 @@ export type NodeId = string & { readonly __brand: 'NodeId' };
 export type LayerId = string & { readonly __brand: 'LayerId' };
 export type GroupId = string & { readonly __brand: 'GroupId' };
 
-const ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** The shared slug grammar for every id in the system (nodes, layers, groups, store pages). */
+export const ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const ID_RULE_TEXT = 'lowercase letters, digits and dashes, starting with a letter or digit, 1-64 chars';
 
 export type InvalidId = { readonly kind: 'invalid-id'; readonly raw: string; readonly rule: string };

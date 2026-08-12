@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "title": "语义缩放 v0.6 — 已交付",
+  "layers": [
+    {
+      "id": "render",
+      "name": "渲染层",
+      "rank": 0
+    },
+    {
+      "id": "pane",
+      "name": "面板层",
+      "rank": 1
+    }
+  ],
+  "nodes": [
+    {
+      "id": "ladder",
+      "label": "缩放阶梯",
+      "layer": "render",
+      "status": "done",
+      "detail": "先几何缩放（85/70/55%），内容失去意义才切模式：+1 盒内展开笔记，-4 聚合/星座。"
+    },
+    {
+      "id": "aggregate",
+      "label": "分组聚合",
+      "layer": "render",
+      "status": "done",
+      "detail": "MapGroup 层内子系统；最远缩放渲染分组盒，状态由成员推导，边收拢去重。"
+    },
+    {
+      "id": "anchor",
+      "label": "缩放锚定",
+      "layer": "pane",
+      "status": "done",
+      "detail": "以悬停/钉住节点为锚，无锚时按内容比例缩放平移量，画面不跳。"
+    }
+  ],
+  "edges": [
+    {
+      "from": "anchor",
+      "to": "ladder"
+    }
+  ]
+}

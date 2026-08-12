@@ -104,6 +104,34 @@ describe('mellos-mapping MCP server', () => {
     expect(view.text).toContain('declare layers and nodes');
   });
 
+  it('writes a paged call to its own file, isolated from the default page', async () => {
+    await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
+    });
+    const defaultBefore = readFileSync(stateFile, 'utf8');
+
+    const paged = await callText('mmap_declare', {
+      page: 'pages-feature',
+      title: '多页支持',
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'tabs', label: '标签栏', layer: 'base', status: 'in-progress' }],
+    });
+    expect(paged.isError).toBe(false);
+    expect(paged.text).toContain('[page: pages-feature]');
+
+    // the page landed in its own file; the default page is untouched
+    const pageFile = join(dir, '.claude', 'mellos-mapping.pages', 'pages-feature.json');
+    expect((JSON.parse(readFileSync(pageFile, 'utf8')) as { title: string }).title).toBe('多页支持');
+    expect(readFileSync(stateFile, 'utf8')).toBe(defaultBefore);
+
+    // view targets pages independently
+    const pagedView = await callText('mmap_view', { page: 'pages-feature' });
+    expect(pagedView.text).toContain('标签栏');
+    const defaultView = await callText('mmap_view', {});
+    expect(defaultView.text).not.toContain('标签栏');
+  });
+
   it('removes a node and its edges in one revision', async () => {
     await callText('mmap_declare', {
       layers: [
