@@ -89,12 +89,13 @@ already have it). No build step: the MCP server and watcher ship pre-bundled.
 ## Update
 
 ```
-claude plugin update mellos-mapping@mellos-mapping
+claude plugin marketplace update mellos-mapping && claude plugin update mellos-mapping@mellos-mapping
 ```
 
-Restart Claude Code to apply. Updates ship as version bumps in this repo's
-`master` branch — if the command says you are already at the latest version,
-you are. (In-app, `/plugin` opens the same management UI.)
+Two steps because `plugin update` compares against the locally cached
+marketplace clone — the first command is what actually pulls this repo.
+Restart Claude Code to apply. Releases are version bumps on `master`.
+(In-app, `/plugin` opens the same management UI.)
 
 ## Use
 

@@ -82,12 +82,12 @@ claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install
 ## 更新
 
 ```
-claude plugin update mellos-mapping@mellos-mapping
+claude plugin marketplace update mellos-mapping && claude plugin update mellos-mapping@mellos-mapping
 ```
 
-重启 Claude Code 生效。更新以本仓库 `master` 分支上的版本号提升为准——
-命令说你已是最新版本，那就是最新。（在对话里输入 `/plugin` 也能打开
-同一个管理界面。）
+要两步是因为 `plugin update` 只对比本地缓存的 marketplace 克隆——真正
+拉取本仓库的是第一条命令。重启 Claude Code 生效。发布即 `master` 分支
+上的版本号提升。（在对话里输入 `/plugin` 也能打开同一个管理界面。）
 
 ## 使用
 
