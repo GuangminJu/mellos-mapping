@@ -11,7 +11,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
 import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
-import { loadMapFile, parseMap, saveMapFile, serializeMap } from './store.js';
+import {
+  listPageFiles,
+  loadMapFile,
+  makePageId,
+  pageFilePath,
+  pageIdOfFile,
+  parseMap,
+  saveMapFile,
+  serializeMap,
+} from './store.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -145,6 +154,36 @@ describe('boundary validation (P1)', () => {
   it('accepts a file with unknown extra fields (forward compatibility)', () => {
     const raw = { ...(JSON.parse(serializeMap(sampleMap())) as object), futureField: true };
     expect(parseMap(raw, 'x').ok).toBe(true);
+  });
+});
+
+describe('pages — one effort, one file', () => {
+  it('validates page ids with the shared slug grammar', () => {
+    expect(makePageId('semantic-zoom').ok).toBe(true);
+    expect(makePageId('Pages').ok).toBe(false);
+    expect(makePageId('').ok).toBe(false);
+  });
+
+  it('maps the default page to the classic file and named pages to the pages dir', () => {
+    const defaultFile = join(dir, '.claude', 'mellos-mapping.json');
+    expect(pageFilePath(defaultFile)).toBe(defaultFile);
+    const named = pageFilePath(defaultFile, must(makePageId('pages')));
+    expect(named).toBe(join(dir, '.claude', 'mellos-mapping.pages', 'pages.json'));
+    // path -> id roundtrip
+    expect(pageIdOfFile(defaultFile, defaultFile)).toBeUndefined();
+    expect(pageIdOfFile(defaultFile, named)).toBe('pages');
+  });
+
+  it('lists existing pages: default first, then named pages sorted by slug', () => {
+    const defaultFile = join(dir, '.claude', 'mellos-mapping.json');
+    expect(listPageFiles(defaultFile)).toEqual([]); // nothing yet
+    saveMapFile(pageFilePath(defaultFile, must(makePageId('zeta'))), sampleMap());
+    saveMapFile(pageFilePath(defaultFile, must(makePageId('alpha'))), sampleMap());
+    expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual(['alpha', 'zeta']);
+    saveMapFile(defaultFile, sampleMap());
+    expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual([undefined, 'alpha', 'zeta']);
+    // a page saved through the normal path loads back losslessly
+    expect(must(loadMapFile(pageFilePath(defaultFile, must(makePageId('alpha')))))).toEqual(sampleMap());
   });
 });
 

@@ -59,6 +59,14 @@ describe('SGR mouse', () => {
     expect(parseInput('-').events).toEqual([{ kind: 'zoom', delta: -1 }]);
   });
 
+  it('maps Tab / Shift+Tab to page cycling and digits 1-9 to page jumps', () => {
+    expect(parseInput('\t').events).toEqual([{ kind: 'next-page' }]);
+    expect(parseInput('\x1b[Z').events).toEqual([{ kind: 'prev-page' }]);
+    expect(parseInput('1').events).toEqual([{ kind: 'page', index: 0 }]);
+    expect(parseInput('9').events).toEqual([{ kind: 'page', index: 8 }]);
+    expect(parseInput('0').events).toEqual([{ kind: 'reset' }]); // 0 stays reset
+  });
+
   it('ignores non-left buttons', () => {
     expect(parseInput('\x1b[<2;5;5M').events).toEqual([]); // right button press
     expect(parseInput('\x1b[<34;5;5M').events).toEqual([]); // right button drag

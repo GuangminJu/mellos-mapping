@@ -21254,12 +21254,14 @@ function removeGroup(map, id) {
     })
   });
 }
-function groupStatus(map, id) {
-  const members = map.nodes.filter((n) => n.group === id);
-  if (members.some((n) => n.status === "regressed")) return "regressed";
-  if (members.some((n) => n.status === "in-progress")) return "in-progress";
-  if (members.length > 0 && members.every((n) => n.status === "done")) return "done";
+function aggregateStatus(nodes) {
+  if (nodes.some((n) => n.status === "regressed")) return "regressed";
+  if (nodes.some((n) => n.status === "in-progress")) return "in-progress";
+  if (nodes.length > 0 && nodes.every((n) => n.status === "done")) return "done";
   return "planned";
+}
+function groupStatus(map, id) {
+  return aggregateStatus(map.nodes.filter((n) => n.group === id));
 }
 function declareNode(map, input) {
   if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
@@ -21959,10 +21961,14 @@ function drawBox(canvas, box, opts, focused = false) {
 }
 
 // src/store/store.ts
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var PAGES_DIR_NAME = "mellos-mapping.pages";
+function pageFilePath(defaultFile, page) {
+  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+}
 function describeStoreError(e) {
   switch (e.kind) {
     case "not-found":
@@ -22231,8 +22237,11 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.6.1";
+var SERVER_VERSION = "0.7.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
+var PAGE = ID.optional().describe(
+  "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
+);
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({
   from: ID.describe("the node that USES the other (must live on a higher layer)"),
@@ -22249,13 +22258,15 @@ function loadOrEmpty(stateFile) {
 }
 function buildServer(stateFile) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-  const mutate = (apply) => {
-    const current = loadOrEmpty(stateFile);
+  const fileOf = (page) => pageFilePath(stateFile, page);
+  const mutate = (page, apply) => {
+    const file = fileOf(page);
+    const current = loadOrEmpty(file);
     if (!current.ok) return text(current.error, true);
     const applied = apply(current.value);
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
-    saveMapFile(stateFile, applied.value);
-    return text(summarize(applied.value));
+    saveMapFile(file, applied.value);
+    return text(summarize(applied.value) + (page !== void 0 ? ` [page: ${page}]` : ""));
   };
   server.registerTool(
     "mmap_declare",
@@ -22263,6 +22274,7 @@ function buildServer(stateFile) {
       title: "Declare map structure",
       description: "Grow the Mellos map: set the title, add layer bands, add groups (labeled subsystems within a band \u2014 the zoomed-out view renders groups, so declare them for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
       inputSchema: {
+        page: PAGE,
         title: external_exports.string().max(120).optional().describe("map title, e.g. the feature being built"),
         layers: external_exports.array(
           external_exports.object({
@@ -22291,7 +22303,7 @@ function buildServer(stateFile) {
         edges: external_exports.array(EDGE).optional()
       }
     },
-    (input) => mutate((map) => applyDeclare(map, input))
+    (input) => mutate(input.page, (map) => applyDeclare(map, input))
   );
   server.registerTool(
     "mmap_update",
@@ -22299,6 +22311,7 @@ function buildServer(stateFile) {
       title: "Record progress on nodes",
       description: "Update node status/label/evidence. Set in-progress when starting a node (the pane spins), done with evidence when its verification passes, regressed with evidence when a done node breaks. The map is a ledger: report honestly, it never blocks you.",
       inputSchema: {
+        page: PAGE,
         updates: external_exports.array(
           external_exports.object({
             id: ID,
@@ -22311,7 +22324,7 @@ function buildServer(stateFile) {
         ).min(1)
       }
     },
-    (input) => mutate((map) => applyUpdate(map, input))
+    (input) => mutate(input.page, (map) => applyUpdate(map, input))
   );
   server.registerTool(
     "mmap_remove",
@@ -22319,13 +22332,14 @@ function buildServer(stateFile) {
       title: "Revise the map",
       description: "Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work.",
       inputSchema: {
+        page: PAGE,
         edges: external_exports.array(EDGE).optional(),
         nodes: external_exports.array(ID).optional(),
         groups: external_exports.array(ID).optional().describe("groups to remove; members stay, merely ungrouped"),
         layers: external_exports.array(ID).optional().describe("bands to remove; must be empty of nodes and groups")
       }
     },
-    (input) => mutate((map) => applyRemove(map, input))
+    (input) => mutate(input.page, (map) => applyRemove(map, input))
   );
   server.registerTool(
     "mmap_view",
@@ -22333,11 +22347,12 @@ function buildServer(stateFile) {
       title: "View the current map",
       description: "Render the current Mellos map as monochrome text \u2014 the same picture the split-pane watcher shows live. Use it to check the map state or to show it inline in conversation.",
       inputSchema: {
+        page: PAGE,
         zoom: external_exports.number().int().min(ZOOM_MIN).max(ZOOM_MAX).optional().describe("zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs")
       }
     },
     (input) => {
-      const current = loadOrEmpty(stateFile);
+      const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
       return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n"));

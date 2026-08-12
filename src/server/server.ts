@@ -26,16 +26,29 @@ import { z } from 'zod';
 
 import { EMPTY_MAP, type MellosMap, type Result } from '../domain/types.js';
 import { ZOOM_MAX, ZOOM_MIN, clampZoom, renderMap } from '../render/render.js';
-import { STATE_FILE_RELATIVE_PATH, describeStoreError, loadMapFile, saveMapFile } from '../store/store.js';
+import {
+  type PageId,
+  STATE_FILE_RELATIVE_PATH,
+  describeStoreError,
+  loadMapFile,
+  pageFilePath,
+  saveMapFile,
+} from '../store/store.js';
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.6.1';
+export const SERVER_VERSION = '0.7.0';
 
 const ID = z
   .string()
   .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'lowercase letters, digits and dashes, 1-64 chars')
   .describe('stable kebab-case identifier');
+
+const PAGE = ID.optional().describe(
+  'page (parallel map) this call targets; omit for the default page. ' +
+    'One effort = one page: start a NEW effort on its own page named after the effort, ' +
+    'so concurrent sessions never write over each other and the pane can switch between pages.',
+);
 
 const STATUS = z
   .enum(['planned', 'in-progress', 'done', 'regressed'])
@@ -64,17 +77,22 @@ function loadOrEmpty(stateFile: string): Result<MellosMap, string> {
   return { ok: false, error: describeStoreError(loaded.error) };
 }
 
-/** Build the MCP server bound to one state file. Exported for tests. */
+/** Build the MCP server bound to one default-page state file. Exported for tests. */
 export function buildServer(stateFile: string): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
-  const mutate = (apply: (map: MellosMap) => Result<MellosMap, string>): ToolText => {
-    const current = loadOrEmpty(stateFile);
+  // The zod PAGE schema enforces the exact PageId grammar, so the cast at
+  // this boundary cannot smuggle in an invalid slug.
+  const fileOf = (page: string | undefined): string => pageFilePath(stateFile, page as PageId | undefined);
+
+  const mutate = (page: string | undefined, apply: (map: MellosMap) => Result<MellosMap, string>): ToolText => {
+    const file = fileOf(page);
+    const current = loadOrEmpty(file);
     if (!current.ok) return text(current.error, true);
     const applied = apply(current.value);
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
-    saveMapFile(stateFile, applied.value);
-    return text(summarize(applied.value));
+    saveMapFile(file, applied.value);
+    return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
   server.registerTool(
@@ -88,6 +106,7 @@ export function buildServer(stateFile: string): McpServer {
         'front, then grow it as understanding deepens. Edges must point strictly downward (a node ' +
         'may only use nodes on lower layers); the batch is all-or-nothing.',
       inputSchema: {
+        page: PAGE,
         title: z.string().max(120).optional().describe('map title, e.g. the feature being built'),
         layers: z
           .array(
@@ -126,7 +145,7 @@ export function buildServer(stateFile: string): McpServer {
         edges: z.array(EDGE).optional(),
       },
     },
-    (input) => mutate((map) => applyDeclare(map, input)),
+    (input) => mutate(input.page, (map) => applyDeclare(map, input)),
   );
 
   server.registerTool(
@@ -138,6 +157,7 @@ export function buildServer(stateFile: string): McpServer {
         'done with evidence when its verification passes, regressed with evidence when a done ' +
         'node breaks. The map is a ledger: report honestly, it never blocks you.',
       inputSchema: {
+        page: PAGE,
         updates: z
           .array(
             z.object({
@@ -162,7 +182,7 @@ export function buildServer(stateFile: string): McpServer {
           .min(1),
       },
     },
-    (input) => mutate((map) => applyUpdate(map, input)),
+    (input) => mutate(input.page, (map) => applyUpdate(map, input)),
   );
 
   server.registerTool(
@@ -175,13 +195,14 @@ export function buildServer(stateFile: string): McpServer {
         'its members. Use when the ghost design turns out wrong — the map is a hypothesis, ' +
         'revising it is honest work.',
       inputSchema: {
+        page: PAGE,
         edges: z.array(EDGE).optional(),
         nodes: z.array(ID).optional(),
         groups: z.array(ID).optional().describe('groups to remove; members stay, merely ungrouped'),
         layers: z.array(ID).optional().describe('bands to remove; must be empty of nodes and groups'),
       },
     },
-    (input) => mutate((map) => applyRemove(map, input)),
+    (input) => mutate(input.page, (map) => applyRemove(map, input)),
   );
 
   server.registerTool(
@@ -192,6 +213,7 @@ export function buildServer(stateFile: string): McpServer {
         'Render the current Mellos map as monochrome text — the same picture the split-pane ' +
         'watcher shows live. Use it to check the map state or to show it inline in conversation.',
       inputSchema: {
+        page: PAGE,
         zoom: z
           .number()
           .int()
@@ -202,7 +224,7 @@ export function buildServer(stateFile: string): McpServer {
       },
     },
     (input) => {
-      const current = loadOrEmpty(stateFile);
+      const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
       return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n'));

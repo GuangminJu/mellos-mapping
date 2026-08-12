@@ -110,6 +110,7 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 | 按住左键拖动 | 地图超出面板时抓取平移 |
 | shift+滚轮 | 垂直滚动 |
 | `hjkl` / 方向键 | 微移视口 |
+| `Tab` / `Shift+Tab` / `1-9` / 点击标签 | 切换页（并行的多张地图） |
 | `0` | 重置平移和缩放 |
 | `q` | 退出面板 |
 
@@ -134,8 +135,18 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 
 `--no-mouse` 关闭鼠标上报，把鼠标留给你的终端复用器。
 
-地图状态存在项目的 `.claude/mellos-mapping.json` 里——纯 JSON，每个项目
-一张图，想在 git 里留下地图的历史就把它提交进去。
+### 页
+
+一个项目可以并排保有多张地图——**一个工作努力 = 一页**。Claude 在任何
+`mmap_*` 工具里传 `page` 参数即可定向到某页；出现第二页时面板顶部自动长出
+标签栏。当前页加粗、按整图状态着色；后台页的文件有变化时，它的标签会亮起
+状态色提示你，而不是抢走你的视线。每页记住自己的平移/缩放/钉住状态。因为
+每页就是一个独立文件，两个 Claude 会话各写各页永远不会互相覆盖——这也是
+同一项目里跑多个 Claude 会话的正确姿势。
+
+地图状态存在 `.claude/mellos-mapping.json`（默认页）和
+`.claude/mellos-mapping.pages/<页名>.json`（命名页）——纯 JSON，想在 git
+里留下地图的历史就把它们提交进去。
 
 ## MCP 工具
 

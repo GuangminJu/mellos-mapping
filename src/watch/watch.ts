@@ -14,6 +14,9 @@
  *                  anchored on the focused node or the view center
  *   left-drag      pan when the map is larger than the pane
  *   shift+wheel, hjkl / arrows, 0   scroll / nudge / reset pan+zoom
+ *   Tab / Shift+Tab / 1-9 / click a tab   switch pages (parallel maps);
+ *                  each page keeps its own pan/zoom/pin, background page
+ *                  changes light their tab up instead of stealing the view
  *   q              quit
  *
  * The bottom of the pane is a fixed-height detail panel: a separator, a
@@ -34,19 +37,26 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { groupStatus } from '../domain/ops.js';
+import { groupStatus, mapStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
 import {
   type BoxHit,
   type ZoomStep,
   ZOOM_DEFAULT,
   clampZoom,
+  displayWidth,
   fitWidth,
   renderMapWindow,
   wrapWidth,
   zoomLabel,
 } from '../render/render.js';
-import { STATE_FILE_RELATIVE_PATH, describeStoreError, loadMapFile } from '../store/store.js';
+import {
+  STATE_FILE_RELATIVE_PATH,
+  describeStoreError,
+  listPageFiles,
+  loadMapFile,
+  pageIdOfFile,
+} from '../store/store.js';
 import { parseInput } from './input.js';
 
 // Width helpers live with the renderer now; re-exported for panel tests.
@@ -140,6 +150,53 @@ export function anchorOffsets(
     x: before.w > 0 ? Math.round((offset.x * after.w) / before.w) : 0,
     y: before.h > 0 ? Math.round((offset.y * after.h) / before.h) : 0,
   };
+}
+
+export interface PageTab {
+  readonly title: string;
+  readonly status: NodeStatus;
+  readonly active: boolean;
+  /** The page's file changed while it was not the active page. */
+  readonly fresh: boolean;
+}
+
+export interface TabSegment {
+  readonly text: string;
+  readonly sgr: string; // '' = default color
+  /** 1-based inclusive terminal column span, for click hit-testing. */
+  readonly lo: number;
+  readonly hi: number;
+  readonly index: number;
+}
+
+/**
+ * Render the page tab bar as ANSI-free segments with column spans. The
+ * active tab is bold in its map's aggregate status color; inactive tabs
+ * are faint — unless fresh (changed since last viewed), which keep their
+ * status color so background progress catches the eye without stealing
+ * the view. Tabs that would overflow the width are dropped, the last
+ * partially-fitting one truncated.
+ */
+export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boolean): TabSegment[] {
+  const segments: TabSegment[] = [];
+  let col = 1;
+  for (const [index, tab] of tabs.entries()) {
+    const room = width - (col - 1);
+    if (room <= 3) break;
+    const marker = tab.active ? (unicode ? '●' : '*') : unicode ? '○' : 'o';
+    const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
+    const text = fitWidth(` ${marker} ${glyph} ${tab.title} `, room);
+    const w = displayWidth(text);
+    segments.push({
+      text,
+      sgr: tab.active ? `${STATUS_SGR[tab.status]};1` : tab.fresh ? STATUS_SGR[tab.status] : '90',
+      lo: col,
+      hi: col + w - 1,
+      index,
+    });
+    col += w;
+  }
+  return segments;
 }
 
 /** The hit whose center is nearest to (cx, cy) by Manhattan distance. */
@@ -283,7 +340,6 @@ function main(): void {
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
 
-  let lastMtimeMs = -1;
   let lastFrame = '';
   let spinnerFrame = 0;
   let map: MellosMap | undefined;
@@ -291,7 +347,26 @@ function main(): void {
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
 
-  // viewport pan/zoom + interaction state
+  // pages — one map file each; the active page owns the mutable view below
+  interface PageEntry {
+    map: MellosMap | undefined;
+    mtimeMs: number;
+    fresh: boolean;
+  }
+  interface PageView {
+    offsetX: number;
+    offsetY: number;
+    zoom: ZoomStep;
+    selectedId: string | undefined;
+  }
+  let pageFiles: string[] = [cfg.file];
+  const pageData = new Map<string, PageEntry>();
+  const pageViews = new Map<string, PageView>();
+  let activeFile: string | undefined;
+  let firstScan = true;
+  let lastTabSegments: readonly TabSegment[] = [];
+
+  // viewport pan/zoom + interaction state (of the ACTIVE page)
   let offsetX = 0;
   let offsetY = 0;
   let zoom: ZoomStep = ZOOM_DEFAULT;
@@ -303,13 +378,30 @@ function main(): void {
   let lastContent = { w: 0, h: 0 };
   let pendingInput = '';
 
-  const viewHeight = (): number => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1);
+  const tabRows = (): number => (pageFiles.length > 1 ? 1 : 0);
+  const viewHeight = (): number => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1 - tabRows());
 
-  /** Terminal cell (1-based) -> node under it, honoring the current pan. */
+  /** Park the current view, activate `file`, restore its view (or defaults). */
+  const switchPage = (file: string): void => {
+    if (activeFile !== undefined) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
+    activeFile = file;
+    const view = pageViews.get(file);
+    offsetX = view?.offsetX ?? 0;
+    offsetY = view?.offsetY ?? 0;
+    zoom = view?.zoom ?? ZOOM_DEFAULT;
+    selectedId = view?.selectedId;
+    hoverId = undefined;
+    const entry = pageData.get(file);
+    if (entry !== undefined && entry.fresh) pageData.set(file, { ...entry, fresh: false });
+    map = entry?.map;
+    notice = map === undefined ? `waiting for ${file} ...` : '';
+  };
+
+  /** Terminal cell (1-based) -> node under it, honoring tab row and pan. */
   const hitTest = (termX: number, termY: number): string | undefined => {
     const sx = termX - 1;
-    const sy = termY - 1;
-    if (sy >= viewHeight()) return undefined; // inside the detail panel, not the map
+    const sy = termY - 1 - tabRows();
+    if (sy < 0 || sy >= viewHeight()) return undefined; // tab bar or detail panel, not the map
     const cx = sx + offsetX;
     const cy = sy + offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
@@ -377,6 +469,27 @@ function main(): void {
       ),
     ];
 
+    // -- page tab bar (only when there is more than one page) --
+    let tabLine: string | undefined;
+    if (tabRows() > 0) {
+      const tabs: PageTab[] = pageFiles.map((f) => {
+        const m = pageData.get(f)?.map;
+        return {
+          title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
+          status: m !== undefined ? mapStatus(m) : 'planned',
+          active: f === activeFile,
+          fresh: pageData.get(f)?.fresh ?? false,
+        };
+      });
+      const segments = pageTabRow(tabs, cols, cfg.unicode);
+      lastTabSegments = segments;
+      tabLine = segments
+        .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
+        .join('');
+    } else {
+      lastTabSegments = [];
+    }
+
     const zoomTag = `${cfg.unicode ? '⊕' : 'zoom'} ${zoomLabel(zoom)}`;
     const hint = !interactive
       ? cfg.file
@@ -386,6 +499,7 @@ function main(): void {
     const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;
 
     let frame = HOME;
+    if (tabLine !== undefined) frame += tabLine + ERASE_LINE_END + '\n';
     for (let i = 0; i < viewH; i++) frame += (body[i] ?? '') + ERASE_LINE_END + '\n';
     for (const row of panelRows) frame += row + ERASE_LINE_END + '\n';
     frame += footer + ERASE_LINE_END;
@@ -415,28 +529,46 @@ function main(): void {
       handleResize();
     }
 
-    let mtimeMs: number | undefined;
-    try {
-      mtimeMs = statSync(cfg.file).mtimeMs;
-    } catch {
-      mtimeMs = undefined; // file absent — keep waiting
-    }
-
-    if (mtimeMs !== undefined && mtimeMs !== lastMtimeMs) {
-      const loaded = loadMapFile(cfg.file);
-      if (loaded.ok) {
-        map = loaded.value;
-        notice = '';
-        lastMtimeMs = mtimeMs;
-      } else if (loaded.error.kind === 'malformed-json') {
-        // plausible torn read from a foreign writer — retry next tick, keep the picture
-      } else {
-        notice = describeStoreError(loaded.error);
-        lastMtimeMs = mtimeMs;
+    // discover pages; a project without page files still watches the default
+    const discovered = listPageFiles(cfg.file);
+    pageFiles = discovered.length > 0 ? discovered : [cfg.file];
+    for (const known of [...pageData.keys()]) {
+      if (!pageFiles.includes(known)) {
+        pageData.delete(known);
+        pageViews.delete(known);
       }
     }
 
-    if (map?.nodes.some((n) => n.status === 'in-progress')) spinnerFrame++;
+    for (const file of pageFiles) {
+      let mtimeMs: number | undefined;
+      try {
+        mtimeMs = statSync(file).mtimeMs;
+      } catch {
+        continue; // file absent — keep waiting
+      }
+      const entry = pageData.get(file);
+      if (mtimeMs === entry?.mtimeMs) continue;
+      const loaded = loadMapFile(file);
+      if (loaded.ok) {
+        // background pages light their tab up; the startup scan is not news
+        pageData.set(file, { map: loaded.value, mtimeMs, fresh: !firstScan && file !== activeFile });
+        if (file === activeFile) {
+          map = loaded.value;
+          notice = '';
+        }
+      } else if (loaded.error.kind === 'malformed-json') {
+        // plausible torn read from a foreign writer — retry next tick, keep the picture
+      } else {
+        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false });
+        if (file === activeFile) notice = describeStoreError(loaded.error);
+      }
+    }
+    firstScan = false;
+
+    if (activeFile === undefined || !pageFiles.includes(activeFile)) switchPage(pageFiles[0]!);
+
+    // any page spinning keeps the animation alive
+    if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
     paint();
   };
 
@@ -521,13 +653,41 @@ function main(): void {
             break;
           case 'mouse-up':
             if (press && !press.moved) {
-              // a press that never dragged is a click: pin, or unpin on empty
-              selectedId = hitTest(event.x, event.y);
+              const tabHit =
+                tabRows() > 0 && event.y === 1
+                  ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi)
+                  : undefined;
+              if (tabHit !== undefined) {
+                // a click on the tab bar switches pages instead of pinning
+                const target = pageFiles[tabHit.index];
+                if (target !== undefined && target !== activeFile) switchPage(target);
+              } else {
+                // a press that never dragged is a click: pin, or unpin on empty
+                selectedId = hitTest(event.x, event.y);
+              }
               dirty = true;
             }
             dragAnchor = undefined;
             press = undefined;
             break;
+          case 'next-page':
+          case 'prev-page': {
+            if (pageFiles.length > 1 && activeFile !== undefined) {
+              const current = pageFiles.indexOf(activeFile);
+              const step = event.kind === 'next-page' ? 1 : -1;
+              switchPage(pageFiles[(current + step + pageFiles.length) % pageFiles.length]!);
+              dirty = true;
+            }
+            break;
+          }
+          case 'page': {
+            const target = pageFiles[event.index];
+            if (target !== undefined && target !== activeFile) {
+              switchPage(target);
+              dirty = true;
+            }
+            break;
+          }
         }
       }
       if (dirty) paint();

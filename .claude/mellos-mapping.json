@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "title": "多页支持 v0.7.0 — feature/pages",
+  "layers": [
+    {
+      "id": "domain",
+      "name": "领域层",
+      "rank": 0
+    },
+    {
+      "id": "store",
+      "name": "存储层",
+      "rank": 1
+    },
+    {
+      "id": "server",
+      "name": "服务层",
+      "rank": 2
+    },
+    {
+      "id": "pane",
+      "name": "面板层",
+      "rank": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": "map-status",
+      "label": "mapStatus聚合",
+      "layer": "domain",
+      "status": "done",
+      "detail": "整图状态推导（regressed>in-progress>done>planned），与 groupStatus 共享 aggregateStatus。标签栏每页的状态字形用它。已写码，未验证。",
+      "evidence": "vitest: mapStatus 规格 (ops.test)"
+    },
+    {
+      "id": "page-store",
+      "label": "页寻址与列举",
+      "layer": "store",
+      "status": "done",
+      "detail": "页=文件：默认页维持 mellos-mapping.json，命名页在 mellos-mapping.pages/<slug>.json。makePageId 复用领域 ID 语法；listPageFiles 默认页优先、命名页按 slug 排序。已写码，未验证。",
+      "evidence": "vitest: makePageId/pageFilePath/listPageFiles 16 specs"
+    },
+    {
+      "id": "page-param",
+      "label": "工具page参数",
+      "layer": "server",
+      "status": "done",
+      "detail": "四个 mmap_* 工具加可选 page；每次调用 load→apply→save 定向到该页文件。文件级原子写使并发会话各写各页互不冲突。已写码，未验证。",
+      "evidence": "vitest: 分页写入隔离集成测试 (InMemory MCP)"
+    },
+    {
+      "id": "page-input",
+      "label": "页切换按键",
+      "layer": "pane",
+      "status": "done",
+      "detail": "Tab 下一页、Shift+Tab（CSI Z）上一页、数字 1-9 直达。纯解析器扩展。已写码，未验证。",
+      "evidence": "vitest: Tab/Shift+Tab/1-9 解析规格"
+    },
+    {
+      "id": "tab-bar",
+      "label": "标签栏渲染",
+      "layer": "pane",
+      "status": "done",
+      "detail": "多页时顶部一行：每页 标记+状态字形+标题，当前页高亮，有新改动的页提亮。纯函数返回分段与点击区间。",
+      "evidence": "vitest: pageTabRow 三规格 + 管道冒烟双页渲染"
+    },
+    {
+      "id": "page-switch",
+      "label": "多页轮询与切换",
+      "layer": "pane",
+      "status": "done",
+      "detail": "每 tick 发现页文件、按 mtime 增量加载；每页独立的平移/缩放/钉住状态；点击标签或按键切页，不自动跳页，改动只亮点提示。",
+      "evidence": "管道冒烟: 双页标签栏+活动页渲染; 键鼠切换待真机复核"
+    }
+  ],
+  "edges": [
+    {
+      "from": "page-param",
+      "to": "page-store"
+    },
+    {
+      "from": "tab-bar",
+      "to": "map-status"
+    },
+    {
+      "from": "page-switch",
+      "to": "page-store"
+    }
+  ]
+}

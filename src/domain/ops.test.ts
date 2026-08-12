@@ -14,6 +14,7 @@ import {
   declareNode,
   groupStatus,
   linkNodes,
+  mapStatus,
   removeEdge,
   removeGroup,
   removeLayer,
@@ -283,6 +284,14 @@ describe('groups — band-local labeled clusters (I6, I7)', () => {
     expect(after.groups).toEqual([]);
     expect(after.nodes.map((n) => n.group)).toEqual([undefined, undefined, undefined]);
     expect(after.nodes).toHaveLength(3);
+  });
+
+  it('derives the whole map status with the same rules (for page tabs)', () => {
+    expect(mapStatus(threeBands())).toBe('planned'); // no nodes
+    let map = grouped(); // done + planned + planned
+    expect(mapStatus(map)).toBe('planned');
+    map = must(updateNode(map, { id: nid('c'), status: 'in-progress' }));
+    expect(mapStatus(map)).toBe('in-progress');
   });
 
   it('a band holding a group cannot be removed', () => {

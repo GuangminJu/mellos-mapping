@@ -30,6 +30,12 @@ subsystem, layered refactoring. Skip it for trivial edits (a rename, one bug
 fix, a config tweak) — a map of one node is noise. When unsure, ask whether
 the user wants the map.
 
+Catching yourself mid-implementation without a map on work that deserves
+one? Stop, declare the map with honest statuses (written-but-unverified
+work is `in-progress`, not `done`), then continue. And if the mmap tools
+are missing from the session (plugin installed mid-session, degraded
+load), SAY SO and offer a restart — never silently skip the map.
+
 ## The working loop
 
 1. **Design first, as ghosts.** Before writing code, decompose the task

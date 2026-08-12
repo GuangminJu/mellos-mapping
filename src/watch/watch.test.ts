@@ -9,7 +9,16 @@ import { describe, expect, it } from 'vitest';
 import { declareGroup, declareLayer, declareNode, linkNodes, updateNode } from '../domain/ops.js';
 import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
 import type { BoxHit } from '../render/render.js';
-import { anchorOffsets, fitWidth, mapPanel, nearestHit, nodePanel, wrapWidth } from './watch.js';
+import {
+  type PageTab,
+  anchorOffsets,
+  fitWidth,
+  mapPanel,
+  nearestHit,
+  nodePanel,
+  pageTabRow,
+  wrapWidth,
+} from './watch.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -103,6 +112,34 @@ describe('mapPanel (dashboard)', () => {
     expect(panel).toHaveLength(6);
     expect(panel[1]!.text).toBe('2 layers · 3 nodes · 2 edges');
     expect(panel[2]!.text).toBe('■ 1 done   ⠿ 1 in-progress   · 1 planned');
+  });
+});
+
+describe('pageTabRow', () => {
+  const tabs: PageTab[] = [
+    { title: '开发回放', status: 'done', active: true, fresh: false },
+    { title: '多页支持', status: 'in-progress', active: false, fresh: true },
+    { title: 'idle', status: 'planned', active: false, fresh: false },
+  ];
+
+  it('renders active bold in status color, fresh in status color, idle faint', () => {
+    const segments = pageTabRow(tabs, 200, true);
+    expect(segments.map((s) => s.text)).toEqual([' ● ■ 开发回放 ', ' ○ ⠿ 多页支持 ', ' ○ · idle ']);
+    expect(segments.map((s) => s.sgr)).toEqual(['32;1', '33', '90']);
+  });
+
+  it('spans are contiguous 1-based columns matching display width', () => {
+    const segments = pageTabRow(tabs, 200, true);
+    expect(segments[0]!.lo).toBe(1);
+    for (let i = 1; i < segments.length; i++) expect(segments[i]!.lo).toBe(segments[i - 1]!.hi + 1);
+    expect(segments[0]!.hi - segments[0]!.lo + 1).toBe(14); // ' ● ■ 开发回放 ' = 6 narrow + 4 CJK
+  });
+
+  it('drops tabs that no longer fit, truncating the last partial one', () => {
+    const segments = pageTabRow(tabs, 20, true);
+    expect(segments.length).toBe(2);
+    expect(segments[1]!.text.endsWith('…')).toBe(true);
+    expect(segments[1]!.hi).toBeLessThanOrEqual(20);
   });
 });
 
