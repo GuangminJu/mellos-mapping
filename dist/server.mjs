@@ -21312,23 +21312,46 @@ var Canvas = class {
     c.mask |= mask;
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
   }
-  emit(opts) {
-    return this.rows.map((row) => {
-      let out = "";
+  get height() {
+    return this.rows.length;
+  }
+  get width() {
+    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  }
+  /**
+   * Emit terminal lines, optionally windowed to a viewport. Slicing happens
+   * at the cell level so ANSI codes reopen correctly inside the window and a
+   * CJK character cut in half at either edge degrades to a space instead of
+   * shifting the whole row.
+   */
+  emit(opts, viewport) {
+    const vp = viewport ?? { x: 0, y: 0, width: this.width, height: this.height };
+    const out = [];
+    for (let y = vp.y; y < vp.y + vp.height; y++) {
+      const row = this.rows[y] ?? [];
+      let line = "";
       let open = "none";
-      for (const c of row) {
-        const ch = c.literal !== void 0 ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : " ";
-        if (ch === "") continue;
+      const end = Math.min(vp.x + vp.width, row.length);
+      for (let x = Math.max(0, vp.x); x < end; x++) {
+        const c = row[x];
+        let ch = c.literal !== void 0 ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : " ";
+        if (ch === "") {
+          if (x !== Math.max(0, vp.x)) continue;
+          ch = " ";
+        } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
+          ch = " ";
+        }
         const style = ch === " " ? "none" : c.style;
         if (opts.color && style !== open) {
-          out += (open !== "none" ? ANSI_RESET : "") + ANSI[style];
+          line += (open !== "none" ? ANSI_RESET : "") + ANSI[style];
           open = style;
         }
-        out += ch;
+        line += ch;
       }
-      if (opts.color && open !== "none") out += ANSI_RESET;
-      return out.replace(/ +$/, "");
-    });
+      if (opts.color && open !== "none") line += ANSI_RESET;
+      out.push(line.replace(/ +$/, ""));
+    }
+    return out;
   }
 };
 function drawPath(canvas, points) {
@@ -21383,12 +21406,15 @@ var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
 function renderMap(map, opts) {
+  return buildCanvas(map, opts).emit(opts);
+}
+function buildCanvas(map, opts) {
   const canvas = new Canvas();
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none");
     canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return canvas.emit(opts);
+    return canvas;
   }
   const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
   const boxes = /* @__PURE__ */ new Map();
@@ -21417,11 +21443,36 @@ function renderMap(map, opts) {
       toBand: bandIndexOf.get(toBox.node.layer)
     };
   });
+  const claimedColumns = /* @__PURE__ */ new Map();
+  const isFree = (box, x) => !(claimedColumns.get(box)?.has(x) ?? false);
+  const claim = (box, x) => {
+    let set = claimedColumns.get(box);
+    if (!set) claimedColumns.set(box, set = /* @__PURE__ */ new Set());
+    set.add(x);
+    return x;
+  };
+  const straightX = /* @__PURE__ */ new Map();
+  for (const r of routes) {
+    if (r.toBand - r.fromBand !== 1) continue;
+    const lo = Math.max(r.fromBox.x + 1, r.toBox.x + 1);
+    const hi = Math.min(r.fromBox.x + r.fromBox.w - 2, r.toBox.x + r.toBox.w - 2);
+    if (lo > hi) continue;
+    const mid = Math.floor((lo + hi) / 2);
+    for (let d = 0; d <= hi - lo && !straightX.has(r); d++) {
+      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
+        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x)) {
+          straightX.set(r, claim(r.toBox, claim(r.fromBox, x)));
+          break;
+        }
+      }
+    }
+  }
   const gapCount = bands.length - 1;
   const exitTracks = Array.from({ length: gapCount }, () => []);
   const landingTracks = Array.from({ length: gapCount }, () => []);
   const skipRoutes = [];
   for (const r of routes) {
+    if (straightX.has(r)) continue;
     landingTracks[r.toBand - 1].push(r);
     if (r.toBand - r.fromBand > 1) {
       exitTracks[r.fromBand].push(r);
@@ -21461,20 +21512,39 @@ function renderMap(map, opts) {
     canvas.text(contentWidth - displayWidth(label), barY[b], label, "none");
   }
   for (const box of boxes.values()) drawBox(canvas, box, opts);
+  const bent = routes.filter((r) => !straightX.has(r));
   const outgoing = /* @__PURE__ */ new Map();
   const incoming = /* @__PURE__ */ new Map();
-  for (const r of routes) {
+  for (const r of bent) {
     outgoing.set(r.fromBox, [...outgoing.get(r.fromBox) ?? [], r]);
     incoming.set(r.toBox, [...incoming.get(r.toBox) ?? [], r]);
   }
-  const slot = (box, k, n) => box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
+  const freeSlot = (box, k, n) => {
+    const lo = box.x + 1;
+    const hi = box.x + box.w - 2;
+    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
+    for (let d = 0; d <= hi - lo; d++) {
+      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
+        if (x >= lo && x <= hi && isFree(box, x)) return claim(box, x);
+      }
+    }
+    return ideal;
+  };
   for (const r of routes) {
-    const outs = outgoing.get(r.fromBox);
-    const ins = incoming.get(r.toBox);
-    const sx = slot(r.fromBox, outs.indexOf(r), outs.length);
-    const ex = slot(r.toBox, ins.indexOf(r), ins.length);
     const sy = r.fromBox.y + BOX_H - 1;
     const ey = r.toBox.y;
+    const direct = straightX.get(r);
+    if (direct !== void 0) {
+      drawPath(canvas, [
+        [direct, sy],
+        [direct, ey]
+      ]);
+      continue;
+    }
+    const outs = outgoing.get(r.fromBox);
+    const ins = incoming.get(r.toBox);
+    const sx = freeSlot(r.fromBox, outs.indexOf(r), outs.length);
+    const ex = freeSlot(r.toBox, ins.indexOf(r), ins.length);
     const landing = landingY.get(r);
     if (r.toBand - r.fromBand === 1) {
       drawPath(canvas, [
@@ -21504,7 +21574,7 @@ function renderMap(map, opts) {
     `${glyphFor("regressed", legendOpts)} regressed`
   ].join("   ");
   canvas.text(LEFT_MARGIN, legendY, legend, "dim");
-  return canvas.emit(opts);
+  return canvas;
 }
 function drawBox(canvas, box, opts) {
   const { node, x, y, w } = box;
@@ -21802,7 +21872,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.1.0";
+var SERVER_VERSION = "0.2.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
 var EDGE = external_exports.object({

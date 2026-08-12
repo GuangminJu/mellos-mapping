@@ -32,6 +32,14 @@ export interface RenderOptions {
   readonly spinnerFrame: number;
 }
 
+/** A window over the rendered picture, in cell coordinates (0-based). */
+export interface Viewport {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 // ---------------------------------------------------------------------------
 // display width — CJK-aware, because labels will often be Chinese
 // ---------------------------------------------------------------------------
@@ -180,24 +188,49 @@ class Canvas {
     c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
   }
 
-  emit(opts: RenderOptions): string[] {
-    return this.rows.map((row) => {
-      let out = '';
+  get height(): number {
+    return this.rows.length;
+  }
+
+  get width(): number {
+    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  }
+
+  /**
+   * Emit terminal lines, optionally windowed to a viewport. Slicing happens
+   * at the cell level so ANSI codes reopen correctly inside the window and a
+   * CJK character cut in half at either edge degrades to a space instead of
+   * shifting the whole row.
+   */
+  emit(opts: RenderOptions, viewport?: Viewport): string[] {
+    const vp = viewport ?? { x: 0, y: 0, width: this.width, height: this.height };
+    const out: string[] = [];
+    for (let y = vp.y; y < vp.y + vp.height; y++) {
+      const row = this.rows[y] ?? [];
+      let line = '';
       let open: Style = 'none';
-      for (const c of row) {
-        const ch =
+      const end = Math.min(vp.x + vp.width, row.length);
+      for (let x = Math.max(0, vp.x); x < end; x++) {
+        const c = row[x]!;
+        let ch =
           c.literal !== undefined ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : ' ';
-        if (ch === '') continue; // phantom half of a wide character
+        if (ch === '') {
+          if (x !== Math.max(0, vp.x)) continue; // phantom half inside the window: already emitted
+          ch = ' '; // window starts on the right half of a wide character
+        } else if (charWidth(ch.codePointAt(0)!) === 2 && x + 1 >= vp.x + vp.width) {
+          ch = ' '; // wide character whose right half would spill past the window
+        }
         const style = ch === ' ' ? 'none' : c.style;
         if (opts.color && style !== open) {
-          out += (open !== 'none' ? ANSI_RESET : '') + ANSI[style];
+          line += (open !== 'none' ? ANSI_RESET : '') + ANSI[style];
           open = style;
         }
-        out += ch;
+        line += ch;
       }
-      if (opts.color && open !== 'none') out += ANSI_RESET;
-      return out.replace(/ +$/, '');
-    });
+      if (opts.color && open !== 'none') line += ANSI_RESET;
+      out.push(line.replace(/ +$/, ''));
+    }
+    return out;
   }
 }
 
@@ -298,15 +331,32 @@ interface EdgeRoute {
   readonly toBand: number;
 }
 
-/** Render the map as terminal lines. The only public entry point. */
+/** Render the whole map as terminal lines. */
 export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
+  return buildCanvas(map, opts).emit(opts);
+}
+
+export interface WindowedRender {
+  readonly lines: string[];
+  /** Full extent of the picture, for viewport clamping. */
+  readonly contentWidth: number;
+  readonly contentHeight: number;
+}
+
+/** Render only the given viewport of the map, plus the full content extent. */
+export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: Viewport): WindowedRender {
+  const canvas = buildCanvas(map, opts);
+  return { lines: canvas.emit(opts, viewport), contentWidth: canvas.width, contentHeight: canvas.height };
+}
+
+function buildCanvas(map: MellosMap, opts: RenderOptions): Canvas {
   const canvas = new Canvas();
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
 
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? 'mellos mapping', 'none');
     canvas.text(0, 2, '(empty map — declare layers and nodes to begin)', 'dim');
-    return canvas.emit(opts);
+    return canvas;
   }
 
   // -- horizontal layout: one row of boxes per band --
@@ -328,10 +378,15 @@ export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
   }
 
   // -- edge analysis --
-  // Every edge's horizontal segment lives on its own row ("track") inside the
-  // gap directly above the target band; skip-level edges additionally get a
-  // jog track in the gap below their source band, from which they travel to a
-  // private column on the right margin and descend outside all content.
+  // Routing preference, in order:
+  //   1. STRAIGHT: an adjacent-band edge whose two border spans overlap gets
+  //      one shared column — a single vertical line, no corners at all.
+  //   2. DOGLEG: otherwise the edge descends, moves horizontally on its own
+  //      row ("track") in the gap directly above the target band, and
+  //      descends again.
+  //   3. MARGIN: skip-level edges additionally get a jog track in the gap
+  //      below their source band, from which they travel to a private column
+  //      on the right margin and descend outside all content.
   const routes: EdgeRoute[] = map.edges.map((e) => {
     const fromBox = boxes.get(e.from as string)!;
     const toBox = boxes.get(e.to as string)!;
@@ -342,11 +397,40 @@ export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
       toBand: bandIndexOf.get(toBox.node.layer as string)!,
     };
   });
+
+  // Attach columns already promised on a box's border (either side).
+  const claimedColumns = new Map<BoxLayout, Set<number>>();
+  const isFree = (box: BoxLayout, x: number): boolean => !(claimedColumns.get(box)?.has(x) ?? false);
+  const claim = (box: BoxLayout, x: number): number => {
+    let set = claimedColumns.get(box);
+    if (!set) claimedColumns.set(box, (set = new Set()));
+    set.add(x);
+    return x;
+  };
+
+  const straightX = new Map<EdgeRoute, number>();
+  for (const r of routes) {
+    if (r.toBand - r.fromBand !== 1) continue;
+    const lo = Math.max(r.fromBox.x + 1, r.toBox.x + 1);
+    const hi = Math.min(r.fromBox.x + r.fromBox.w - 2, r.toBox.x + r.toBox.w - 2);
+    if (lo > hi) continue; // no vertical overlap — a dogleg is genuinely needed
+    const mid = Math.floor((lo + hi) / 2);
+    for (let d = 0; d <= hi - lo && !straightX.has(r); d++) {
+      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
+        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x)) {
+          straightX.set(r, claim(r.toBox, claim(r.fromBox, x)));
+          break;
+        }
+      }
+    }
+  }
+
   const gapCount = bands.length - 1;
   const exitTracks: EdgeRoute[][] = Array.from({ length: gapCount }, () => []);
   const landingTracks: EdgeRoute[][] = Array.from({ length: gapCount }, () => []);
   const skipRoutes: EdgeRoute[] = [];
   for (const r of routes) {
+    if (straightX.has(r)) continue; // straight edges need no track at all
     landingTracks[r.toBand - 1]!.push(r);
     if (r.toBand - r.fromBand > 1) {
       exitTracks[r.fromBand]!.push(r);
@@ -398,24 +482,45 @@ export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
   for (const box of boxes.values()) drawBox(canvas, box, opts);
 
   // -- draw: edges --
-  // Attach slots spread a node's edges across its border; distinct boxes
-  // occupy distinct column spans, so slots never collide across boxes.
+  // Bent edges get attach slots spread across their box borders, nudged off
+  // any column a straight edge already claimed; distinct boxes occupy
+  // distinct column spans, so slots never collide across boxes.
+  const bent = routes.filter((r) => !straightX.has(r));
   const outgoing = new Map<BoxLayout, EdgeRoute[]>();
   const incoming = new Map<BoxLayout, EdgeRoute[]>();
-  for (const r of routes) {
+  for (const r of bent) {
     outgoing.set(r.fromBox, [...(outgoing.get(r.fromBox) ?? []), r]);
     incoming.set(r.toBox, [...(incoming.get(r.toBox) ?? []), r]);
   }
-  const slot = (box: BoxLayout, k: number, n: number): number =>
-    box.x + Math.min(box.w - 2, Math.max(1, Math.round(((k + 1) * (box.w - 1)) / (n + 1))));
+  const freeSlot = (box: BoxLayout, k: number, n: number): number => {
+    const lo = box.x + 1;
+    const hi = box.x + box.w - 2;
+    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round(((k + 1) * (box.w - 1)) / (n + 1))));
+    for (let d = 0; d <= hi - lo; d++) {
+      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
+        if (x >= lo && x <= hi && isFree(box, x)) return claim(box, x);
+      }
+    }
+    return ideal; // every column claimed (extremely crowded box) — overlap and live with it
+  };
 
   for (const r of routes) {
-    const outs = outgoing.get(r.fromBox)!;
-    const ins = incoming.get(r.toBox)!;
-    const sx = slot(r.fromBox, outs.indexOf(r), outs.length);
-    const ex = slot(r.toBox, ins.indexOf(r), ins.length);
     const sy = r.fromBox.y + BOX_H - 1; // bottom border row of the source box
     const ey = r.toBox.y; // top border row of the target box
+
+    const direct = straightX.get(r);
+    if (direct !== undefined) {
+      drawPath(canvas, [
+        [direct, sy],
+        [direct, ey],
+      ]);
+      continue;
+    }
+
+    const outs = outgoing.get(r.fromBox)!;
+    const ins = incoming.get(r.toBox)!;
+    const sx = freeSlot(r.fromBox, outs.indexOf(r), outs.length);
+    const ex = freeSlot(r.toBox, ins.indexOf(r), ins.length);
     const landing = landingY.get(r)!;
 
     if (r.toBand - r.fromBand === 1) {
@@ -451,7 +556,7 @@ export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
   ].join('   ');
   canvas.text(LEFT_MARGIN, legendY, legend, 'dim');
 
-  return canvas.emit(opts);
+  return canvas;
 }
 
 function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions): void {

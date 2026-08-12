@@ -83,6 +83,20 @@ already have it). No build step: the MCP server and watcher ship pre-bundled.
 3. Watch nodes light up from the bottom. Interrupt when the picture worries
    you — that is what it is for.
 
+When the map outgrows the pane, pan it (xterm SGR mouse tracking — the same
+protocol htop and tmux speak):
+
+| Input | Action |
+| --- | --- |
+| left-drag | grab and pan the map |
+| wheel / shift+wheel | pan vertically / horizontally |
+| `hjkl` / arrows | nudge the view |
+| `0` | jump back to origin |
+| `q` | quit the pane |
+
+`--no-mouse` disables mouse reporting if your terminal multiplexer wants the
+mouse for itself.
+
 State lives in `.claude/mellos-mapping.json` in your project — plain JSON,
 one map per project, safe to commit if you want the map's history in git.
 

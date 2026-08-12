@@ -5,6 +5,396 @@ import { statSync } from "node:fs";
 import { join as join2 } from "node:path";
 import { pathToFileURL } from "node:url";
 
+// src/render/render.ts
+var WIDE_RANGES = [
+  [4352, 4447],
+  // Hangul Jamo
+  [11904, 42191],
+  // CJK radicals .. Yi (covers CJK Unified Ideographs)
+  [43360, 43391],
+  [44032, 55203],
+  // Hangul syllables
+  [63744, 64255],
+  // CJK compatibility ideographs
+  [65040, 65049],
+  [65072, 65135],
+  [65280, 65376],
+  // fullwidth forms
+  [65504, 65510],
+  [131072, 262141]
+  // CJK extension planes
+];
+function charWidth(cp) {
+  for (const [lo, hi] of WIDE_RANGES) {
+    if (cp >= lo && cp <= hi) return 2;
+  }
+  return 1;
+}
+function displayWidth(text) {
+  let w = 0;
+  for (const ch of text) w += charWidth(ch.codePointAt(0));
+  return w;
+}
+var UP = 1;
+var DOWN = 2;
+var LEFT = 4;
+var RIGHT = 8;
+var LIGHT_BY_MASK = {
+  [UP]: "\u2502",
+  [DOWN]: "\u2502",
+  [LEFT]: "\u2500",
+  [RIGHT]: "\u2500",
+  [UP | DOWN]: "\u2502",
+  [LEFT | RIGHT]: "\u2500",
+  [DOWN | RIGHT]: "\u250C",
+  [DOWN | LEFT]: "\u2510",
+  [UP | RIGHT]: "\u2514",
+  [UP | LEFT]: "\u2518",
+  [UP | DOWN | RIGHT]: "\u251C",
+  [UP | DOWN | LEFT]: "\u2524",
+  [DOWN | LEFT | RIGHT]: "\u252C",
+  [UP | LEFT | RIGHT]: "\u2534",
+  [UP | DOWN | LEFT | RIGHT]: "\u253C"
+};
+function maskChar(mask, heavyHorizontal, unicode) {
+  if (!unicode) {
+    const hasV = (mask & (UP | DOWN)) !== 0;
+    const hasH = (mask & (LEFT | RIGHT)) !== 0;
+    if (hasV && hasH) return "+";
+    return hasV ? "|" : "-";
+  }
+  if (heavyHorizontal) {
+    if (mask === (LEFT | RIGHT)) return "\u2501";
+    if (mask === (UP | DOWN | LEFT | RIGHT)) return "\u253F";
+  }
+  return LIGHT_BY_MASK[mask] ?? "\u253C";
+}
+var ANSI = {
+  none: "",
+  dim: "\x1B[2m",
+  amber: "\x1B[33m",
+  green: "\x1B[32m",
+  red: "\x1B[31m"
+};
+var ANSI_RESET = "\x1B[0m";
+var BORDER_JUNCTION = {
+  "\u2500": { down: "\u252C", up: "\u2534" },
+  "\u254C": { down: "\u252C", up: "\u2534" },
+  "\u2501": { down: "\u252F", up: "\u2537" },
+  "-": { down: "+", up: "+" },
+  ".": { down: "+", up: "+" }
+};
+var Canvas = class {
+  rows = [];
+  cell(x, y) {
+    while (this.rows.length <= y) this.rows.push([]);
+    const row = this.rows[y];
+    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: "none" });
+    return row[x];
+  }
+  /** Write literal text starting at (x, y). */
+  text(x, y, s, style) {
+    let cx = x;
+    for (const ch of s) {
+      const c = this.cell(cx, y);
+      c.literal = ch;
+      c.style = style;
+      const w = charWidth(ch.codePointAt(0));
+      if (w === 2) {
+        const phantom = this.cell(cx + 1, y);
+        phantom.literal = "";
+        phantom.style = style;
+      }
+      cx += w;
+    }
+  }
+  /** Merge a routed-line direction mask into (x, y). */
+  line(x, y, mask, heavyHorizontal = false) {
+    const c = this.cell(x, y);
+    if (c.literal !== void 0) {
+      const junction = BORDER_JUNCTION[c.literal];
+      const replacement = mask & DOWN ? junction?.down : mask & UP ? junction?.up : void 0;
+      if (replacement !== void 0) c.literal = replacement;
+      return;
+    }
+    c.mask |= mask;
+    c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
+  }
+  get height() {
+    return this.rows.length;
+  }
+  get width() {
+    return this.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  }
+  /**
+   * Emit terminal lines, optionally windowed to a viewport. Slicing happens
+   * at the cell level so ANSI codes reopen correctly inside the window and a
+   * CJK character cut in half at either edge degrades to a space instead of
+   * shifting the whole row.
+   */
+  emit(opts, viewport) {
+    const vp = viewport ?? { x: 0, y: 0, width: this.width, height: this.height };
+    const out = [];
+    for (let y = vp.y; y < vp.y + vp.height; y++) {
+      const row = this.rows[y] ?? [];
+      let line = "";
+      let open = "none";
+      const end = Math.min(vp.x + vp.width, row.length);
+      for (let x = Math.max(0, vp.x); x < end; x++) {
+        const c = row[x];
+        let ch = c.literal !== void 0 ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : " ";
+        if (ch === "") {
+          if (x !== Math.max(0, vp.x)) continue;
+          ch = " ";
+        } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
+          ch = " ";
+        }
+        const style = ch === " " ? "none" : c.style;
+        if (opts.color && style !== open) {
+          line += (open !== "none" ? ANSI_RESET : "") + ANSI[style];
+          open = style;
+        }
+        line += ch;
+      }
+      if (opts.color && open !== "none") line += ANSI_RESET;
+      out.push(line.replace(/ +$/, ""));
+    }
+    return out;
+  }
+};
+function drawPath(canvas, points) {
+  for (let i = 0; i + 1 < points.length; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[i + 1];
+    if (x1 === x2 && y1 === y2) continue;
+    if (x1 === x2) {
+      const [lo, hi] = y1 < y2 ? [y1, y2] : [y2, y1];
+      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN);
+      canvas.line(x1, y1, y2 > y1 ? DOWN : UP);
+      canvas.line(x1, y2, y2 > y1 ? UP : DOWN);
+    } else {
+      const [lo, hi] = x1 < x2 ? [x1, x2] : [x2, x1];
+      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT);
+      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT);
+      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT);
+    }
+  }
+}
+var SPINNER_UNICODE = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
+var SPINNER_ASCII = ["|", "/", "-", "\\"];
+function skinFor(status, unicode) {
+  const style = status === "planned" ? "dim" : status === "in-progress" ? "amber" : status === "done" ? "green" : "red";
+  if (!unicode) {
+    return status === "planned" ? { h: ".", v: ":", corners: ["+", "+", "+", "+"], style } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style };
+  }
+  switch (status) {
+    case "planned":
+      return { h: "\u254C", v: "\u254E", corners: ["\u250C", "\u2510", "\u2514", "\u2518"], style };
+    case "in-progress":
+      return { h: "\u2500", v: "\u2502", corners: ["\u250C", "\u2510", "\u2514", "\u2518"], style };
+    case "done":
+    case "regressed":
+      return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
+  }
+}
+function glyphFor(status, opts) {
+  const spinner = opts.unicode ? SPINNER_UNICODE : SPINNER_ASCII;
+  switch (status) {
+    case "planned":
+      return opts.unicode ? "\xB7" : ".";
+    case "in-progress":
+      return spinner[opts.spinnerFrame % spinner.length];
+    case "done":
+      return opts.unicode ? "\u25A0" : "#";
+    case "regressed":
+      return opts.unicode ? "\u2717" : "X";
+  }
+}
+var BOX_H = 3;
+var BOX_GAP = 2;
+var LEFT_MARGIN = 2;
+function renderMapWindow(map, opts, viewport) {
+  const canvas = buildCanvas(map, opts);
+  return { lines: canvas.emit(opts, viewport), contentWidth: canvas.width, contentHeight: canvas.height };
+}
+function buildCanvas(map, opts) {
+  const canvas = new Canvas();
+  const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
+  if (bands.length === 0) {
+    canvas.text(0, 0, map.title ?? "mellos mapping", "none");
+    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
+    return canvas;
+  }
+  const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
+  const boxes = /* @__PURE__ */ new Map();
+  const bandBoxes = bands.map(() => []);
+  for (const node of map.nodes) {
+    const band = bandIndexOf.get(node.layer);
+    const row = bandBoxes[band];
+    const prev = row[row.length - 1];
+    const box = {
+      node,
+      x: prev ? prev.x + prev.w + BOX_GAP : LEFT_MARGIN,
+      w: displayWidth(node.label) + 6,
+      // borders + padding + glyph
+      y: 0
+    };
+    row.push(box);
+    boxes.set(node.id, box);
+  }
+  const routes = map.edges.map((e) => {
+    const fromBox = boxes.get(e.from);
+    const toBox = boxes.get(e.to);
+    return {
+      fromBox,
+      toBox,
+      fromBand: bandIndexOf.get(fromBox.node.layer),
+      toBand: bandIndexOf.get(toBox.node.layer)
+    };
+  });
+  const claimedColumns = /* @__PURE__ */ new Map();
+  const isFree = (box, x) => !(claimedColumns.get(box)?.has(x) ?? false);
+  const claim = (box, x) => {
+    let set = claimedColumns.get(box);
+    if (!set) claimedColumns.set(box, set = /* @__PURE__ */ new Set());
+    set.add(x);
+    return x;
+  };
+  const straightX = /* @__PURE__ */ new Map();
+  for (const r of routes) {
+    if (r.toBand - r.fromBand !== 1) continue;
+    const lo = Math.max(r.fromBox.x + 1, r.toBox.x + 1);
+    const hi = Math.min(r.fromBox.x + r.fromBox.w - 2, r.toBox.x + r.toBox.w - 2);
+    if (lo > hi) continue;
+    const mid = Math.floor((lo + hi) / 2);
+    for (let d = 0; d <= hi - lo && !straightX.has(r); d++) {
+      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
+        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x)) {
+          straightX.set(r, claim(r.toBox, claim(r.fromBox, x)));
+          break;
+        }
+      }
+    }
+  }
+  const gapCount = bands.length - 1;
+  const exitTracks = Array.from({ length: gapCount }, () => []);
+  const landingTracks = Array.from({ length: gapCount }, () => []);
+  const skipRoutes = [];
+  for (const r of routes) {
+    if (straightX.has(r)) continue;
+    landingTracks[r.toBand - 1].push(r);
+    if (r.toBand - r.fromBand > 1) {
+      exitTracks[r.fromBand].push(r);
+      skipRoutes.push(r);
+    }
+  }
+  let y = 0;
+  if (map.title !== void 0) y += 2;
+  const barY = [];
+  const landingY = /* @__PURE__ */ new Map();
+  const jogY = /* @__PURE__ */ new Map();
+  for (let b = 0; b < bands.length; b++) {
+    barY.push(y);
+    y += 2;
+    for (const box of bandBoxes[b]) box.y = y;
+    y += BOX_H;
+    if (b < gapCount) {
+      y += 1;
+      for (const r of exitTracks[b]) jogY.set(r, y++);
+      for (const r of landingTracks[b]) landingY.set(r, y++);
+      y += 1;
+    }
+  }
+  const legendY = y + 1;
+  let contentWidth = LEFT_MARGIN;
+  for (const row of bandBoxes) {
+    const last = row[row.length - 1];
+    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
+  }
+  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
+  const marginX = new Map(skipRoutes.map((r, i) => [r, contentWidth + 2 + i * 2]));
+  const totalWidth = contentWidth + 2 + skipRoutes.length * 2;
+  if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none");
+  for (let b = 0; b < bands.length; b++) {
+    const label = ` ${bands[b].name} `;
+    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
+    canvas.text(contentWidth - displayWidth(label), barY[b], label, "none");
+  }
+  for (const box of boxes.values()) drawBox(canvas, box, opts);
+  const bent = routes.filter((r) => !straightX.has(r));
+  const outgoing = /* @__PURE__ */ new Map();
+  const incoming = /* @__PURE__ */ new Map();
+  for (const r of bent) {
+    outgoing.set(r.fromBox, [...outgoing.get(r.fromBox) ?? [], r]);
+    incoming.set(r.toBox, [...incoming.get(r.toBox) ?? [], r]);
+  }
+  const freeSlot = (box, k, n) => {
+    const lo = box.x + 1;
+    const hi = box.x + box.w - 2;
+    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
+    for (let d = 0; d <= hi - lo; d++) {
+      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
+        if (x >= lo && x <= hi && isFree(box, x)) return claim(box, x);
+      }
+    }
+    return ideal;
+  };
+  for (const r of routes) {
+    const sy = r.fromBox.y + BOX_H - 1;
+    const ey = r.toBox.y;
+    const direct = straightX.get(r);
+    if (direct !== void 0) {
+      drawPath(canvas, [
+        [direct, sy],
+        [direct, ey]
+      ]);
+      continue;
+    }
+    const outs = outgoing.get(r.fromBox);
+    const ins = incoming.get(r.toBox);
+    const sx = freeSlot(r.fromBox, outs.indexOf(r), outs.length);
+    const ex = freeSlot(r.toBox, ins.indexOf(r), ins.length);
+    const landing = landingY.get(r);
+    if (r.toBand - r.fromBand === 1) {
+      drawPath(canvas, [
+        [sx, sy],
+        [sx, landing],
+        [ex, landing],
+        [ex, ey]
+      ]);
+    } else {
+      const jog = jogY.get(r);
+      const mx = marginX.get(r);
+      drawPath(canvas, [
+        [sx, sy],
+        [sx, jog],
+        [mx, jog],
+        [mx, landing],
+        [ex, landing],
+        [ex, ey]
+      ]);
+    }
+  }
+  const legendOpts = { ...opts, spinnerFrame: 0 };
+  const legend = [
+    `${glyphFor("planned", legendOpts)} planned`,
+    `${glyphFor("in-progress", legendOpts)} in-progress`,
+    `${glyphFor("done", legendOpts)} done`,
+    `${glyphFor("regressed", legendOpts)} regressed`
+  ].join("   ");
+  canvas.text(LEFT_MARGIN, legendY, legend, "dim");
+  return canvas;
+}
+function drawBox(canvas, box, opts) {
+  const { node, x, y, w } = box;
+  const skin = skinFor(node.status, opts.unicode);
+  const inner = w - 2;
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
+  canvas.text(x, y + 1, skin.v + ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style);
+  canvas.text(x + w - 1, y + 1, skin.v, skin.style);
+  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
+}
+
 // src/store/store.ts
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -203,323 +593,69 @@ function loadMapFile(path) {
   return parseMap(raw, path);
 }
 
-// src/render/render.ts
-var WIDE_RANGES = [
-  [4352, 4447],
-  // Hangul Jamo
-  [11904, 42191],
-  // CJK radicals .. Yi (covers CJK Unified Ideographs)
-  [43360, 43391],
-  [44032, 55203],
-  // Hangul syllables
-  [63744, 64255],
-  // CJK compatibility ideographs
-  [65040, 65049],
-  [65072, 65135],
-  [65280, 65376],
-  // fullwidth forms
-  [65504, 65510],
-  [131072, 262141]
-  // CJK extension planes
-];
-function charWidth(cp) {
-  for (const [lo, hi] of WIDE_RANGES) {
-    if (cp >= lo && cp <= hi) return 2;
-  }
-  return 1;
-}
-function displayWidth(text) {
-  let w = 0;
-  for (const ch of text) w += charWidth(ch.codePointAt(0));
-  return w;
-}
-var UP = 1;
-var DOWN = 2;
-var LEFT = 4;
-var RIGHT = 8;
-var LIGHT_BY_MASK = {
-  [UP]: "\u2502",
-  [DOWN]: "\u2502",
-  [LEFT]: "\u2500",
-  [RIGHT]: "\u2500",
-  [UP | DOWN]: "\u2502",
-  [LEFT | RIGHT]: "\u2500",
-  [DOWN | RIGHT]: "\u250C",
-  [DOWN | LEFT]: "\u2510",
-  [UP | RIGHT]: "\u2514",
-  [UP | LEFT]: "\u2518",
-  [UP | DOWN | RIGHT]: "\u251C",
-  [UP | DOWN | LEFT]: "\u2524",
-  [DOWN | LEFT | RIGHT]: "\u252C",
-  [UP | LEFT | RIGHT]: "\u2534",
-  [UP | DOWN | LEFT | RIGHT]: "\u253C"
+// src/watch/input.ts
+var KEY_H_STEP = 4;
+var KEY_V_STEP = 2;
+var WHEEL_V_STEP = 3;
+var WHEEL_H_STEP = 6;
+var MOTION = 32;
+var WHEEL = 64;
+var SHIFT = 4;
+var BUTTON_BITS = 3;
+var SGR_MOUSE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
+var ARROW = /^\x1b\[([ABCD])/;
+var PARTIAL_ESCAPE = /(?:\x1b|\x1b\[|\x1b\[<[\d;]*)$/;
+var ARROW_PAN = {
+  A: { dx: 0, dy: -KEY_V_STEP },
+  B: { dx: 0, dy: KEY_V_STEP },
+  C: { dx: KEY_H_STEP, dy: 0 },
+  D: { dx: -KEY_H_STEP, dy: 0 }
 };
-function maskChar(mask, heavyHorizontal, unicode) {
-  if (!unicode) {
-    const hasV = (mask & (UP | DOWN)) !== 0;
-    const hasH = (mask & (LEFT | RIGHT)) !== 0;
-    if (hasV && hasH) return "+";
-    return hasV ? "|" : "-";
-  }
-  if (heavyHorizontal) {
-    if (mask === (LEFT | RIGHT)) return "\u2501";
-    if (mask === (UP | DOWN | LEFT | RIGHT)) return "\u253F";
-  }
-  return LIGHT_BY_MASK[mask] ?? "\u253C";
-}
-var ANSI = {
-  none: "",
-  dim: "\x1B[2m",
-  amber: "\x1B[33m",
-  green: "\x1B[32m",
-  red: "\x1B[31m"
+var KEY_PAN = {
+  k: { dx: 0, dy: -KEY_V_STEP },
+  j: { dx: 0, dy: KEY_V_STEP },
+  l: { dx: KEY_H_STEP, dy: 0 },
+  h: { dx: -KEY_H_STEP, dy: 0 }
 };
-var ANSI_RESET = "\x1B[0m";
-var BORDER_JUNCTION = {
-  "\u2500": { down: "\u252C", up: "\u2534" },
-  "\u254C": { down: "\u252C", up: "\u2534" },
-  "\u2501": { down: "\u252F", up: "\u2537" },
-  "-": { down: "+", up: "+" },
-  ".": { down: "+", up: "+" }
-};
-var Canvas = class {
-  rows = [];
-  cell(x, y) {
-    while (this.rows.length <= y) this.rows.push([]);
-    const row = this.rows[y];
-    while (row.length <= x) row.push({ mask: 0, heavyHorizontal: false, style: "none" });
-    return row[x];
+function mouseEvent(code, x, y, final) {
+  if (code & WHEEL) {
+    const direction = code & 1 ? 1 : -1;
+    return code & SHIFT ? { kind: "pan", dx: direction * WHEEL_H_STEP, dy: 0 } : { kind: "pan", dx: 0, dy: direction * WHEEL_V_STEP };
   }
-  /** Write literal text starting at (x, y). */
-  text(x, y, s, style) {
-    let cx = x;
-    for (const ch of s) {
-      const c = this.cell(cx, y);
-      c.literal = ch;
-      c.style = style;
-      const w = charWidth(ch.codePointAt(0));
-      if (w === 2) {
-        const phantom = this.cell(cx + 1, y);
-        phantom.literal = "";
-        phantom.style = style;
-      }
-      cx += w;
-    }
-  }
-  /** Merge a routed-line direction mask into (x, y). */
-  line(x, y, mask, heavyHorizontal = false) {
-    const c = this.cell(x, y);
-    if (c.literal !== void 0) {
-      const junction = BORDER_JUNCTION[c.literal];
-      const replacement = mask & DOWN ? junction?.down : mask & UP ? junction?.up : void 0;
-      if (replacement !== void 0) c.literal = replacement;
-      return;
-    }
-    c.mask |= mask;
-    c.heavyHorizontal = c.heavyHorizontal || heavyHorizontal;
-  }
-  emit(opts) {
-    return this.rows.map((row) => {
-      let out = "";
-      let open = "none";
-      for (const c of row) {
-        const ch = c.literal !== void 0 ? c.literal : c.mask !== 0 ? maskChar(c.mask, c.heavyHorizontal, opts.unicode) : " ";
-        if (ch === "") continue;
-        const style = ch === " " ? "none" : c.style;
-        if (opts.color && style !== open) {
-          out += (open !== "none" ? ANSI_RESET : "") + ANSI[style];
-          open = style;
-        }
-        out += ch;
-      }
-      if (opts.color && open !== "none") out += ANSI_RESET;
-      return out.replace(/ +$/, "");
-    });
-  }
-};
-function drawPath(canvas, points) {
-  for (let i = 0; i + 1 < points.length; i++) {
-    const [x1, y1] = points[i];
-    const [x2, y2] = points[i + 1];
-    if (x1 === x2 && y1 === y2) continue;
-    if (x1 === x2) {
-      const [lo, hi] = y1 < y2 ? [y1, y2] : [y2, y1];
-      for (let yy = lo + 1; yy < hi; yy++) canvas.line(x1, yy, UP | DOWN);
-      canvas.line(x1, y1, y2 > y1 ? DOWN : UP);
-      canvas.line(x1, y2, y2 > y1 ? UP : DOWN);
-    } else {
-      const [lo, hi] = x1 < x2 ? [x1, x2] : [x2, x1];
-      for (let xx = lo + 1; xx < hi; xx++) canvas.line(xx, y1, LEFT | RIGHT);
-      canvas.line(x1, y1, x2 > x1 ? RIGHT : LEFT);
-      canvas.line(x2, y1, x2 > x1 ? LEFT : RIGHT);
-    }
-  }
+  if (final === "m") return { kind: "mouse-up" };
+  if ((code & BUTTON_BITS) !== 0) return void 0;
+  return code & MOTION ? { kind: "mouse-drag", x, y } : { kind: "mouse-down", x, y };
 }
-var SPINNER_UNICODE = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
-var SPINNER_ASCII = ["|", "/", "-", "\\"];
-function skinFor(status, unicode) {
-  const style = status === "planned" ? "dim" : status === "in-progress" ? "amber" : status === "done" ? "green" : "red";
-  if (!unicode) {
-    return status === "planned" ? { h: ".", v: ":", corners: ["+", "+", "+", "+"], style } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style };
-  }
-  switch (status) {
-    case "planned":
-      return { h: "\u254C", v: "\u254E", corners: ["\u250C", "\u2510", "\u2514", "\u2518"], style };
-    case "in-progress":
-      return { h: "\u2500", v: "\u2502", corners: ["\u250C", "\u2510", "\u2514", "\u2518"], style };
-    case "done":
-    case "regressed":
-      return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
-  }
-}
-function glyphFor(status, opts) {
-  const spinner = opts.unicode ? SPINNER_UNICODE : SPINNER_ASCII;
-  switch (status) {
-    case "planned":
-      return opts.unicode ? "\xB7" : ".";
-    case "in-progress":
-      return spinner[opts.spinnerFrame % spinner.length];
-    case "done":
-      return opts.unicode ? "\u25A0" : "#";
-    case "regressed":
-      return opts.unicode ? "\u2717" : "X";
-  }
-}
-var BOX_H = 3;
-var BOX_GAP = 2;
-var LEFT_MARGIN = 2;
-function renderMap(map, opts) {
-  const canvas = new Canvas();
-  const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
-  if (bands.length === 0) {
-    canvas.text(0, 0, map.title ?? "mellos mapping", "none");
-    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return canvas.emit(opts);
-  }
-  const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
-  const boxes = /* @__PURE__ */ new Map();
-  const bandBoxes = bands.map(() => []);
-  for (const node of map.nodes) {
-    const band = bandIndexOf.get(node.layer);
-    const row = bandBoxes[band];
-    const prev = row[row.length - 1];
-    const box = {
-      node,
-      x: prev ? prev.x + prev.w + BOX_GAP : LEFT_MARGIN,
-      w: displayWidth(node.label) + 6,
-      // borders + padding + glyph
-      y: 0
-    };
-    row.push(box);
-    boxes.set(node.id, box);
-  }
-  const routes = map.edges.map((e) => {
-    const fromBox = boxes.get(e.from);
-    const toBox = boxes.get(e.to);
-    return {
-      fromBox,
-      toBox,
-      fromBand: bandIndexOf.get(fromBox.node.layer),
-      toBand: bandIndexOf.get(toBox.node.layer)
-    };
-  });
-  const gapCount = bands.length - 1;
-  const exitTracks = Array.from({ length: gapCount }, () => []);
-  const landingTracks = Array.from({ length: gapCount }, () => []);
-  const skipRoutes = [];
-  for (const r of routes) {
-    landingTracks[r.toBand - 1].push(r);
-    if (r.toBand - r.fromBand > 1) {
-      exitTracks[r.fromBand].push(r);
-      skipRoutes.push(r);
+function parseInput(chunk) {
+  const events = [];
+  let i = 0;
+  while (i < chunk.length) {
+    const slice = chunk.slice(i);
+    const mouse = SGR_MOUSE.exec(slice);
+    if (mouse) {
+      const event = mouseEvent(Number(mouse[1]), Number(mouse[2]), Number(mouse[3]), mouse[4]);
+      if (event) events.push(event);
+      i += mouse[0].length;
+      continue;
     }
-  }
-  let y = 0;
-  if (map.title !== void 0) y += 2;
-  const barY = [];
-  const landingY = /* @__PURE__ */ new Map();
-  const jogY = /* @__PURE__ */ new Map();
-  for (let b = 0; b < bands.length; b++) {
-    barY.push(y);
-    y += 2;
-    for (const box of bandBoxes[b]) box.y = y;
-    y += BOX_H;
-    if (b < gapCount) {
-      y += 1;
-      for (const r of exitTracks[b]) jogY.set(r, y++);
-      for (const r of landingTracks[b]) landingY.set(r, y++);
-      y += 1;
+    const arrow = ARROW.exec(slice);
+    if (arrow) {
+      const pan = ARROW_PAN[arrow[1]];
+      events.push({ kind: "pan", ...pan });
+      i += arrow[0].length;
+      continue;
     }
-  }
-  const legendY = y + 1;
-  let contentWidth = LEFT_MARGIN;
-  for (const row of bandBoxes) {
-    const last = row[row.length - 1];
-    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
-  }
-  for (const l of bands) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(l.name) + 8);
-  const marginX = new Map(skipRoutes.map((r, i) => [r, contentWidth + 2 + i * 2]));
-  const totalWidth = contentWidth + 2 + skipRoutes.length * 2;
-  if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none");
-  for (let b = 0; b < bands.length; b++) {
-    const label = ` ${bands[b].name} `;
-    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
-    canvas.text(contentWidth - displayWidth(label), barY[b], label, "none");
-  }
-  for (const box of boxes.values()) drawBox(canvas, box, opts);
-  const outgoing = /* @__PURE__ */ new Map();
-  const incoming = /* @__PURE__ */ new Map();
-  for (const r of routes) {
-    outgoing.set(r.fromBox, [...outgoing.get(r.fromBox) ?? [], r]);
-    incoming.set(r.toBox, [...incoming.get(r.toBox) ?? [], r]);
-  }
-  const slot = (box, k, n) => box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
-  for (const r of routes) {
-    const outs = outgoing.get(r.fromBox);
-    const ins = incoming.get(r.toBox);
-    const sx = slot(r.fromBox, outs.indexOf(r), outs.length);
-    const ex = slot(r.toBox, ins.indexOf(r), ins.length);
-    const sy = r.fromBox.y + BOX_H - 1;
-    const ey = r.toBox.y;
-    const landing = landingY.get(r);
-    if (r.toBand - r.fromBand === 1) {
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, landing],
-        [ex, landing],
-        [ex, ey]
-      ]);
-    } else {
-      const jog = jogY.get(r);
-      const mx = marginX.get(r);
-      drawPath(canvas, [
-        [sx, sy],
-        [sx, jog],
-        [mx, jog],
-        [mx, landing],
-        [ex, landing],
-        [ex, ey]
-      ]);
+    const partial = PARTIAL_ESCAPE.exec(slice);
+    if (partial && partial.index === 0) {
+      return { events, rest: slice };
     }
+    const ch = chunk[i];
+    if (ch === "q" || ch === "Q" || ch === "" || ch === "") events.push({ kind: "quit" });
+    else if (ch === "0") events.push({ kind: "reset" });
+    else if (KEY_PAN[ch]) events.push({ kind: "pan", ...KEY_PAN[ch] });
+    i += 1;
   }
-  const legendOpts = { ...opts, spinnerFrame: 0 };
-  const legend = [
-    `${glyphFor("planned", legendOpts)} planned`,
-    `${glyphFor("in-progress", legendOpts)} in-progress`,
-    `${glyphFor("done", legendOpts)} done`,
-    `${glyphFor("regressed", legendOpts)} regressed`
-  ].join("   ");
-  canvas.text(LEFT_MARGIN, legendY, legend, "dim");
-  return canvas.emit(opts);
-}
-function drawBox(canvas, box, opts) {
-  const { node, x, y, w } = box;
-  const skin = skinFor(node.status, opts.unicode);
-  const inner = w - 2;
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style);
-  canvas.text(x, y + 1, skin.v + ` ${glyphFor(node.status, opts)} ${node.label} `, skin.style);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style);
-  canvas.text(x, y + 2, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style);
+  return { events, rest: "" };
 }
 
 // src/watch/watch.ts
@@ -528,6 +664,7 @@ function parseArgs(argv, cwd) {
   let intervalMs = 250;
   let unicode = true;
   let color = true;
+  let mouse = true;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case "--file":
@@ -542,30 +679,80 @@ function parseArgs(argv, cwd) {
       case "--no-color":
         color = false;
         break;
+      case "--no-mouse":
+        mouse = false;
+        break;
       default:
         break;
     }
   }
-  return { file, intervalMs, unicode, color };
+  return { file, intervalMs, unicode, color, mouse };
 }
 var HIDE_CURSOR = "\x1B[?25l";
 var SHOW_CURSOR = "\x1B[?25h";
-var HOME_AND_CLEAR = "\x1B[H\x1B[2J";
-var HOME = "\x1B[H\x1B[0J";
+var CLEAR_ALL = "\x1B[H\x1B[2J";
+var HOME = "\x1B[H";
+var ERASE_LINE_END = "\x1B[K";
+var MOUSE_ON = "\x1B[?1002h\x1B[?1006h";
+var MOUSE_OFF = "\x1B[?1002l\x1B[?1006l";
+var DIM = "\x1B[2m";
+var RESET = "\x1B[0m";
 function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+  const mouseActive = interactive && cfg.mouse;
   let lastMtimeMs = -1;
-  let lastPicture = "";
+  let lastFrame = "";
   let spinnerFrame = 0;
   let map;
   let notice = `waiting for ${cfg.file} ...`;
-  process.stdout.write(HIDE_CURSOR + HOME_AND_CLEAR);
+  let offsetX = 0;
+  let offsetY = 0;
+  let dragAnchor;
+  let pendingInput = "";
+  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ""));
   const restore = () => {
-    process.stdout.write(SHOW_CURSOR + "\n");
+    process.stdout.write((mouseActive ? MOUSE_OFF : "") + SHOW_CURSOR + "\n");
     process.exit(0);
   };
   process.on("SIGINT", restore);
   process.on("SIGTERM", restore);
+  const paint = () => {
+    const cols = process.stdout.columns ?? 100;
+    const rows = process.stdout.rows ?? 30;
+    const viewH = Math.max(1, rows - 1);
+    let body;
+    let panned = "";
+    if (map !== void 0) {
+      const windowed = renderMapWindow(
+        map,
+        { color: cfg.color, unicode: cfg.unicode, spinnerFrame },
+        { x: offsetX, y: offsetY, width: cols, height: viewH }
+      );
+      const maxX = Math.max(0, windowed.contentWidth - cols);
+      const maxY = Math.max(0, windowed.contentHeight - viewH);
+      if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
+        offsetX = Math.min(Math.max(0, offsetX), maxX);
+        offsetY = Math.min(Math.max(0, offsetY), maxY);
+        paint();
+        return;
+      }
+      body = windowed.lines;
+      if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
+    } else {
+      body = [notice];
+    }
+    if (notice !== "" && map !== void 0) body[body.length - 1] = `  ${notice}`;
+    const hint = interactive ? "drag/wheel pan \xB7 hjkl/arrows \xB7 0 reset \xB7 q quit" : cfg.file;
+    const footer = cfg.color ? `${DIM} ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
+    let frame = HOME;
+    for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";
+    frame += footer + ERASE_LINE_END;
+    if (frame !== lastFrame) {
+      process.stdout.write(frame);
+      lastFrame = frame;
+    }
+  };
   const tick = () => {
     let mtimeMs;
     try {
@@ -585,17 +772,47 @@ function main() {
         lastMtimeMs = mtimeMs;
       }
     }
-    const spinning = map?.nodes.some((n) => n.status === "in-progress") ?? false;
-    if (spinning) spinnerFrame++;
-    const lines = map !== void 0 ? renderMap(map, { color: cfg.color, unicode: cfg.unicode, spinnerFrame }) : [notice];
-    const picture = lines.join("\n") + (notice && map !== void 0 ? `
-
-  ${notice}` : "");
-    if (picture !== lastPicture) {
-      process.stdout.write(HOME + picture + "\n");
-      lastPicture = picture;
-    }
+    if (map?.nodes.some((n) => n.status === "in-progress")) spinnerFrame++;
+    paint();
   };
+  if (interactive) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      const parsed = parseInput(pendingInput + chunk);
+      pendingInput = parsed.rest;
+      for (const event of parsed.events) {
+        switch (event.kind) {
+          case "quit":
+            restore();
+            return;
+          case "reset":
+            offsetX = 0;
+            offsetY = 0;
+            break;
+          case "pan":
+            offsetX += event.dx;
+            offsetY += event.dy;
+            break;
+          case "mouse-down":
+            dragAnchor = { x: event.x, y: event.y, ox: offsetX, oy: offsetY };
+            break;
+          case "mouse-drag":
+            if (dragAnchor) {
+              offsetX = dragAnchor.ox - (event.x - dragAnchor.x);
+              offsetY = dragAnchor.oy - (event.y - dragAnchor.y);
+            }
+            break;
+          case "mouse-up":
+            dragAnchor = void 0;
+            break;
+        }
+      }
+      if (parsed.events.length > 0) paint();
+    });
+    process.stdout.on("resize", paint);
+  }
   tick();
   setInterval(tick, cfg.intervalMs);
 }

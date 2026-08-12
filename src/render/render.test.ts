@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
 import { EMPTY_MAP, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
-import { displayWidth, renderMap } from './render.js';
+import { displayWidth, renderMap, renderMapWindow } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -109,6 +109,74 @@ describe('renderMap', () => {
   it('explains itself when the map is empty', () => {
     const text = renderMap(EMPTY_MAP, MONO).join('\n');
     expect(text).toContain('declare layers and nodes');
+  });
+
+  it('windows the picture: slice matches the full render, extent enables clamping', () => {
+    const full = renderMap(sampleMap(), MONO);
+    const windowed = renderMapWindow(sampleMap(), MONO, { x: 0, y: 2, width: 200, height: 3 });
+    expect(windowed.lines).toEqual(full.slice(2, 5).map((l) => l.replace(/ +$/, '')));
+    expect(windowed.contentHeight).toBe(full.length);
+    expect(windowed.contentWidth).toBeGreaterThanOrEqual(Math.max(...full.map((l) => displayWidth(l))));
+    expect(renderMapWindow(sampleMap(), MONO, { x: 4, y: 0, width: 10, height: 2 }).lines[0]!.length).toBeLessThanOrEqual(
+      10,
+    );
+  });
+
+  it('degrades a CJK character cut at the window edge to a space instead of shifting the row', () => {
+    // '状态存储' starts after '┃ ■ ' inside its box; slicing one column into
+    // the first ideograph must yield a space, and every emitted line must
+    // still fit the window width.
+    const full = renderMap(sampleMap(), MONO);
+    const rowIndex = full.findIndex((l) => l.includes('状态存储'));
+    const col = full[rowIndex]!.indexOf('状'); // string index == column here (all narrow before it)
+    const cut = renderMapWindow(sampleMap(), MONO, { x: col + 1, y: rowIndex, width: 20, height: 1 });
+    expect(cut.lines[0]!.startsWith(' ')).toBe(true); // right half of 状 became a space
+    expect(cut.lines[0]!).toContain('态存储');
+    for (const line of cut.lines) expect(displayWidth(line)).toBeLessThanOrEqual(20);
+  });
+
+  it('reopens ANSI styles inside a window', () => {
+    const full = renderMap(sampleMap(), { ...MONO, color: true });
+    const greenRow = full.findIndex((l) => l.includes('状态存储'));
+    const windowed = renderMapWindow(
+      sampleMap(),
+      { ...MONO, color: true },
+      { x: 4, y: greenRow, width: 40, height: 1 },
+    );
+    // The window starts INSIDE the green box: the color must be reopened
+    // and every opened style must be closed again within the line.
+    expect(windowed.lines[0]).toContain('\x1b[32m');
+    const codes = windowed.lines[0]!.match(/\x1b\[\d+m/g) ?? [];
+    expect(codes.filter((c) => c !== '\x1b[0m').length).toBe(codes.filter((c) => c === '\x1b[0m').length);
+  });
+
+  it('draws a straight vertical when the two boxes overlap — no pointless dogleg', () => {
+    let map = EMPTY_MAP;
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: 1 }));
+    map = must(declareNode(map, { id: nid('core'), label: 'CoreModule', layer: lid('base'), status: 'done' }));
+    map = must(declareNode(map, { id: nid('shell'), label: 'Shell', layer: lid('top'), status: 'done' }));
+    map = must(linkNodes(map, nid('shell'), nid('core')));
+
+    const text = renderMap(map, MONO).join('\n');
+    for (const corner of ['┌', '┐', '└', '┘']) expect(text).not.toContain(corner);
+    expect(text).toContain('┯'); // straight exit through the heavy bottom border
+    expect(text).toContain('┷'); // straight entry through the heavy top border
+  });
+
+  it('gives parallel edges between overlapping boxes distinct columns', () => {
+    let map = EMPTY_MAP;
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: 1 }));
+    map = must(declareNode(map, { id: nid('wide'), label: 'WideFoundation', layer: lid('base'), status: 'done' }));
+    map = must(declareNode(map, { id: nid('a'), label: 'A', layer: lid('top'), status: 'done' }));
+    map = must(declareNode(map, { id: nid('b'), label: 'B', layer: lid('top'), status: 'done' }));
+    map = must(linkNodes(map, nid('a'), nid('wide')));
+    map = must(linkNodes(map, nid('b'), nid('wide')));
+
+    const lines = renderMap(map, MONO);
+    const foundationTop = lines.find((l) => l.includes('┷'))!;
+    expect([...foundationTop].filter((ch) => ch === '┷')).toHaveLength(2); // both landed, different columns
   });
 
   it('routes skip-level edges outside the content, never through a box', () => {
