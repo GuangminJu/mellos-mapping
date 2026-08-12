@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "title": "一次 mmap 调用的时序",
+  "kind": "sequence",
+  "layers": [
+    {
+      "id": "t0",
+      "name": "第1步",
+      "rank": 0
+    },
+    {
+      "id": "t1",
+      "name": "第2步",
+      "rank": 1
+    },
+    {
+      "id": "t2",
+      "name": "第3步",
+      "rank": 2
+    },
+    {
+      "id": "t3",
+      "name": "第4步",
+      "rank": 3
+    }
+  ],
+  "lanes": [
+    {
+      "id": "claude",
+      "label": "Claude"
+    },
+    {
+      "id": "server",
+      "label": "MCP服务器"
+    },
+    {
+      "id": "pane",
+      "label": "终端面板"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "call",
+      "label": "调用 mmap_declare",
+      "layer": "t0",
+      "status": "planned",
+      "lane": "claude"
+    },
+    {
+      "id": "commit",
+      "label": "校验并原子落盘",
+      "layer": "t1",
+      "status": "planned",
+      "lane": "server"
+    },
+    {
+      "id": "poll",
+      "label": "轮询发现 mtime 变化",
+      "layer": "t2",
+      "status": "planned",
+      "lane": "pane"
+    },
+    {
+      "id": "paint",
+      "label": "重画地图",
+      "layer": "t3",
+      "status": "planned",
+      "lane": "pane"
+    }
+  ],
+  "edges": [
+    {
+      "from": "commit",
+      "to": "call",
+      "label": "声明批次"
+    },
+    {
+      "from": "poll",
+      "to": "commit",
+      "label": "状态文件"
+    },
+    {
+      "from": "paint",
+      "to": "poll",
+      "label": "新地图"
+    }
+  ]
+}

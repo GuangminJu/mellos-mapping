@@ -46,6 +46,8 @@ import {
   clampZoom,
   displayWidth,
   fitWidth,
+  isNeutralKind,
+  kindGlyph,
   renderMapWindow,
   wrapWidth,
   zoomLabel,
@@ -171,6 +173,8 @@ export interface PageTab {
   readonly active: boolean;
   /** The page's file changed while it was not the active page. */
   readonly fresh: boolean;
+  /** Documentation kinds show no status glyph and use neutral colors. */
+  readonly neutral?: boolean;
 }
 
 export interface TabSegment {
@@ -198,11 +202,23 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
     if (room <= 3) break;
     const marker = tab.active ? (unicode ? '●' : '*') : unicode ? '○' : 'o';
     const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
-    const text = fitWidth(` ${marker} ${glyph} ${tab.title} `, room);
+    // Neutral (documentation) pages carry no status: no glyph, activity in cyan.
+    const text = fitWidth(tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `, room);
     const w = displayWidth(text);
     segments.push({
       text,
-      sgr: tab.active ? `${STATUS_SGR[tab.status]};1` : tab.fresh ? STATUS_SGR[tab.status] : '90',
+      sgr:
+        tab.neutral === true
+          ? tab.active
+            ? '1'
+            : tab.fresh
+              ? '36'
+              : '90'
+          : tab.active
+            ? `${STATUS_SGR[tab.status]};1`
+            : tab.fresh
+              ? STATUS_SGR[tab.status]
+              : '90',
       lo: col,
       hi: col + w - 1,
       index,
@@ -296,20 +312,37 @@ export function nodePanel(
 
   const node = map.nodes.find((n) => (n.id as string) === focusId);
   if (!node) return undefined;
+  const neutral = isNeutralKind(map);
   const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? (node.layer as string);
   const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
   const withGlyph = (id: string): string => {
     const n = map.nodes.find((x) => (x.id as string) === id);
     return n ? `${g(n.status)} ${n.label}` : id;
   };
-  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withGlyph(e.to as string));
-  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withGlyph(e.from as string));
+  // An edge label rides along in parentheses: what flows between the nodes.
+  const withEdgeLabel = (base: string, label: string | undefined): string =>
+    label !== undefined ? `${base} (${label})` : base;
+  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withEdgeLabel(withGlyph(e.to as string), e.label));
+  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withEdgeLabel(withGlyph(e.from as string), e.label));
 
   const pin = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
+  // Documentation kinds hide the status vocabulary: kind glyph (or bullet)
+  // instead of the status glyph, no status word, no status color.
+  const headGlyph = neutral
+    ? (node.kind !== undefined ? kindGlyph(node.kind as string, unicode) : undefined) ?? (unicode ? '·' : '.')
+    : g(node.status);
+  const laneLabel = node.lane !== undefined ? map.lanes.find((l) => l.id === node.lane)?.label : undefined;
+  const headParts = [
+    `${headGlyph} ${node.label} [${node.id}]`,
+    layerName,
+    ...(laneLabel !== undefined ? [laneLabel] : []),
+    ...(node.kind !== undefined ? [node.kind as string] : []),
+    ...(neutral ? [] : [node.status]),
+  ];
   const lines: PanelLine[] = [
     {
-      text: fitWidth(`${g(node.status)} ${node.label} [${node.id}] · ${layerName} · ${node.status}${pin}`, width),
-      sgr: `${STATUS_SGR[node.status]};1`,
+      text: fitWidth(`${headParts.join(' · ')}${pin}`, width),
+      sgr: neutral ? '1' : `${STATUS_SGR[node.status]};1`,
     },
     { text: fitWidth(`evidence: ${node.evidence ?? '—'}`, width), sgr: '90' },
     { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
@@ -341,13 +374,13 @@ export function mapPanel(
     .filter((s) => count(s) > 0)
     .map((s) => `${g(s)} ${count(s)} ${s}`)
     .join('   ');
+  const parts = [`${map.layers.length} layers`, `${map.nodes.length} nodes`, `${map.edges.length} edges`];
+  if (map.lanes.length > 0) parts.push(`${map.lanes.length} lanes`);
   const lines: PanelLine[] = [
     { text: fitWidth(map.title ?? 'mellos map', width), sgr: '1' },
-    {
-      text: fitWidth(`${map.layers.length} layers · ${map.nodes.length} nodes · ${map.edges.length} edges`, width),
-      sgr: '90',
-    },
-    { text: fitWidth(counts, width), sgr: '' },
+    { text: fitWidth(parts.join(' · '), width), sgr: '90' },
+    // documentation kinds document structure, not progress
+    { text: fitWidth(isNeutralKind(map) ? `${map.kind} diagram` : counts, width), sgr: isNeutralKind(map) ? '90' : '' },
     { text: '', sgr: '' },
     { text: 'hover a node to inspect · click to pin', sgr: '90' },
   ];
@@ -511,6 +544,7 @@ function main(): void {
           status: m !== undefined ? mapStatus(m) : 'planned',
           active: f === activeFile,
           fresh: pageData.get(f)?.fresh ?? false,
+          neutral: m !== undefined && isNeutralKind(m),
         };
       });
       const segments = pageTabRow(tabs, cols, cfg.unicode);

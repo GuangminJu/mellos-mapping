@@ -21166,11 +21166,21 @@ function makeLayerId(raw) {
 function makeGroupId(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
 }
+function makeLaneId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
+function makeNodeKind(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
+var MAP_KINDS = ["dev", "architecture", "dataflow", "behavior-tree", "sequence"];
+function makeMapKind(raw) {
+  return MAP_KINDS.includes(raw) ? ok(raw) : err({ kind: "invalid-map-kind", raw });
+}
 var NODE_STATUSES = ["planned", "in-progress", "done", "regressed"];
 function makeNodeStatus(raw) {
   return NODE_STATUSES.includes(raw) ? ok(raw) : err({ kind: "invalid-status", raw });
 }
-var EMPTY_MAP = { layers: [], groups: [], nodes: [], edges: [] };
+var EMPTY_MAP = { layers: [], groups: [], lanes: [], nodes: [], edges: [] };
 function describeMapError(e) {
   switch (e.kind) {
     case "invalid-id":
@@ -21197,6 +21207,12 @@ function describeMapError(e) {
       return `group "${e.id}" already exists`;
     case "unknown-group":
       return `group "${e.id}" does not exist`;
+    case "invalid-map-kind":
+      return `invalid map kind "${e.raw}" (expected: ${MAP_KINDS.join(" | ")})`;
+    case "duplicate-lane":
+      return `lane "${e.id}" already exists`;
+    case "unknown-lane":
+      return `lane "${e.id}" does not exist`;
     case "group-layer-mismatch":
       return `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); groups cluster nodes within one band`;
     case "layer-not-empty":
@@ -21230,6 +21246,28 @@ function hasEdge(map, from, to) {
 }
 function setTitle(map, title) {
   return { ...map, title };
+}
+function setKind(map, kind) {
+  return { ...map, kind };
+}
+function findLane(map, id) {
+  return map.lanes.find((l) => l.id === id);
+}
+function declareLane(map, input) {
+  if (findLane(map, input.id)) return err({ kind: "duplicate-lane", id: input.id });
+  return ok({ ...map, lanes: [...map.lanes, { id: input.id, label: input.label }] });
+}
+function removeLane(map, id) {
+  if (!findLane(map, id)) return err({ kind: "unknown-lane", id });
+  return ok({
+    ...map,
+    lanes: map.lanes.filter((l) => l.id !== id),
+    nodes: map.nodes.map((n) => {
+      if (n.lane !== id) return n;
+      const { lane: _dropped, ...rest } = n;
+      return rest;
+    })
+  });
 }
 function declareLayer(map, input) {
   if (findLayer(map, input.id)) return err({ kind: "duplicate-layer", id: input.id });
@@ -21270,17 +21308,20 @@ function declareNode(map, input) {
     const bad = checkMembership(map, input.id, input.layer, input.group);
     if (bad) return err(bad);
   }
+  if (input.lane !== void 0 && !findLane(map, input.lane)) return err({ kind: "unknown-lane", id: input.lane });
   const node = {
     id: input.id,
     label: input.label,
     layer: input.layer,
     status: input.status ?? "planned",
     ...input.detail !== void 0 ? { detail: input.detail } : {},
-    ...input.group !== void 0 ? { group: input.group } : {}
+    ...input.group !== void 0 ? { group: input.group } : {},
+    ...input.kind !== void 0 ? { kind: input.kind } : {},
+    ...input.lane !== void 0 ? { lane: input.lane } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
-function linkNodes(map, from, to) {
+function linkNodes(map, from, to, label) {
   if (from === to) return err({ kind: "self-edge", id: from });
   const fromNode = findNode(map, from);
   if (!fromNode) return err({ kind: "unknown-node", id: from });
@@ -21290,7 +21331,7 @@ function linkNodes(map, from, to) {
   const fromRank = findLayer(map, fromNode.layer).rank;
   const toRank = findLayer(map, toNode.layer).rank;
   if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
-  return ok({ ...map, edges: [...map.edges, { from, to }] });
+  return ok({ ...map, edges: [...map.edges, { from, to, ...label !== void 0 ? { label } : {} }] });
 }
 function updateNode(map, input) {
   const node = findNode(map, input.id);
@@ -21299,11 +21340,18 @@ function updateNode(map, input) {
     const bad = checkMembership(map, node.id, node.layer, input.group);
     if (bad) return err(bad);
   }
-  const { group: currentGroup, ...bare } = node;
+  if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
+    return err({ kind: "unknown-lane", id: input.lane });
+  }
+  const { group: currentGroup, kind: currentKind, lane: currentLane, ...bare } = node;
   const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
+  const nextKind = input.kind === void 0 ? currentKind : input.kind === null ? void 0 : input.kind;
+  const nextLane = input.lane === void 0 ? currentLane : input.lane === null ? void 0 : input.lane;
   const updated = {
     ...bare,
     ...nextGroup !== void 0 ? { group: nextGroup } : {},
+    ...nextKind !== void 0 ? { kind: nextKind } : {},
+    ...nextLane !== void 0 ? { lane: nextLane } : {},
     ...input.status !== void 0 ? { status: input.status } : {},
     ...input.label !== void 0 ? { label: input.label } : {},
     ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
@@ -21584,6 +21632,31 @@ function glyphFor(status, opts) {
       return opts.unicode ? "\u2717" : "X";
   }
 }
+var NODE_KIND_GLYPHS = {
+  selector: ["?", "?"],
+  sequence: ["\xBB", ">"],
+  parallel: ["\u2016", "="],
+  decorator: ["\u25CC", "o"],
+  condition: ["\u25C7", "c"],
+  action: ["\xB7", "."],
+  source: ["\u25CB", "o"],
+  transform: ["\u25D0", "%"],
+  sink: ["\u25CF", "*"],
+  service: ["\u25C6", "S"],
+  db: ["\u25A4", "D"],
+  queue: ["\u2263", "Q"],
+  ui: ["\u25A3", "U"]
+};
+function kindGlyph(kind, unicode) {
+  const pair = NODE_KIND_GLYPHS[kind];
+  return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
+}
+function isNeutralKind(map) {
+  return map.kind !== void 0 && map.kind !== "dev";
+}
+function neutralSkin(unicode) {
+  return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
+}
 var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
@@ -21607,12 +21680,14 @@ var DETAIL_INNER_MIN = 22;
 var DETAIL_INNER_MAX = 32;
 var DETAIL_NOTE_ROWS = 3;
 var LABEL_BUDGET_MIN = 4;
-function boxSpec(node, geo) {
+function boxSpec(node, geo, unicode, neutral) {
+  const glyph = node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0;
+  const text2 = !neutral && glyph !== void 0 ? `${glyph} ${node.label}` : node.label;
   if (geo.mode === "constellation") {
     return { w: 3, h: 1, label: "", pad: 0, borderless: true, extra: [] };
   }
   if (geo.mode === "detail") {
-    const innerW = Math.min(Math.max(displayWidth(node.label) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+    const innerW = Math.min(Math.max(displayWidth(text2) + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
     const extra = [];
     if (node.evidence !== void 0) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: "faint" });
     if (node.detail !== void 0) {
@@ -21625,14 +21700,14 @@ function boxSpec(node, geo) {
     return {
       w: innerW + 2,
       h: BOX_H + extra.length,
-      label: fitWidth(node.label, innerW - 4),
+      label: fitWidth(text2, innerW - 4),
       pad: 1,
       borderless: false,
       extra
     };
   }
-  const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(node.label) * geo.scale));
-  const label = fitWidth(node.label, budget);
+  const budget = Math.max(LABEL_BUDGET_MIN, Math.ceil(displayWidth(text2) * geo.scale));
+  const label = fitWidth(text2, budget);
   return {
     w: displayWidth(label) + 4 + 2 * geo.pad,
     h: BOX_H,
@@ -21655,7 +21730,8 @@ function aggregateMap(map) {
     const done = members.filter((n) => n.status === "done").length;
     return {
       id: g.id,
-      label: `${g.label} ${done}/${members.length}`,
+      // neutral kinds document structure, not progress — no member counts
+      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
       layer: g.layer,
       status: groupStatus(map, g.id)
     };
@@ -21670,7 +21746,15 @@ function aggregateMap(map) {
     seen.add(`${from}->${to}`);
     edges.push({ from, to });
   }
-  return { ...map.title !== void 0 ? { title: map.title } : {}, layers: map.layers, groups: [], nodes, edges };
+  return {
+    ...map.title !== void 0 ? { title: map.title } : {},
+    ...map.kind !== void 0 ? { kind: map.kind } : {},
+    layers: map.layers,
+    groups: [],
+    lanes: map.lanes,
+    nodes,
+    edges
+  };
 }
 var AGGREGATE_GEO = {
   mode: "boxes",
@@ -21689,6 +21773,7 @@ function buildCanvas(map, opts) {
 }
 function buildCanvasWith(map, opts, geo) {
   const canvas = new Canvas();
+  const neutral = isNeutralKind(map);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
   if (bands.length === 0) {
     canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
@@ -21700,27 +21785,68 @@ function buildCanvasWith(map, opts, geo) {
   const bandBoxes = bands.map(() => []);
   for (const node of map.nodes) {
     const band = bandIndexOf.get(node.layer);
-    const row = bandBoxes[band];
-    const prev = row[row.length - 1];
-    const box = {
-      node,
-      ...boxSpec(node, geo),
-      x: prev ? prev.x + prev.w + geo.boxGap : LEFT_MARGIN,
-      y: 0
-    };
-    row.push(box);
+    const box = { node, ...boxSpec(node, geo, opts.unicode, neutral), x: LEFT_MARGIN, y: 0 };
+    bandBoxes[band].push(box);
     boxes.set(node.id, box);
+  }
+  const laneCount = map.lanes.length;
+  const laneX = [];
+  const laneW = [];
+  if (laneCount === 0) {
+    for (const row of bandBoxes) {
+      let x = LEFT_MARGIN;
+      for (const box of row) {
+        box.x = x;
+        x += box.w + geo.boxGap;
+      }
+    }
+  } else {
+    const laneGap = geo.boxGap + 2;
+    const laneIndexOf = new Map(map.lanes.map((l, i) => [l.id, i]));
+    const regions = laneCount + 1;
+    const grouped = bandBoxes.map((row) => {
+      const cells = Array.from({ length: regions }, () => []);
+      for (const box of row) {
+        const lane = box.node.lane;
+        cells[lane !== void 0 ? laneIndexOf.get(lane) : regions - 1].push(box);
+      }
+      return cells;
+    });
+    const regionW = Array.from({ length: regions }, () => 0);
+    for (const cells of grouped) {
+      for (let i = 0; i < regions; i++) {
+        const rowW = cells[i].reduce((sum, b, k) => sum + b.w + (k > 0 ? geo.boxGap : 0), 0);
+        regionW[i] = Math.max(regionW[i], rowW);
+      }
+    }
+    for (let i = 0; i < laneCount; i++) regionW[i] = Math.max(regionW[i], displayWidth(map.lanes[i].label) + 2);
+    let x0 = LEFT_MARGIN;
+    for (let i = 0; i < regions; i++) {
+      laneX.push(x0);
+      laneW.push(regionW[i]);
+      x0 += regionW[i] + laneGap;
+    }
+    for (const cells of grouped) {
+      for (let i = 0; i < regions; i++) {
+        let x = laneX[i];
+        for (const box of cells[i]) {
+          box.x = x;
+          x += box.w + geo.boxGap;
+        }
+      }
+    }
   }
   const bandLabel = bands.map((l, i) => {
     const row = bandBoxes[i];
     const done = row.filter((b) => b.node.status === "done").length;
-    return geo.bandCounts && row.length > 0 ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
+    return geo.bandCounts && row.length > 0 && !neutral ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
   });
   let contentWidth = LEFT_MARGIN;
   for (const row of bandBoxes) {
     const last = row[row.length - 1];
     if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
   }
+  for (let i = 0; i < laneCount; i++) contentWidth = Math.max(contentWidth, laneX[i] + laneW[i]);
   for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
   const routes = map.edges.map((e) => {
     const fromBox = boxes.get(e.from);
@@ -21842,6 +21968,11 @@ function buildCanvasWith(map, opts, geo) {
   });
   let y = 0;
   if (map.title !== void 0) y += 1 + geo.titleGap;
+  let laneHeaderY;
+  if (laneCount > 0) {
+    laneHeaderY = y;
+    y += 1 + geo.barGap;
+  }
   const barY = [];
   const gapTrackStartY = [];
   for (let b = 0; b < bands.length; b++) {
@@ -21860,6 +21991,13 @@ function buildCanvasWith(map, opts, geo) {
   const legendY = y + 1;
   const rowYOf = (gap, s) => gapTrackStartY[gap] + segmentRow.get(s);
   if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none", true);
+  if (laneHeaderY !== void 0) {
+    for (let i = 0; i < laneCount; i++) {
+      const label = fitWidth(map.lanes[i].label, laneW[i]);
+      const cx = laneX[i] + Math.max(0, Math.floor((laneW[i] - displayWidth(label)) / 2));
+      canvas.text(cx, laneHeaderY, label, "faint", true);
+    }
+  }
   for (let b = 0; b < bands.length; b++) {
     const label = bandLabel[b];
     for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
@@ -21867,7 +22005,7 @@ function buildCanvasWith(map, opts, geo) {
     canvas.text(labelStart, barY[b], label, "none", true);
   }
   for (const box of boxes.values()) {
-    drawBox(canvas, box, opts, opts.focus !== void 0 && box.node.id === opts.focus);
+    drawBox(canvas, box, opts, neutral, opts.focus !== void 0 && box.node.id === opts.focus);
   }
   for (const r of routes) {
     const sy = r.fromBox.y + r.fromBox.h - 1;
@@ -21916,17 +22054,29 @@ function buildCanvasWith(map, opts, geo) {
       );
     }
   }
-  const legendOpts = { ...opts, spinnerFrame: 0 };
   let lx = LEFT_MARGIN;
-  const legendEntries = [
-    ["planned", "dim"],
-    ["in-progress", "amber"],
-    ["done", "green"],
-    ["regressed", "red"]
-  ];
-  for (const [status, style] of legendEntries) {
-    if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
-    lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+  if (neutral) {
+    lx = canvas.text(lx, legendY, map.kind, "faint");
+    const seen = /* @__PURE__ */ new Set();
+    for (const n of map.nodes) {
+      const k = n.kind;
+      if (k === void 0 || seen.has(k) || kindGlyph(k, opts.unicode) === void 0) continue;
+      seen.add(k);
+      lx = canvas.text(lx, legendY, "   ", "none");
+      lx = canvas.text(lx, legendY, `${kindGlyph(k, opts.unicode)} ${k}`, "none");
+    }
+  } else {
+    const legendOpts = { ...opts, spinnerFrame: 0 };
+    const legendEntries = [
+      ["planned", "dim"],
+      ["in-progress", "amber"],
+      ["done", "green"],
+      ["regressed", "red"]
+    ];
+    for (const [status, style] of legendEntries) {
+      if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
+      lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+    }
   }
   const hits = [...boxes.values()].map((b) => ({
     id: b.node.id,
@@ -21937,18 +22087,19 @@ function buildCanvasWith(map, opts, geo) {
   }));
   return { canvas, hits };
 }
-function drawBox(canvas, box, opts, focused = false) {
+function drawBox(canvas, box, opts, neutral, focused = false) {
   const { node, x, y, w } = box;
-  const skin = skinFor(node.status, opts.unicode);
+  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(node.status, opts.unicode);
+  const slotGlyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, opts.unicode) : void 0) ?? (opts.unicode ? "\xB7" : ".") : glyphFor(node.status, opts);
   if (box.borderless) {
-    canvas.text(x + 1, y, glyphFor(node.status, opts), skin.style, true);
+    canvas.text(x + 1, y, slotGlyph, skin.style, true);
     return;
   }
   const inner = w - 2;
   const pad = box.pad === 1 ? " " : "";
   canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
   canvas.text(x, y + 1, skin.v, skin.style, focused);
-  canvas.text(x + 1, y + 1, `${pad}${glyphFor(node.status, opts)} ${box.label}${pad}`, skin.style, true);
+  canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
   canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
   for (let i = 0; i < box.extra.length; i++) {
     const row = box.extra[i];
@@ -21998,6 +22149,12 @@ function parseMap(raw, path) {
   let map = EMPTY_MAP;
   const title = optionalString(raw["title"]);
   if (title !== void 0) map = setTitle(map, title);
+  const rawKind = optionalString(raw["kind"]);
+  if (rawKind !== void 0) {
+    const kind = makeMapKind(rawKind);
+    if (!kind.ok) return err({ kind: "invariant-violation", path, violation: kind.error });
+    map = setKind(map, kind.value);
+  }
   for (const [i, rawLayer] of asArray(raw["layers"]).entries()) {
     if (!isRecord(rawLayer)) return err({ kind: "bad-shape", path, detail: `layers[${i}] is not an object` });
     const id = makeLayerId(String(rawLayer["id"] ?? ""));
@@ -22010,6 +22167,16 @@ function parseMap(raw, path) {
     const next = declareLayer(map, { id: id.value, name, rank });
     if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
     map = next.value;
+  }
+  for (const [i, rawLane] of asArray(raw["lanes"]).entries()) {
+    if (!isRecord(rawLane)) return err({ kind: "bad-shape", path, detail: `lanes[${i}] is not an object` });
+    const id = makeLaneId(String(rawLane["id"] ?? ""));
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const label = optionalString(rawLane["label"]);
+    if (label === void 0) return err({ kind: "bad-shape", path, detail: `lanes[${i}] needs a string label` });
+    const declared = declareLane(map, { id: id.value, label });
+    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
+    map = declared.value;
   }
   for (const [i, rawGroup] of asArray(raw["groups"]).entries()) {
     if (!isRecord(rawGroup)) return err({ kind: "bad-shape", path, detail: `groups[${i}] is not an object` });
@@ -22041,13 +22208,29 @@ function parseMap(raw, path) {
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       group = made.value;
     }
+    const rawNodeKind = optionalString(rawNode["kind"]);
+    let nodeKind;
+    if (rawNodeKind !== void 0) {
+      const made = makeNodeKind(rawNodeKind);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      nodeKind = made.value;
+    }
+    const rawLane = optionalString(rawNode["lane"]);
+    let lane;
+    if (rawLane !== void 0) {
+      const made = makeLaneId(rawLane);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      lane = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
       layer: layer.value,
       status: status.value,
       ...detail !== void 0 ? { detail } : {},
-      ...group !== void 0 ? { group } : {}
+      ...group !== void 0 ? { group } : {},
+      ...nodeKind !== void 0 ? { kind: nodeKind } : {},
+      ...lane !== void 0 ? { lane } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
@@ -22064,7 +22247,7 @@ function parseMap(raw, path) {
     if (!from.ok) return err({ kind: "invariant-violation", path, violation: from.error });
     const to = makeNodeId(String(rawEdge["to"] ?? ""));
     if (!to.ok) return err({ kind: "invariant-violation", path, violation: to.error });
-    const linked = linkNodes(map, from.value, to.value);
+    const linked = linkNodes(map, from.value, to.value, optionalString(rawEdge["label"]));
     if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
     map = linked.value;
   }
@@ -22074,7 +22257,9 @@ function serializeMap(map) {
   const body = {
     version: STATE_FILE_VERSION,
     ...map.title !== void 0 ? { title: map.title } : {},
+    ...map.kind !== void 0 ? { kind: map.kind } : {},
     layers: map.layers,
+    ...map.lanes.length > 0 ? { lanes: map.lanes } : {},
     ...map.groups.length > 0 ? { groups: map.groups } : {},
     nodes: map.nodes,
     edges: map.edges
@@ -22108,11 +22293,23 @@ function saveMapFile(path, map) {
 // src/server/apply.ts
 function applyDeclare(map, input) {
   let next = input.title !== void 0 ? setTitle(map, input.title) : map;
+  if (input.kind !== void 0) {
+    const kind = makeMapKind(input.kind);
+    if (!kind.ok) return err(`kind: ${describeMapError(kind.error)}`);
+    next = setKind(next, kind.value);
+  }
   for (const [i, l] of (input.layers ?? []).entries()) {
     const id = makeLayerId(l.id);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
     const declared = declareLayer(next, { id: id.value, name: l.name, rank: l.rank });
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
+    next = declared.value;
+  }
+  for (const [i, l] of (input.lanes ?? []).entries()) {
+    const id = makeLaneId(l.id);
+    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
+    const declared = declareLane(next, { id: id.value, label: l.label });
+    if (!declared.ok) return err(`lanes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
   for (const [i, g] of (input.groups ?? []).entries()) {
@@ -22141,13 +22338,27 @@ function applyDeclare(map, input) {
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
       group = parsed.value;
     }
+    let kind;
+    if (n.kind !== void 0) {
+      const parsed = makeNodeKind(n.kind);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      kind = parsed.value;
+    }
+    let lane;
+    if (n.lane !== void 0) {
+      const parsed = makeLaneId(n.lane);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      lane = parsed.value;
+    }
     const declared = declareNode(next, {
       id: id.value,
       label: n.label,
       layer: layer.value,
       ...status !== void 0 ? { status } : {},
       ...n.detail !== void 0 ? { detail: n.detail } : {},
-      ...group !== void 0 ? { group } : {}
+      ...group !== void 0 ? { group } : {},
+      ...kind !== void 0 ? { kind } : {},
+      ...lane !== void 0 ? { lane } : {}
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -22157,7 +22368,7 @@ function applyDeclare(map, input) {
     if (!from.ok) return err(`edges[${i}]: ${describeMapError(from.error)}`);
     const to = makeNodeId(e.to);
     if (!to.ok) return err(`edges[${i}]: ${describeMapError(to.error)}`);
-    const linked = linkNodes(next, from.value, to.value);
+    const linked = linkNodes(next, from.value, to.value, e.label);
     if (!linked.ok) return err(`edges[${i}]: ${describeMapError(linked.error)}`);
     next = linked.value;
   }
@@ -22181,13 +22392,29 @@ function applyUpdate(map, input) {
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
       group = parsed.value;
     }
+    let kind;
+    if (u.kind === null) kind = null;
+    else if (u.kind !== void 0) {
+      const parsed = makeNodeKind(u.kind);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      kind = parsed.value;
+    }
+    let lane;
+    if (u.lane === null) lane = null;
+    else if (u.lane !== void 0) {
+      const parsed = makeLaneId(u.lane);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      lane = parsed.value;
+    }
     const updated = updateNode(next, {
       id: id.value,
       ...status !== void 0 ? { status } : {},
       ...u.label !== void 0 ? { label: u.label } : {},
       ...u.evidence !== void 0 ? { evidence: u.evidence } : {},
       ...u.detail !== void 0 ? { detail: u.detail } : {},
-      ...group !== void 0 ? { group } : {}
+      ...group !== void 0 ? { group } : {},
+      ...kind !== void 0 ? { kind } : {},
+      ...lane !== void 0 ? { lane } : {}
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
@@ -22219,6 +22446,13 @@ function applyRemove(map, input) {
     if (!removed.ok) return err(`groups[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
+  for (const [i, rawId] of (input.lanes ?? []).entries()) {
+    const id = makeLaneId(rawId);
+    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
+    const removed = removeLane(next, id.value);
+    if (!removed.ok) return err(`lanes[${i}]: ${describeMapError(removed.error)}`);
+    next = removed.value;
+  }
   for (const [i, rawId] of (input.layers ?? []).entries()) {
     const id = makeLayerId(rawId);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
@@ -22232,12 +22466,12 @@ function summarize(map) {
   const byStatus = { planned: 0, "in-progress": 0, done: 0, regressed: 0 };
   for (const n of map.nodes) byStatus[n.status]++;
   const statusPart = Object.entries(byStatus).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`).join(", ");
-  return `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` + (statusPart ? ` [${statusPart}]` : "") + (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : "") + `, ${map.edges.length} edge(s)`;
+  return `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` + (statusPart ? ` [${statusPart}]` : "") + (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : "") + (map.lanes.length > 0 ? `, ${map.lanes.length} lane(s)` : "") + `, ${map.edges.length} edge(s)` + (map.kind !== void 0 && map.kind !== "dev" ? ` (${map.kind})` : "");
 }
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.8.0";
+var SERVER_VERSION = "0.9.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var PAGE = ID.optional().describe(
   "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
@@ -22247,6 +22481,12 @@ var EDGE = external_exports.object({
   from: ID.describe("the node that USES the other (must live on a higher layer)"),
   to: ID.describe("the node being used (must live on a strictly lower layer)")
 });
+var KIND = external_exports.enum(["dev", "architecture", "dataflow", "behavior-tree", "sequence"]).describe(
+  "diagram kind. dev (default) = the live progress ledger with status skins. The rest are documentation diagrams rendered neutrally: architecture (layered components; also fits call graphs and module dependencies), dataflow (source\u2192transform\u2192sink, stages as layers), behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), sequence (rank = time step, EARLIEST at rank 0 = bottom \u2014 later events stand on earlier ones; declare lanes as participants). State machines are unsupported: cycles cannot enter a Mellos map."
+);
+var NODE_KIND = ID.describe(
+  "node kind rendered as a glyph prefix. Known: selector | sequence | parallel | decorator | condition | action (behavior trees); source | transform | sink (dataflow); service | db | queue | ui (architecture). Unknown kinds are kept and shown in the detail panel."
+);
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
@@ -22272,10 +22512,17 @@ function buildServer(stateFile) {
     "mmap_declare",
     {
       title: "Declare map structure",
-      description: "Grow the Mellos map: set the title, add layer bands, add groups (labeled subsystems within a band \u2014 the zoomed-out view renders groups, so declare them for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
+      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within a band \u2014 the zoomed-out view renders groups, so declare them for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
       inputSchema: {
         page: PAGE,
         title: external_exports.string().max(120).optional().describe("map title, e.g. the feature being built"),
+        kind: KIND.optional(),
+        lanes: external_exports.array(
+          external_exports.object({
+            id: ID,
+            label: external_exports.string().min(1).max(60).describe("column name, e.g. a sequence participant")
+          })
+        ).optional().describe("vertical columns crossing all bands; declaration order = left-to-right"),
         layers: external_exports.array(
           external_exports.object({
             id: ID,
@@ -22297,10 +22544,12 @@ function buildServer(stateFile) {
             layer: ID.describe("id of the band this node lives in"),
             status: STATUS.optional().describe("defaults to planned"),
             detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions"),
-            group: ID.optional().describe("same-band group this node belongs to")
+            group: ID.optional().describe("same-band group this node belongs to"),
+            kind: NODE_KIND.optional(),
+            lane: ID.optional().describe("lane (column) this node belongs to")
           })
         ).optional(),
-        edges: external_exports.array(EDGE).optional()
+        edges: external_exports.array(EDGE.extend({ label: external_exports.string().max(80).optional().describe("what flows along the edge") })).optional()
       }
     },
     (input) => mutate(input.page, (map) => applyDeclare(map, input))
@@ -22319,7 +22568,9 @@ function buildServer(stateFile) {
             label: external_exports.string().min(1).max(60).optional(),
             evidence: external_exports.string().max(200).optional().describe("for done: how it was verified; for regressed: what broke"),
             detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions"),
-            group: ID.nullable().optional().describe("join this same-band group; null leaves the current group")
+            group: ID.nullable().optional().describe("join this same-band group; null leaves the current group"),
+            kind: NODE_KIND.nullable().optional().describe("set the node kind; null clears it"),
+            lane: ID.nullable().optional().describe("join this lane; null leaves the current lane")
           })
         ).min(1)
       }
@@ -22336,6 +22587,7 @@ function buildServer(stateFile) {
         edges: external_exports.array(EDGE).optional(),
         nodes: external_exports.array(ID).optional(),
         groups: external_exports.array(ID).optional().describe("groups to remove; members stay, merely ungrouped"),
+        lanes: external_exports.array(ID).optional().describe("lanes to remove; members stay, merely off-lane"),
         layers: external_exports.array(ID).optional().describe("bands to remove; must be empty of nodes and groups")
       }
     },

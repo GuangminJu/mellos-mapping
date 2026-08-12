@@ -9,8 +9,17 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
-import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
+import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
+import {
+  EMPTY_MAP,
+  type GroupId,
+  type LaneId,
+  type LayerId,
+  type MellosMap,
+  type NodeId,
+  type NodeKind,
+  type Result,
+} from '../domain/types.js';
 import {
   listPageFiles,
   loadMapFile,
@@ -36,6 +45,7 @@ function mustFail<T, E>(r: Result<T, E>): E {
 const lid = (raw: string): LayerId => raw as LayerId;
 const nid = (raw: string): NodeId => raw as NodeId;
 const gid = (raw: string): GroupId => raw as GroupId;
+const laid = (raw: string): LaneId => raw as LaneId;
 
 function sampleMap(): MellosMap {
   let map = setTitle(EMPTY_MAP, '梅勒斯地图');
@@ -114,11 +124,47 @@ describe('boundary validation (P1)', () => {
     expect(e).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'group-layer-mismatch' } });
   });
 
-  it('omits the groups key entirely for group-free maps (stable old files)', () => {
+  it('omits the groups/lanes/kind keys entirely when unused (stable old files)', () => {
     let map = setTitle(EMPTY_MAP, 't');
     map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
-    expect(serializeMap(map)).not.toContain('"groups"');
+    const text = serializeMap(map);
+    expect(text).not.toContain('"groups"');
+    expect(text).not.toContain('"lanes"');
+    expect(text).not.toContain('"kind"');
+    expect(must(parseMap(JSON.parse(text), 'x'))).toEqual(map);
+  });
+
+  it('round-trips kind, lanes, node kind/lane and edge labels', () => {
+    let map = setKind(setTitle(EMPTY_MAP, '登录时序'), 'sequence');
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
+    map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
+    map = must(
+      declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: laid('client'), kind: 'action' as NodeKind }),
+    );
+    map = must(declareNode(map, { id: nid('verify'), label: '校验凭证', layer: lid('t1'), lane: laid('server') }));
+    map = must(linkNodes(map, nid('verify'), nid('req'), '用户名+口令'));
     expect(must(parseMap(JSON.parse(serializeMap(map)), 'x'))).toEqual(map);
+  });
+
+  it('rejects a hand-edited unknown map kind and a node on a missing lane', () => {
+    expect(
+      mustFail(parseMap({ version: 1, kind: 'state-machine', layers: [], nodes: [], edges: [] }, 'x')),
+    ).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'invalid-map-kind' } });
+    expect(
+      mustFail(
+        parseMap(
+          {
+            version: 1,
+            layers: [{ id: 'base', name: 'B', rank: 0 }],
+            nodes: [{ id: 'n', label: 'N', layer: 'base', status: 'planned', lane: 'ghost' }],
+            edges: [],
+          },
+          'x',
+        ),
+      ),
+    ).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'unknown-lane' } });
   });
 
   it('rejects a node pointing at a missing layer', () => {

@@ -13,26 +13,34 @@
 
 import {
   declareGroup,
+  declareLane,
   declareLayer,
   declareNode,
   linkNodes,
   removeEdge,
   removeGroup,
+  removeLane,
   removeLayer,
   removeNode,
+  setKind,
   setTitle,
   updateNode,
 } from '../domain/ops.js';
 import {
   type GroupId,
+  type LaneId,
   type MellosMap,
+  type NodeKind,
   type NodeStatus,
   type Result,
   describeMapError,
   err,
   makeGroupId,
+  makeLaneId,
   makeLayerId,
+  makeMapKind,
   makeNodeId,
+  makeNodeKind,
   makeNodeStatus,
   ok,
 } from '../domain/types.js';
@@ -41,7 +49,10 @@ import {
 // zod-inferred tool inputs under exactOptionalPropertyTypes.
 export interface DeclareInput {
   readonly title?: string | undefined;
+  /** Diagram kind (dev | architecture | dataflow | behavior-tree | sequence). */
+  readonly kind?: string | undefined;
   readonly layers?: ReadonlyArray<{ readonly id: string; readonly name: string; readonly rank: number }> | undefined;
+  readonly lanes?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
   readonly groups?:
     | ReadonlyArray<{ readonly id: string; readonly label: string; readonly layer: string }>
     | undefined;
@@ -53,9 +64,13 @@ export interface DeclareInput {
         readonly status?: string | undefined;
         readonly detail?: string | undefined;
         readonly group?: string | undefined;
+        readonly kind?: string | undefined;
+        readonly lane?: string | undefined;
       }>
     | undefined;
-  readonly edges?: ReadonlyArray<{ readonly from: string; readonly to: string }> | undefined;
+  readonly edges?:
+    | ReadonlyArray<{ readonly from: string; readonly to: string; readonly label?: string | undefined }>
+    | undefined;
 }
 
 export interface UpdateInput {
@@ -67,6 +82,10 @@ export interface UpdateInput {
     readonly detail?: string | undefined;
     /** A group id joins that group; null leaves the current one. */
     readonly group?: string | null | undefined;
+    /** A kind slug sets the node kind; null clears it. */
+    readonly kind?: string | null | undefined;
+    /** A lane id joins that lane; null leaves the current one. */
+    readonly lane?: string | null | undefined;
   }>;
 }
 
@@ -74,18 +93,32 @@ export interface RemoveInput {
   readonly nodes?: ReadonlyArray<string> | undefined;
   readonly edges?: ReadonlyArray<{ readonly from: string; readonly to: string }> | undefined;
   readonly groups?: ReadonlyArray<string> | undefined;
+  readonly lanes?: ReadonlyArray<string> | undefined;
   readonly layers?: ReadonlyArray<string> | undefined;
 }
 
-/** Grow the map: set a title, add bands, add groups, add nodes, add edges — in that order. */
+/** Grow the map: title, kind, bands, lanes, groups, nodes, edges — in that order. */
 export function applyDeclare(map: MellosMap, input: DeclareInput): Result<MellosMap, string> {
   let next = input.title !== undefined ? setTitle(map, input.title) : map;
+  if (input.kind !== undefined) {
+    const kind = makeMapKind(input.kind);
+    if (!kind.ok) return err(`kind: ${describeMapError(kind.error)}`);
+    next = setKind(next, kind.value);
+  }
 
   for (const [i, l] of (input.layers ?? []).entries()) {
     const id = makeLayerId(l.id);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
     const declared = declareLayer(next, { id: id.value, name: l.name, rank: l.rank });
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
+    next = declared.value;
+  }
+
+  for (const [i, l] of (input.lanes ?? []).entries()) {
+    const id = makeLaneId(l.id);
+    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
+    const declared = declareLane(next, { id: id.value, label: l.label });
+    if (!declared.ok) return err(`lanes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
 
@@ -116,6 +149,18 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
       group = parsed.value;
     }
+    let kind: NodeKind | undefined;
+    if (n.kind !== undefined) {
+      const parsed = makeNodeKind(n.kind);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      kind = parsed.value;
+    }
+    let lane: LaneId | undefined;
+    if (n.lane !== undefined) {
+      const parsed = makeLaneId(n.lane);
+      if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      lane = parsed.value;
+    }
     const declared = declareNode(next, {
       id: id.value,
       label: n.label,
@@ -123,6 +168,8 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       ...(status !== undefined ? { status } : {}),
       ...(n.detail !== undefined ? { detail: n.detail } : {}),
       ...(group !== undefined ? { group } : {}),
+      ...(kind !== undefined ? { kind } : {}),
+      ...(lane !== undefined ? { lane } : {}),
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -133,7 +180,7 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
     if (!from.ok) return err(`edges[${i}]: ${describeMapError(from.error)}`);
     const to = makeNodeId(e.to);
     if (!to.ok) return err(`edges[${i}]: ${describeMapError(to.error)}`);
-    const linked = linkNodes(next, from.value, to.value);
+    const linked = linkNodes(next, from.value, to.value, e.label);
     if (!linked.ok) return err(`edges[${i}]: ${describeMapError(linked.error)}`);
     next = linked.value;
   }
@@ -160,6 +207,20 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
       group = parsed.value;
     }
+    let kind: NodeKind | null | undefined;
+    if (u.kind === null) kind = null;
+    else if (u.kind !== undefined) {
+      const parsed = makeNodeKind(u.kind);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      kind = parsed.value;
+    }
+    let lane: LaneId | null | undefined;
+    if (u.lane === null) lane = null;
+    else if (u.lane !== undefined) {
+      const parsed = makeLaneId(u.lane);
+      if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      lane = parsed.value;
+    }
     const updated = updateNode(next, {
       id: id.value,
       ...(status !== undefined ? { status } : {}),
@@ -167,6 +228,8 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
       ...(u.evidence !== undefined ? { evidence: u.evidence } : {}),
       ...(u.detail !== undefined ? { detail: u.detail } : {}),
       ...(group !== undefined ? { group } : {}),
+      ...(kind !== undefined ? { kind } : {}),
+      ...(lane !== undefined ? { lane } : {}),
     });
     if (!updated.ok) return err(`updates[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
@@ -174,7 +237,7 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
   return ok(next);
 }
 
-/** Revise the map: drop edges, then nodes, then groups, then (empty) bands — in that order. */
+/** Revise the map: drop edges, nodes, groups, lanes, then (empty) bands — in that order. */
 export function applyRemove(map: MellosMap, input: RemoveInput): Result<MellosMap, string> {
   let next = map;
 
@@ -204,6 +267,14 @@ export function applyRemove(map: MellosMap, input: RemoveInput): Result<MellosMa
     next = removed.value;
   }
 
+  for (const [i, rawId] of (input.lanes ?? []).entries()) {
+    const id = makeLaneId(rawId);
+    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
+    const removed = removeLane(next, id.value);
+    if (!removed.ok) return err(`lanes[${i}]: ${describeMapError(removed.error)}`);
+    next = removed.value;
+  }
+
   for (const [i, rawId] of (input.layers ?? []).entries()) {
     const id = makeLayerId(rawId);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
@@ -227,6 +298,8 @@ export function summarize(map: MellosMap): string {
     `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` +
     (statusPart ? ` [${statusPart}]` : '') +
     (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : '') +
-    `, ${map.edges.length} edge(s)`
+    (map.lanes.length > 0 ? `, ${map.lanes.length} lane(s)` : '') +
+    `, ${map.edges.length} edge(s)` +
+    (map.kind !== undefined && map.kind !== 'dev' ? ` (${map.kind})` : '')
   );
 }

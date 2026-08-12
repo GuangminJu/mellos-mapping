@@ -8,8 +8,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
-import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
+import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
+import {
+  EMPTY_MAP,
+  type GroupId,
+  type LaneId,
+  type LayerId,
+  type MapKind,
+  type MellosMap,
+  type NodeId,
+  type NodeKind,
+  type Result,
+} from '../domain/types.js';
 import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -19,6 +29,7 @@ function must<T, E>(r: Result<T, E>): T {
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
 const gid = (s: string): GroupId => s as GroupId;
+const laid = (s: string): LaneId => s as LaneId;
 
 const MONO = { color: false, unicode: true, spinnerFrame: 0 } as const;
 
@@ -296,5 +307,64 @@ describe('renderMap', () => {
     const groundBar = lines.findIndex((l) => l.includes('原语层'));
     const domainTop = lines.slice(groundBar).find((l) => l.includes('┏'))!;
     expect([...domainTop].filter((ch) => ch === '┷')).toHaveLength(2);
+  });
+});
+
+describe('diagram kinds', () => {
+  /** A tiny behavior tree: root selector over two actions. */
+  function behaviorTree(): MellosMap {
+    let map = setTitle(EMPTY_MAP, '巡逻行为树');
+    map = setKind(map, 'behavior-tree' as MapKind);
+    map = must(declareLayer(map, { id: lid('leaves'), name: '叶子', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('root'), name: '根', rank: 1 }));
+    map = must(declareNode(map, { id: nid('walk'), label: '走向路点', layer: lid('leaves'), kind: 'action' as NodeKind }));
+    map = must(declareNode(map, { id: nid('rest'), label: '原地休息', layer: lid('leaves'), kind: 'action' as NodeKind }));
+    map = must(declareNode(map, { id: nid('pick'), label: '选择', layer: lid('root'), kind: 'selector' as NodeKind }));
+    map = must(linkNodes(map, nid('pick'), nid('walk')));
+    map = must(linkNodes(map, nid('pick'), nid('rest')));
+    return map;
+  }
+
+  it('neutral kinds drop status skins: solid plain boxes, kind glyph in the slot', () => {
+    const text = renderMap(behaviorTree(), MONO).join('\n');
+    expect(text).toContain('? 选择'); // selector glyph takes the status slot
+    expect(text).toContain('· 走向路点'); // action glyph
+    expect(text).not.toContain('╌'); // no ghost dashes on a neutral page
+    expect(text).not.toContain('planned'); // no status legend
+    expect(text).toContain('behavior-tree'); // kind legend instead
+    expect(text).toContain('? selector');
+  });
+
+  it('the same nodes on a dev page keep status skins and prefix the kind glyph to the label', () => {
+    const { kind: _dropped, ...devMap } = behaviorTree();
+    const text = renderMap(devMap, MONO).join('\n');
+    expect(text).toContain('· ? 选择'); // planned glyph, then selector glyph in the label
+    expect(text).toContain('planned'); // status legend is back
+  });
+
+  it('lanes align members under their column across bands and draw headers', () => {
+    let map = setTitle(EMPTY_MAP, '登录时序');
+    map = setKind(map, 'sequence' as MapKind);
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
+    map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
+    map = must(declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: laid('client') }));
+    map = must(declareNode(map, { id: nid('check'), label: '校验凭证', layer: lid('t1'), lane: laid('server') }));
+    map = must(declareNode(map, { id: nid('show'), label: '显示结果', layer: lid('t1'), lane: laid('client') }));
+    map = must(linkNodes(map, nid('check'), nid('req'), '用户名+口令'));
+
+    const lines = renderMap(map, MONO);
+    const header = lines.find((l) => l.includes('客户端'))!;
+    expect(header).toContain('服务端'); // both lane headers on one row
+    // same-lane boxes align: the t1 client box starts at the same column as the t0 client box
+    const showRow = lines.find((l) => l.includes('显示结果'))!;
+    const reqRow = lines.find((l) => l.includes('发起登录'))!;
+    expect(showRow.indexOf('│')).toBe(reqRow.indexOf('│'));
+    // within the t1 band row, the client-lane box sits left of the server-lane box
+    expect(showRow).toContain('校验凭证'); // both t1 boxes share the row
+    expect(showRow.indexOf('显示结果')).toBeLessThan(showRow.indexOf('校验凭证'));
+    // and the lane headers sit in the same left-to-right order
+    expect(header.indexOf('客户端')).toBeLessThan(header.indexOf('服务端'));
   });
 });

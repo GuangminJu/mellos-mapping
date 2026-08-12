@@ -131,6 +131,62 @@ describe('applyDeclare', () => {
   });
 });
 
+describe('diagram kinds — one transaction declares a whole documentation diagram', () => {
+  it('declares kind, lanes, node kinds/lanes and labeled edges in one batch', () => {
+    const map = must(
+      applyDeclare(EMPTY_MAP, {
+        title: '登录时序',
+        kind: 'sequence',
+        layers: [
+          { id: 't0', name: '第1步', rank: 0 },
+          { id: 't1', name: '第2步', rank: 1 },
+        ],
+        lanes: [
+          { id: 'client', label: '客户端' },
+          { id: 'server', label: '服务端' },
+        ],
+        nodes: [
+          { id: 'req', label: '发起登录', layer: 't0', lane: 'client', kind: 'action' },
+          { id: 'verify', label: '校验凭证', layer: 't1', lane: 'server' },
+        ],
+        edges: [{ from: 'verify', to: 'req', label: '用户名+口令' }],
+      }),
+    );
+    expect(map.kind).toBe('sequence');
+    expect(map.lanes.map((l) => l.id)).toEqual(['client', 'server']);
+    expect(map.nodes[0]).toMatchObject({ lane: 'client', kind: 'action' });
+    expect(map.edges[0]!.label).toBe('用户名+口令');
+  });
+
+  it('refuses an unknown kind with no partial change, and updates can re-lane / clear kind', () => {
+    expect(mustFail(applyDeclare(EMPTY_MAP, { kind: 'state-machine' }))).toContain('invalid map kind');
+
+    let map = must(
+      applyDeclare(EMPTY_MAP, {
+        layers: [{ id: 'base', name: 'B', rank: 0 }],
+        lanes: [{ id: 'l1', label: 'L1' }],
+        nodes: [{ id: 'n', label: 'N', layer: 'base', lane: 'l1', kind: 'db' }],
+      }),
+    );
+    map = must(applyUpdate(map, { updates: [{ id: 'n', lane: null, kind: null }] }));
+    expect(map.nodes[0]!.lane).toBeUndefined();
+    expect(map.nodes[0]!.kind).toBeUndefined();
+    map = must(applyRemove(map, { lanes: ['l1'] }));
+    expect(map.lanes).toEqual([]);
+  });
+
+  it('summarize reports lanes and non-dev kinds', () => {
+    const map = must(
+      applyDeclare(EMPTY_MAP, {
+        kind: 'architecture',
+        layers: [{ id: 'base', name: 'B', rank: 0 }],
+        lanes: [{ id: 'l1', label: 'L1' }],
+      }),
+    );
+    expect(summarize(map)).toBe('map now: 1 layer(s), 0 node(s), 1 lane(s), 0 edge(s) (architecture)');
+  });
+});
+
 describe('applyUpdate', () => {
   it('records status with evidence across several nodes', () => {
     const updated = must(

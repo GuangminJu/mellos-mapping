@@ -6,8 +6,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { declareGroup, declareLayer, declareNode, linkNodes, updateNode } from '../domain/ops.js';
-import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
+import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, updateNode } from '../domain/ops.js';
+import {
+  EMPTY_MAP,
+  type GroupId,
+  type LaneId,
+  type LayerId,
+  type MapKind,
+  type MellosMap,
+  type NodeId,
+  type NodeKind,
+  type Result,
+} from '../domain/types.js';
 import type { BoxHit } from '../render/render.js';
 import {
   type PageTab,
@@ -142,6 +152,54 @@ describe('pageTabRow', () => {
     expect(segments.length).toBe(2);
     expect(segments[1]!.text.endsWith('…')).toBe(true);
     expect(segments[1]!.hi).toBeLessThanOrEqual(20);
+  });
+});
+
+describe('diagram kinds in the panel', () => {
+  /** A two-step sequence page: client asks, server checks. */
+  function sequencePage(): MellosMap {
+    let map = setKind(EMPTY_MAP, 'sequence' as MapKind);
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLane(map, { id: 'client' as LaneId, label: '客户端' }));
+    map = must(
+      declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: 'client' as LaneId, kind: 'action' as NodeKind }),
+    );
+    map = must(declareNode(map, { id: nid('check'), label: '校验凭证', layer: lid('t1') }));
+    map = must(linkNodes(map, nid('check'), nid('req'), '用户名+口令'));
+    return map;
+  }
+
+  it('edge labels ride along in the wire lines', () => {
+    const panel = nodePanel(sequencePage(), 'check', true, 80, false)!;
+    expect(panel[2]!.text).toBe('uses →  · 发起登录 (用户名+口令)');
+    const reqPanel = nodePanel(sequencePage(), 'req', true, 80, false)!;
+    expect(reqPanel[3]!.text).toBe('used by ←  · 校验凭证 (用户名+口令)');
+  });
+
+  it('neutral pages hide the status word and show kind glyph, lane and kind slug', () => {
+    const panel = nodePanel(sequencePage(), 'req', true, 80, false)!;
+    expect(panel[0]!.text).toBe('· 发起登录 [req] · 第1步 · 客户端 · action');
+    expect(panel[0]!.text).not.toContain('planned');
+    expect(panel[0]!.sgr).toBe('1'); // bold, no status color
+  });
+
+  it('the dashboard says what kind of diagram this is instead of counting progress', () => {
+    const panel = mapPanel(sequencePage(), true, 80);
+    expect(panel[1]!.text).toBe('2 layers · 2 nodes · 1 edges · 1 lanes');
+    expect(panel[2]!.text).toBe('sequence diagram');
+  });
+
+  it('neutral tabs drop the status glyph and go cyan when fresh', () => {
+    const tabs: PageTab[] = [
+      { title: '登录时序', status: 'planned', active: false, fresh: true, neutral: true },
+      { title: '开发页', status: 'done', active: true, fresh: false },
+    ];
+    const segments = pageTabRow(tabs, 200, true);
+    expect(segments[0]!.text).toBe(' ○ 登录时序 '); // no status glyph
+    expect(segments[0]!.sgr).toBe('36');
+    expect(segments[1]!.text).toBe(' ● ■ 开发页 '); // dev tabs unchanged
+    expect(segments[1]!.sgr).toBe('32;1');
   });
 });
 
