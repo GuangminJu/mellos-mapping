@@ -10,8 +10,10 @@
  *   hover a node   spotlight its wires, preview it in the detail panel
  *   click a node   pin it — the panel stays after the mouse leaves
  *   click empty / Esc   unpin
+ *   wheel / + / -  zoom the picture (scale first, mode switch at the ends),
+ *                  anchored on the focused node or the view center
  *   left-drag      pan when the map is larger than the pane
- *   wheel / shift+wheel, hjkl / arrows, 0   pan / nudge / reset
+ *   shift+wheel, hjkl / arrows, 0   scroll / nudge / reset pan+zoom
  *   q              quit
  *
  * The bottom of the pane is a fixed-height detail panel: a separator, a
@@ -32,10 +34,23 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { groupStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
-import { type BoxHit, displayWidth, renderMapWindow } from '../render/render.js';
+import {
+  type BoxHit,
+  type ZoomStep,
+  ZOOM_DEFAULT,
+  clampZoom,
+  fitWidth,
+  renderMapWindow,
+  wrapWidth,
+  zoomLabel,
+} from '../render/render.js';
 import { STATE_FILE_RELATIVE_PATH, describeStoreError, loadMapFile } from '../store/store.js';
 import { parseInput } from './input.js';
+
+// Width helpers live with the renderer now; re-exported for panel tests.
+export { fitWidth, wrapWidth };
 
 interface WatchConfig {
   readonly file: string;
@@ -103,43 +118,42 @@ const STATUS_SGR: Readonly<Record<NodeStatus, string>> = {
   regressed: '31',
 };
 
-/** Truncate to a display width, ANSI-free input, appending … when cut. */
-export function fitWidth(s: string, width: number): string {
-  if (displayWidth(s) <= width) return s;
-  let out = '';
-  let w = 0;
-  for (const ch of s) {
-    const cw = displayWidth(ch);
-    if (w + cw > width - 1) break;
-    out += ch;
-    w += cw;
+/**
+ * Keep a zoom change visually anchored. With an anchor node (same id hit
+ * before and after), shift the pan so the node stays at the same screen
+ * position; without one, scale the pan proportionally to the content size.
+ * Clamping to the content bounds is paint()'s job, as always.
+ */
+export function anchorOffsets(
+  anchor: { readonly before: BoxHit; readonly after: BoxHit } | undefined,
+  offset: { readonly x: number; readonly y: number },
+  before: { readonly w: number; readonly h: number },
+  after: { readonly w: number; readonly h: number },
+): { x: number; y: number } {
+  if (anchor) {
+    return {
+      x: Math.round(offset.x + anchor.after.x + anchor.after.w / 2 - (anchor.before.x + anchor.before.w / 2)),
+      y: Math.round(offset.y + anchor.after.y + anchor.after.h / 2 - (anchor.before.y + anchor.before.h / 2)),
+    };
   }
-  return out + '…';
+  return {
+    x: before.w > 0 ? Math.round((offset.x * after.w) / before.w) : 0,
+    y: before.h > 0 ? Math.round((offset.y * after.h) / before.h) : 0,
+  };
 }
 
-/** Hard word-wrap by display width (CJK-aware, splits anywhere). */
-export function wrapWidth(s: string, width: number): string[] {
-  const lines: string[] = [];
-  let line = '';
-  let w = 0;
-  for (const ch of s.replace(/\r/g, '')) {
-    if (ch === '\n') {
-      lines.push(line);
-      line = '';
-      w = 0;
-      continue;
+/** The hit whose center is nearest to (cx, cy) by Manhattan distance. */
+export function nearestHit(hits: readonly BoxHit[], cx: number, cy: number): BoxHit | undefined {
+  let best: BoxHit | undefined;
+  let bestDistance = Infinity;
+  for (const h of hits) {
+    const d = Math.abs(h.x + h.w / 2 - cx) + Math.abs(h.y + h.h / 2 - cy);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = h;
     }
-    const cw = displayWidth(ch);
-    if (w + cw > width) {
-      lines.push(line);
-      line = '';
-      w = 0;
-    }
-    line += ch;
-    w += cw;
   }
-  if (line !== '') lines.push(line);
-  return lines;
+  return best;
 }
 
 export interface PanelLine {
@@ -148,8 +162,9 @@ export interface PanelLine {
 }
 
 /**
- * The detail panel for a focused node: header, evidence, both wire
- * directions with each neighbour's status glyph, wrapped design notes.
+ * The detail panel for a focused node OR group (the far zoom's boxes are
+ * groups): header, evidence/members, both wire directions with each
+ * neighbour's status glyph, wrapped design notes.
  * Always exactly PANEL_CONTENT_ROWS lines (padded with blanks).
  */
 export function nodePanel(
@@ -159,9 +174,57 @@ export function nodePanel(
   width: number,
   pinned: boolean,
 ): PanelLine[] | undefined {
+  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
+
+  const group = map.groups.find((gr) => (gr.id as string) === focusId);
+  if (group) {
+    const members = map.nodes.filter((n) => n.group === group.id);
+    const memberIds = new Set(members.map((n) => n.id as string));
+    const status = groupStatus(map, group.id);
+    const layerName = map.layers.find((l) => l.id === group.layer)?.name ?? (group.layer as string);
+    const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
+    // A neighbour is shown as its own group when it has one, else as itself.
+    const repLabel = (id: string): string => {
+      const n = map.nodes.find((x) => (x.id as string) === id)!;
+      const owner = n.group !== undefined ? map.groups.find((gr) => gr.id === n.group) : undefined;
+      return owner !== undefined ? `${g(groupStatus(map, owner.id))} ${owner.label}` : `${g(n.status)} ${n.label}`;
+    };
+    const uses = [
+      ...new Set(
+        map.edges
+          .filter((e) => memberIds.has(e.from as string) && !memberIds.has(e.to as string))
+          .map((e) => repLabel(e.to as string)),
+      ),
+    ];
+    const usedBy = [
+      ...new Set(
+        map.edges
+          .filter((e) => memberIds.has(e.to as string) && !memberIds.has(e.from as string))
+          .map((e) => repLabel(e.from as string)),
+      ),
+    ];
+    const lines: PanelLine[] = [
+      {
+        text: fitWidth(
+          `${g(status)} ${group.label} [${group.id}] · ${layerName} · ${status} · ${members.length} member(s)${pinMark}`,
+          width,
+        ),
+        sgr: `${STATUS_SGR[status]};1`,
+      },
+      {
+        text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join('  ') || '—'}`, width),
+        sgr: '',
+      },
+      { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
+      { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
+    ];
+    while (lines.length < PANEL_CONTENT_ROWS) lines.push({ text: '', sgr: '' });
+    return lines;
+  }
+
   const node = map.nodes.find((n) => (n.id as string) === focusId);
   if (!node) return undefined;
-  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? (node.layer as string);
   const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
   const withGlyph = (id: string): string => {
@@ -226,14 +289,16 @@ function main(): void {
   let map: MellosMap | undefined;
   let notice = `waiting for ${cfg.file} ...`;
 
-  // viewport pan + interaction state
+  // viewport pan/zoom + interaction state
   let offsetX = 0;
   let offsetY = 0;
+  let zoom: ZoomStep = ZOOM_DEFAULT;
   let dragAnchor: { x: number; y: number; ox: number; oy: number } | undefined;
   let press: { moved: boolean } | undefined;
   let hoverId: string | undefined;
   let selectedId: string | undefined;
   let lastHits: readonly BoxHit[] = [];
+  let lastContent = { w: 0, h: 0 };
   let pendingInput = '';
 
   const viewHeight = (): number => Math.max(1, (process.stdout.rows ?? 30) - PANEL_ROWS - 1);
@@ -267,7 +332,7 @@ function main(): void {
     if (map !== undefined) {
       const windowed = renderMapWindow(
         map,
-        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus },
+        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
         { x: offsetX, y: offsetY, width: cols, height: viewH },
       );
       // clamp AFTER measuring so a shrinking map pulls the view back in
@@ -282,6 +347,7 @@ function main(): void {
       pannable = maxX > 0 || maxY > 0;
       body = windowed.lines;
       lastHits = windowed.hits;
+      lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
       body = [notice];
@@ -307,9 +373,10 @@ function main(): void {
       ),
     ];
 
+    const zoomTag = `${cfg.unicode ? '⊕' : 'zoom'} ${zoomLabel(zoom)}`;
     const hint = !interactive
       ? cfg.file
-      : (pannable ? 'drag/wheel pan · ' : '') + 'hover/click nodes · 0 reset · Esc unpin · q quit';
+      : `${zoomTag} · wheel zoom · ` + (pannable ? 'drag pan · ' : '') + 'hover/click · 0 reset · q quit';
     const footer = cfg.color ? `\x1b[90m ${hint}${panned}${RESET}` : ` ${hint}${panned}`;
 
     let frame = HOME;
@@ -364,6 +431,7 @@ function main(): void {
           case 'reset':
             offsetX = 0;
             offsetY = 0;
+            zoom = ZOOM_DEFAULT;
             dirty = true;
             break;
           case 'clear':
@@ -375,6 +443,32 @@ function main(): void {
             offsetY += event.dy;
             dirty = true;
             break;
+          case 'zoom': {
+            const next = clampZoom(zoom + event.delta);
+            if (next === zoom || map === undefined) break;
+            // anchor on the focused node, else whatever sits mid-view
+            const cols = process.stdout.columns ?? 100;
+            const anchorId =
+              hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + cols / 2, offsetY + viewHeight() / 2)?.id;
+            const before = lastHits.find((h) => h.id === anchorId);
+            zoom = next;
+            const sized = renderMapWindow(
+              map,
+              { color: false, unicode: cfg.unicode, spinnerFrame: 0, zoom },
+              { x: 0, y: 0, width: 0, height: 0 },
+            );
+            const after = before === undefined ? undefined : sized.hits.find((h) => h.id === before.id);
+            const moved = anchorOffsets(
+              before !== undefined && after !== undefined ? { before, after } : undefined,
+              { x: offsetX, y: offsetY },
+              lastContent,
+              { w: sized.contentWidth, h: sized.contentHeight },
+            );
+            offsetX = moved.x;
+            offsetY = moved.y;
+            dirty = true;
+            break;
+          }
           case 'mouse-move': {
             const over = hitTest(event.x, event.y);
             if (over !== hoverId) {

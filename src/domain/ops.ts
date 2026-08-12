@@ -12,8 +12,10 @@
  */
 
 import {
+  type GroupId,
   type LayerId,
   type MapError,
+  type MapGroup,
   type MapLayer,
   type MapNode,
   type MellosMap,
@@ -30,6 +32,19 @@ function findLayer(map: MellosMap, id: LayerId): MapLayer | undefined {
 
 function findNode(map: MellosMap, id: NodeId): MapNode | undefined {
   return map.nodes.find((n) => n.id === id);
+}
+
+function findGroup(map: MellosMap, id: GroupId): MapGroup | undefined {
+  return map.groups.find((g) => g.id === id);
+}
+
+/** Validate that `node` may join `group` (I7): the group exists on the node's own band. */
+function checkMembership(map: MellosMap, node: NodeId, nodeLayer: LayerId, group: GroupId): MapError | undefined {
+  const g = findGroup(map, group);
+  if (!g) return { kind: 'unknown-group', id: group };
+  if (g.layer !== nodeLayer)
+    return { kind: 'group-layer-mismatch', node, nodeLayer, group, groupLayer: g.layer };
+  return undefined;
 }
 
 function hasEdge(map: MellosMap, from: NodeId, to: NodeId): boolean {
@@ -56,18 +71,73 @@ export function declareLayer(map: MellosMap, input: DeclareLayerInput): Result<M
   return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
 }
 
+export interface DeclareGroupInput {
+  readonly id: GroupId;
+  readonly label: string;
+  readonly layer: LayerId;
+}
+
+/** Add a new group to an existing band (I6). */
+export function declareGroup(map: MellosMap, input: DeclareGroupInput): Result<MellosMap, MapError> {
+  if (findGroup(map, input.id)) return err({ kind: 'duplicate-group', id: input.id });
+  if (!findLayer(map, input.layer)) return err({ kind: 'unknown-layer', id: input.layer });
+  return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
+}
+
+/** Rename a group. */
+export function updateGroup(map: MellosMap, id: GroupId, label: string): Result<MellosMap, MapError> {
+  if (!findGroup(map, id)) return err({ kind: 'unknown-group', id });
+  return ok({ ...map, groups: map.groups.map((g) => (g.id === id ? { ...g, label } : g)) });
+}
+
+/**
+ * Remove a group.
+ * Postcondition: former members stay on the map, merely ungrouped — removing
+ * a cluster label never destroys work records.
+ */
+export function removeGroup(map: MellosMap, id: GroupId): Result<MellosMap, MapError> {
+  if (!findGroup(map, id)) return err({ kind: 'unknown-group', id });
+  return ok({
+    ...map,
+    groups: map.groups.filter((g) => g.id !== id),
+    nodes: map.nodes.map((n) => {
+      if (n.group !== id) return n;
+      const { group: _dropped, ...rest } = n;
+      return rest;
+    }),
+  });
+}
+
+/**
+ * Derived, never stored: a group's aggregate status. Any regressed member
+ * cracks the group; else any spinner spins it; else all-done (non-empty)
+ * completes it; anything else is planned.
+ */
+export function groupStatus(map: MellosMap, id: GroupId): NodeStatus {
+  const members = map.nodes.filter((n) => n.group === id);
+  if (members.some((n) => n.status === 'regressed')) return 'regressed';
+  if (members.some((n) => n.status === 'in-progress')) return 'in-progress';
+  if (members.length > 0 && members.every((n) => n.status === 'done')) return 'done';
+  return 'planned';
+}
+
 export interface DeclareNodeInput {
   readonly id: NodeId;
   readonly label: string;
   readonly layer: LayerId;
   readonly status?: NodeStatus;
   readonly detail?: string;
+  readonly group?: GroupId;
 }
 
-/** Add a new node to an existing band (I2, I3). Status defaults to 'planned' — a ghost on the map. */
+/** Add a new node to an existing band (I2, I3), optionally joining a same-band group (I7). */
 export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<MellosMap, MapError> {
   if (findNode(map, input.id)) return err({ kind: 'duplicate-node', id: input.id });
   if (!findLayer(map, input.layer)) return err({ kind: 'unknown-layer', id: input.layer });
+  if (input.group !== undefined) {
+    const bad = checkMembership(map, input.id, input.layer, input.group);
+    if (bad) return err(bad);
+  }
 
   const node: MapNode = {
     id: input.id,
@@ -75,6 +145,7 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     layer: input.layer,
     status: input.status ?? 'planned',
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    ...(input.group !== undefined ? { group: input.group } : {}),
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -105,19 +176,28 @@ export interface UpdateNodeInput {
   readonly label?: string;
   readonly evidence?: string;
   readonly detail?: string;
+  /** A GroupId joins that group (I7 validated); null leaves the current group. */
+  readonly group?: GroupId | null;
 }
 
 /**
- * Update a node's status, label, evidence and/or design detail. Absent
- * fields are left untouched. No transition rules: the ledger records
- * whatever the caller reports, whenever they report it.
+ * Update a node's status, label, evidence, design detail and/or group
+ * membership. Absent fields are left untouched. No transition rules: the
+ * ledger records whatever the caller reports, whenever they report it.
  */
 export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<MellosMap, MapError> {
   const node = findNode(map, input.id);
   if (!node) return err({ kind: 'unknown-node', id: input.id });
+  if (input.group !== undefined && input.group !== null) {
+    const bad = checkMembership(map, node.id, node.layer, input.group);
+    if (bad) return err(bad);
+  }
 
+  const { group: currentGroup, ...bare } = node;
+  const nextGroup = input.group === undefined ? currentGroup : input.group === null ? undefined : input.group;
   const updated: MapNode = {
-    ...node,
+    ...bare,
+    ...(nextGroup !== undefined ? { group: nextGroup } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
@@ -147,10 +227,12 @@ export function removeEdge(map: MellosMap, from: NodeId, to: NodeId): Result<Mel
   return ok({ ...map, edges: map.edges.filter((e) => !(e.from === from && e.to === to)) });
 }
 
-/** Remove a band. Only empty bands may go — a node must never be left without a layer (I2). */
+/** Remove a band. Only empty bands may go — neither a node (I2) nor a group (I6) may be orphaned. */
 export function removeLayer(map: MellosMap, id: LayerId): Result<MellosMap, MapError> {
   if (!findLayer(map, id)) return err({ kind: 'unknown-layer', id });
   const occupant = map.nodes.find((n) => n.layer === id);
   if (occupant) return err({ kind: 'layer-not-empty', id, occupant: occupant.id });
+  const groupOccupant = map.groups.find((g) => g.layer === id);
+  if (groupOccupant) return err({ kind: 'layer-holds-group', id, occupant: groupOccupant.id });
   return ok({ ...map, layers: map.layers.filter((l) => l.id !== id) });
 }

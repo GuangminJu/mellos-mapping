@@ -6,9 +6,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { declareLayer, declareNode, linkNodes, updateNode } from '../domain/ops.js';
-import { EMPTY_MAP, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
-import { fitWidth, mapPanel, nodePanel, wrapWidth } from './watch.js';
+import { declareGroup, declareLayer, declareNode, linkNodes, updateNode } from '../domain/ops.js';
+import { EMPTY_MAP, type GroupId, type LayerId, type MellosMap, type NodeId, type Result } from '../domain/types.js';
+import type { BoxHit } from '../render/render.js';
+import { anchorOffsets, fitWidth, mapPanel, nearestHit, nodePanel, wrapWidth } from './watch.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -16,6 +17,7 @@ function must<T, E>(r: Result<T, E>): T {
 }
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
+const gid = (s: string): GroupId => s as GroupId;
 
 function sample(): MellosMap {
   let map = EMPTY_MAP;
@@ -78,6 +80,21 @@ describe('nodePanel', () => {
   it('returns undefined for an unknown node', () => {
     expect(nodePanel(sample(), 'ghost', true, 80, false)).toBeUndefined();
   });
+
+  it('shows a group panel — members and aggregated wires — when a group box is focused', () => {
+    let map = sample();
+    map = must(declareGroup(map, { id: gid('surface'), label: '外表面', layer: lid('top') }));
+    map = must(updateNode(map, { id: nid('shell'), group: gid('surface') }));
+    map = must(updateNode(map, { id: nid('cli'), group: gid('surface') }));
+
+    const panel = nodePanel(map, 'surface', true, 80, true)!;
+    expect(panel).toHaveLength(6);
+    expect(panel[0]!.text).toContain('⠿ 外表面 [surface] · 编排层 · in-progress · 2 member(s)  ⊙ pinned');
+    expect(panel[0]!.sgr).toBe('33;1');
+    expect(panel[1]!.text).toBe('members: · 外壳  ⠿ CLI');
+    expect(panel[2]!.text).toBe('uses →  ■ 核心'); // two member edges, deduped to one neighbour
+    expect(panel[3]!.text).toBe('used by ←  —');
+  });
 });
 
 describe('mapPanel (dashboard)', () => {
@@ -86,5 +103,32 @@ describe('mapPanel (dashboard)', () => {
     expect(panel).toHaveLength(6);
     expect(panel[1]!.text).toBe('2 layers · 3 nodes · 2 edges');
     expect(panel[2]!.text).toBe('■ 1 done   ⠿ 1 in-progress   · 1 planned');
+  });
+});
+
+describe('zoom anchoring', () => {
+  const hit = (id: string, x: number, y: number, w = 10, h = 3): BoxHit => ({ id, x, y, w, h });
+
+  it('keeps the anchor node at the same screen position across a zoom change', () => {
+    // node center moves from x=15 to x=9 when the picture shrinks;
+    // the offset must shift by the same -6 so the node does not jump.
+    const moved = anchorOffsets(
+      { before: hit('a', 10, 8), after: hit('a', 4, 6) },
+      { x: 20, y: 5 },
+      { w: 100, h: 40 },
+      { w: 60, h: 30 },
+    );
+    expect(moved).toEqual({ x: 14, y: 3 });
+  });
+
+  it('scales the pan proportionally when there is no anchor node', () => {
+    expect(anchorOffsets(undefined, { x: 50, y: 20 }, { w: 100, h: 40 }, { w: 50, h: 20 })).toEqual({ x: 25, y: 10 });
+    expect(anchorOffsets(undefined, { x: 3, y: 7 }, { w: 0, h: 0 }, { w: 50, h: 20 })).toEqual({ x: 0, y: 0 });
+  });
+
+  it('finds the hit nearest to a point, and nothing in an empty picture', () => {
+    const hits = [hit('far', 50, 20), hit('near', 10, 5)];
+    expect(nearestHit(hits, 12, 6)?.id).toBe('near');
+    expect(nearestHit([], 12, 6)).toBeUndefined();
   });
 });

@@ -62,6 +62,12 @@ the user wants the map.
 - **Nodes are units of buildable, verifiable work** (a module, a contract, a
   renderer) — not tasks like "write tests" and not files. One node ≈ one
   thing that can be independently done.
+- **Declare groups for any map beyond ~6 nodes.** A group is a labeled
+  subsystem clustering nodes WITHIN one band (`groups` in `mmap_declare`,
+  `group` on each member). The zoomed-out view renders groups instead of
+  members — a map without groups degrades into anonymous glyphs when the
+  user zooms out, which tells them nothing. Group status is derived from
+  members automatically; never invent status for a group.
 - **Every node carries `detail`** — one to three sentences on its
   responsibility, its contract, and the key design decision. Write it at
   declaration time (the user reads it in the pane's detail panel when they

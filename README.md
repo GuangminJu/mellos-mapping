@@ -115,11 +115,30 @@ htop and tmux speak):
 | hover a node | spotlight its wires; preview its details below the map |
 | click a node | pin it — details stay resident after the mouse leaves |
 | click empty space / `Esc` | unpin |
+| wheel / `+` `-` | zoom, anchored on the focused node (see the ladder below) |
 | left-drag | grab and pan when the map outgrows the pane |
-| wheel / shift+wheel | pan vertically / horizontally |
+| shift+wheel | scroll vertically |
 | `hjkl` / arrows | nudge the view |
-| `0` | jump back to origin |
+| `0` | reset pan and zoom |
 | `q` | quit the pane |
+
+Zooming scales the picture first and switches display mode only at the ends
+of the ladder, so every level still shows meaningful data:
+
+```
+detail ← 100% ← 85% ← 70% ← 55% ← overview
+```
+
+- **zoom in past 100%** — evidence and design notes unfold inside the boxes;
+- **85–55%** — whitespace tightens and labels truncate proportionally, boxes
+  stay boxes;
+- **below 55%** — labels would stop meaning anything, so the map AGGREGATES:
+  each declared group (a labeled subsystem within a band) becomes one box
+  named `地基子系统 1/2` with its status derived from the members, edges
+  collapse onto the groups, ungrouped nodes stay themselves. Like a real
+  map, zooming out shows province names — not anonymous dots. (A map with
+  no groups falls back to a pure glyph constellation with per-band counts.)
+  The footer always names the level.
 
 The two detail rows live at a fixed spot between map and hint line, showing
 the focused node's status, layer, evidence and both wire directions
@@ -135,10 +154,10 @@ one map per project, safe to commit if you want the map's history in git.
 
 | Tool | Purpose |
 | --- | --- |
-| `mmap_declare` | Grow the map: title, layer bands, nodes, edges (all-or-nothing batch) |
-| `mmap_update` | Record progress: `planned → in-progress → done` (+evidence), `regressed` |
-| `mmap_remove` | Revise: drop edges, nodes, empty bands |
-| `mmap_view` | Render the current map as text inline |
+| `mmap_declare` | Grow the map: title, layer bands, groups (subsystems), nodes, edges (all-or-nothing batch) |
+| `mmap_update` | Record progress: `planned → in-progress → done` (+evidence), `regressed`, group membership |
+| `mmap_remove` | Revise: drop edges, nodes, groups, empty bands |
+| `mmap_view` | Render the current map as text inline (optional `zoom`) |
 
 Structural invariants enforced by the tools: layers form a total order by
 rank; every node lives in exactly one layer; edges point **strictly

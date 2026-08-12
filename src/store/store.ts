@@ -21,7 +21,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
+import { declareGroup, declareLayer, declareNode, linkNodes, setTitle, updateNode } from '../domain/ops.js';
 import {
   EMPTY_MAP,
   type MapError,
@@ -29,6 +29,7 @@ import {
   type Result,
   describeMapError,
   err,
+  makeGroupId,
   makeLayerId,
   makeNodeId,
   makeNodeStatus,
@@ -75,7 +76,8 @@ function optionalString(v: unknown): string | undefined {
 /**
  * Rebuild a MellosMap from untrusted raw data by replaying it through the
  * Layer 0 operations (P1). Field order in the file does not matter; replay
- * order (layers -> nodes -> edges) supplies the required declaration order.
+ * order (layers -> groups -> nodes -> edges) supplies the required
+ * declaration order.
  */
 export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreError> {
   if (!isRecord(raw)) return err({ kind: 'bad-shape', path, detail: 'root is not an object' });
@@ -101,6 +103,19 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     map = next.value;
   }
 
+  for (const [i, rawGroup] of asArray(raw['groups']).entries()) {
+    if (!isRecord(rawGroup)) return err({ kind: 'bad-shape', path, detail: `groups[${i}] is not an object` });
+    const id = makeGroupId(String(rawGroup['id'] ?? ''));
+    if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
+    const layer = makeLayerId(String(rawGroup['layer'] ?? ''));
+    if (!layer.ok) return err({ kind: 'invariant-violation', path, violation: layer.error });
+    const label = optionalString(rawGroup['label']);
+    if (label === undefined) return err({ kind: 'bad-shape', path, detail: `groups[${i}] needs a string label` });
+    const declared = declareGroup(map, { id: id.value, label, layer: layer.value });
+    if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
+    map = declared.value;
+  }
+
   for (const [i, rawNode] of asArray(raw['nodes']).entries()) {
     if (!isRecord(rawNode)) return err({ kind: 'bad-shape', path, detail: `nodes[${i}] is not an object` });
     const id = makeNodeId(String(rawNode['id'] ?? ''));
@@ -113,12 +128,20 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     if (label === undefined) return err({ kind: 'bad-shape', path, detail: `nodes[${i}] needs a string label` });
 
     const detail = optionalString(rawNode['detail']);
+    const rawGroup = optionalString(rawNode['group']);
+    let group;
+    if (rawGroup !== undefined) {
+      const made = makeGroupId(rawGroup);
+      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
+      group = made.value;
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
       layer: layer.value,
       status: status.value,
       ...(detail !== undefined ? { detail } : {}),
+      ...(group !== undefined ? { group } : {}),
     });
     if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
     map = declared.value;
@@ -151,6 +174,7 @@ export function serializeMap(map: MellosMap): string {
     version: STATE_FILE_VERSION,
     ...(map.title !== undefined ? { title: map.title } : {}),
     layers: map.layers,
+    ...(map.groups.length > 0 ? { groups: map.groups } : {}),
     nodes: map.nodes,
     edges: map.edges,
   };

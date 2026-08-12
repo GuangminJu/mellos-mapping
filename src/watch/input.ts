@@ -1,5 +1,6 @@
 /**
- * Layer 4b support — pure parsing of terminal input into pan/quit events.
+ * Layer 4b support — pure parsing of terminal input into semantic events
+ * (pan, zoom, mouse, quit).
  *
  * The watcher enables xterm SGR mouse tracking (CSI ?1002h + ?1006h), so
  * stdin carries a mix of plain keys, arrow-key CSI sequences and SGR mouse
@@ -15,8 +16,10 @@ export type InputEvent =
   | { readonly kind: 'reset' }
   /** Esc: clear the pinned selection. */
   | { readonly kind: 'clear' }
-  /** Pan the VIEW by a delta (keyboard / wheel). */
+  /** Pan the VIEW by a delta (keyboard / shift+wheel). */
   | { readonly kind: 'pan'; readonly dx: number; readonly dy: number }
+  /** One step on the zoom ladder (wheel / +/- keys); +1 = closer. */
+  | { readonly kind: 'zoom'; readonly delta: 1 | -1 }
   /** Left button pressed at terminal cell (1-based). */
   | { readonly kind: 'mouse-down'; readonly x: number; readonly y: number }
   /** Motion while the left button is held. */
@@ -34,7 +37,6 @@ export interface ParsedInput {
 const KEY_H_STEP = 4;
 const KEY_V_STEP = 2;
 const WHEEL_V_STEP = 3;
-const WHEEL_H_STEP = 6;
 
 // SGR mouse button code bit layout
 const MOTION = 32;
@@ -63,10 +65,10 @@ const KEY_PAN: Readonly<Record<string, { dx: number; dy: number }>> = {
 
 function mouseEvent(code: number, x: number, y: number, final: string): InputEvent | undefined {
   if (code & WHEEL) {
-    const direction = code & 1 ? 1 : -1; // 65/69 = wheel down, 64/68 = wheel up
+    const down = (code & 1) !== 0; // 65/69 = wheel down, 64/68 = wheel up
     return code & SHIFT
-      ? { kind: 'pan', dx: direction * WHEEL_H_STEP, dy: 0 }
-      : { kind: 'pan', dx: 0, dy: direction * WHEEL_V_STEP };
+      ? { kind: 'pan', dx: 0, dy: (down ? 1 : -1) * WHEEL_V_STEP } // shift+wheel scrolls
+      : { kind: 'zoom', delta: down ? -1 : 1 }; // plain wheel zooms; up = closer
   }
   const buttons = code & BUTTON_BITS;
   if (final === 'm') return buttons === 0 ? { kind: 'mouse-up', x, y } : undefined;
@@ -113,6 +115,8 @@ export function parseInput(chunk: string): ParsedInput {
     const ch = chunk[i]!;
     if (ch === 'q' || ch === 'Q' || ch === '\x03' || ch === '\x04') events.push({ kind: 'quit' });
     else if (ch === '0') events.push({ kind: 'reset' });
+    else if (ch === '+' || ch === '=') events.push({ kind: 'zoom', delta: 1 });
+    else if (ch === '-') events.push({ kind: 'zoom', delta: -1 });
     else if (KEY_PAN[ch]) events.push({ kind: 'pan', ...KEY_PAN[ch]! });
     // anything else (including unknown escape sequences' stray bytes) is ignored
     i += 1;

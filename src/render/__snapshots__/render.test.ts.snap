@@ -1,5 +1,29 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`renderMap > aggregates into labeled group boxes at the far zoom when groups exist 1`] = `
+"  梅勒斯地图 · mellos-mapping 插件
+━━━━━━━━━━━━━━━━━━━ 编排层
+
+  ╭╌╌╌╌╌╌╌╌╌╌╌╌╮
+  ╎· MCP Server╎
+  ╰╌╌┬┬╌╌╌╌┬╌╌╌╯
+     └┼────┼────────┐
+      │    └──┐     │
+━━━━━━┿━━━━━━━┿━━━━ 契约层
+      │       │     │
+  ┏━━━┷━━━━━━┓│╭╌╌╌╌┴╌╌╌╌╮
+  ┃■ 状态存储┃│╎· Watcher╎
+  ┗━━━━┯━━━━━┛│╰╌┬╌╌╌╌╌╌╌╯
+       │   ┌──┘  │
+━━━━━━━┿━━━┿━━━━━┿━ 原语层
+       │   │     │
+  ╭────┴───┴─────┴─╮
+  │⠋ 地基子系统 1/2│
+  ╰────────────────╯
+
+  · planned   ⠋ in-progress   ■ done   ✗ regressed"
+`;
+
 exports[`renderMap > renders the canonical sample (visual spec) 1`] = `
 "  梅勒斯地图 · mellos-mapping 插件
 
@@ -25,6 +49,58 @@ exports[`renderMap > renders the canonical sample (visual spec) 1`] = `
   ┏━━━━━┷━┷━━━━━━┓  ╭────┴────────╮
   ┃ ■ 图领域模型 ┃  │ ⠋ ASCII渲染 │
   ┗━━━━━━━━━━━━━━┛  ╰─────────────╯
+
+  · planned   ⠋ in-progress   ■ done   ✗ regressed"
+`;
+
+exports[`renderMap > switches to the glyph constellation only at the far end of the ladder 1`] = `
+"  梅勒斯地图 · mellos-mapping 插件
+━━━━━━━━━ 编排层 0/1
+
+   ·
+   │
+   ├────┐
+   ├─┐  │
+━━━┿━┿━━┿ 契约层 1/2
+   │ │  │
+   ■ │  ·
+   ├─┘  │
+━━━┿━━━━┿ 原语层 1/2
+   │    │
+   ■    ⠋
+
+  · planned   ⠋ in-progress   ■ done   ✗ regressed"
+`;
+
+exports[`renderMap > unfolds evidence and design notes inside the boxes at detail zoom 1`] = `
+"  梅勒斯地图 · mellos-mapping 插件
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 编排层
+
+  ╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮
+  ╎ · MCP Server         ╎
+  ╰╌╌╌╌╌╌╌┬╌┬╌╌╌╌┬╌╌╌╌╌╌╌╯
+          │ │    │
+          └─┼────┼──────────────────────┐
+            │    └────────┐             │
+            │             │             │
+━━━━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━ 契约层
+            │             │             │
+  ┏━━━━━━━━━┷━━━━━━━━━━━━┓│ ╭╌╌╌╌╌╌╌╌╌╌╌┴╌╌╌╌╌╌╌╌╌╌╮
+  ┃ ■ 状态存储           ┃│ ╎ · Watcher            ╎
+  ┗━━━━━━━━━━┯━━━━━━━━━━━┛│ ╰╌╌╌╌╌╌╌╌╌╌┬╌╌╌╌╌╌╌╌╌╌╌╯
+             │            │            │
+             │┌───────────┘            │
+             ││                        │
+━━━━━━━━━━━━━┿┿━━━━━━━━━━━━━━━━━━━━━━━━┿━━━━━ 原语层
+             ││                        │
+  ┏━━━━━━━━━━┷┷━━━━━━━━━━┓  ╭──────────┴───────────╮
+  ┃ ■ 图领域模型         ┃  │ ⠋ ASCII渲染          │
+  ┃ vitest 23 passed     ┃  ╰──────────────────────╯
+  ┃ 结构不变量的唯一持有 ┃
+  ┃ 者：层全序、边严格向 ┃
+  ┃ 下，无环是推论。     ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━┛
 
   · planned   ⠋ in-progress   ■ done   ✗ regressed"
 `;
