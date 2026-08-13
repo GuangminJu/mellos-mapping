@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.guangminju/mellos-mapping",
-  "description": "A live layered dependency map for bottom-up development: ghost the design first, then light nodes up from the bottom as they are built and verified.",
+  "description": "Live layered dependency map for bottom-up development, drawn by the agent in a terminal pane.",
   "repository": {
     "url": "https://github.com/GuangminJu/mellos-mapping",
     "source": "github"
