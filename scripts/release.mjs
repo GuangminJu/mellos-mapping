@@ -41,6 +41,7 @@ bump('.claude-plugin/plugin.json', jsonVersion, `"version": "${version}"`, 1);
 bump('.claude-plugin/marketplace.json', jsonVersion, `"version": "${version}"`, 1);
 bump('.codex-plugin/plugin.json', jsonVersion, `"version": "${version}"`, 1);
 bump('package.json', jsonVersion, `"version": "${version}"`, 1);
+bump('server.json', jsonVersion, `"version": "${version}"`, 2); // top-level + packages[0]
 bump('src/server/server.ts', /SERVER_VERSION = '\d+\.\d+\.\d+'/g, `SERVER_VERSION = '${version}'`, 1);
 
 // package-lock.json mirrors the root version in two spots that a regex can't
