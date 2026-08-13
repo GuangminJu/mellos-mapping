@@ -17,8 +17,9 @@
  * documented contract), then this process's cwd as the last resort.
  */
 
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -37,7 +38,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.11.0';
+export const SERVER_VERSION = '0.12.0';
 
 const ID = z
   .string()
@@ -287,8 +288,22 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-// Run only as an entry point; importing this module (tests) must be inert.
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * Run only as an entry point; importing this module (tests) must be inert.
+ * npm bin shims launch through a symlink and shells may pass relative paths,
+ * so argv[1] is compared by real path, with URL equality as the fallback
+ * when either path cannot be resolved.
+ */
+export function launchedAsEntry(argv1: string | undefined, moduleUrl: string): boolean {
+  if (argv1 === undefined) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return pathToFileURL(argv1).href === moduleUrl;
+  }
+}
+
+if (launchedAsEntry(process.argv[1], import.meta.url)) {
   // A rejected connect leaves nothing to recover — surface it and exit non-zero.
   main().catch((e: unknown) => {
     console.error(e);

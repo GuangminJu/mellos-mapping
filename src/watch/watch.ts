@@ -33,9 +33,9 @@
  *                       [--no-color] [--no-mouse]
  */
 
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { groupStatus, mapStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
@@ -923,7 +923,21 @@ function main(): void {
   setInterval(tick, cfg.intervalMs);
 }
 
-// Run only as an entry point; importing this module (tests) must be inert.
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * Run only as an entry point; importing this module (tests) must be inert.
+ * npm bin shims launch through a symlink and shells may pass relative paths,
+ * so argv[1] is compared by real path, with URL equality as the fallback
+ * when either path cannot be resolved.
+ */
+export function launchedAsEntry(argv1: string | undefined, moduleUrl: string): boolean {
+  if (argv1 === undefined) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return pathToFileURL(argv1).href === moduleUrl;
+  }
+}
+
+if (launchedAsEntry(process.argv[1], import.meta.url)) {
   main();
 }

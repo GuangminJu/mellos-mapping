@@ -1,9 +1,18 @@
 # Mellos Mapping
 
+[![CI](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+
 English | [简体中文](README.zh-CN.md)
 
 A live, terminal-native map of bottom-up development for
-[Claude Code](https://claude.com/claude-code).
+[Claude Code](https://claude.com/claude-code) and Codex CLI.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/demo-light.svg">
+    <img alt="A Mellos map building itself: ghost design first, spinners climbing the layers, a cracked foundation spreading upward, honest recovery" src="docs/demo.svg" width="620">
+  </picture>
+</p>
 
 While Claude builds your system, a split pane beside the conversation shows
 the system's **layered dependency map**: primitive layers at the bottom,
@@ -119,6 +128,25 @@ the script after updating the plugin.
 To watch the live pane beside a Codex session, run
 `node <plugin root>/dist/watch.mjs` from the project directory in a second
 terminal (or any terminal split).
+
+## Any MCP client
+
+The server ships on npm, so any MCP client (Cursor, Windsurf, Zed,
+Gemini CLI, …) can run it with a standard stdio entry:
+
+```
+npx -y mellos-mapping
+```
+
+The map file lands in the client session's working directory
+(`.claude/mellos-mapping.json`). Open the live pane from the same project:
+
+```
+npx -y -p mellos-mapping mellos-mapping-watch
+```
+
+The skill/discipline layer is Claude Code + Codex specific; other clients
+get the four `mmap_*` tools and the pane, and bring their own prompting.
 
 ## Use
 

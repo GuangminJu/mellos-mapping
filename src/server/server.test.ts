@@ -13,7 +13,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildServer, resolveStateFile } from './server.js';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { buildServer, launchedAsEntry, resolveStateFile } from './server.js';
 
 let dir: string;
 let client: Client;
@@ -159,5 +161,28 @@ describe('resolveStateFile', () => {
       join('D:\\proj', '.claude', 'mellos-mapping.json'),
     );
     expect(resolveStateFile({}, 'C:\\elsewhere')).toBe(join('C:\\elsewhere', '.claude', 'mellos-mapping.json'));
+  });
+});
+
+describe('launchedAsEntry', () => {
+  const selfUrl = import.meta.url;
+  const selfPath = fileURLToPath(selfUrl);
+
+  it('recognizes the entry even when argv[1] is an unnormalized path to the same file', () => {
+    // npm bin shims and shells hand over symlinked or relative paths; the
+    // guard must compare real paths, not raw strings.
+    const unnormalized = join(selfPath, '..', 'server.test.ts');
+    expect(launchedAsEntry(unnormalized, selfUrl)).toBe(true);
+  });
+
+  it('rejects a different file and a missing argv[1]', () => {
+    expect(launchedAsEntry(selfPath.replace('server.test.ts', 'server.ts'), selfUrl)).toBe(false);
+    expect(launchedAsEntry(undefined, selfUrl)).toBe(false);
+  });
+
+  it('falls back to URL equality when the path does not exist', () => {
+    const ghost = join(tmpdir(), 'mellos-launched-as-entry-does-not-exist.mjs');
+    expect(launchedAsEntry(ghost, selfUrl)).toBe(false);
+    expect(launchedAsEntry(ghost, pathToFileURL(ghost).href)).toBe(true);
   });
 });
