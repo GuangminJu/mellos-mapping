@@ -408,6 +408,220 @@ export function nodePanel(
   return lines.slice(0, rows);
 }
 
+/**
+ * The standby splash — what the pane shows before any map exists.
+ *
+ * A 5-row block font, two stacked words, lit by ripples. Waves are born at
+ * a randomized corner every WAVE_INTERVAL frames and expand as damped rings;
+ * the ink of a cell is the SUM of every live ring over it, so overlapping
+ * waves interfere for real — crests reinforce, a crest meeting a trough
+ * cancels back to still water. Surface height drives one continuous
+ * indigo→cyan→white ramp, and the gain is set so the top of that ramp is
+ * out of reach for a lone ring: the near-white glare only happens where
+ * waves actually pile up. Without color the same field shades the ink
+ * instead, so a --no-color --ascii pane still ripples.
+ *
+ * Everything here is a pure function of `frame` — no Math.random, so the
+ * animation is reproducible and testable.
+ */
+const SPLASH_FONT: Readonly<Record<string, readonly string[]>> = {
+  M: ['#   #', '## ##', '# # #', '#   #', '#   #'],
+  E: ['####', '#', '###', '#', '####'],
+  L: ['#', '#', '#', '#', '####'],
+  O: [' ###', '#   #', '#   #', '#   #', ' ###'],
+  S: [' ####', '#', ' ###', '    #', '####'],
+  A: [' ###', '#   #', '#####', '#   #', '#   #'],
+  P: ['####', '#   #', '####', '#', '#'],
+  I: ['###', ' #', ' #', ' #', '###'],
+  N: ['#   #', '##  #', '# # #', '#  ##', '#   #'],
+  G: [' ####', '#', '#  ##', '#   #', ' ###'],
+};
+const SPLASH_ROWS = 5;
+
+/** Ink shades by |level| 0..WAVE_LEVELS for the no-color path. */
+const SPLASH_SHADES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
+  unicode: ['░', '░', '▒', '▒', '▓', '▓', '█', '█'],
+  ascii: ['.', '.', ':', ':', '=', '=', '#', '#'],
+};
+/**
+ * One continuous xterm-256 ramp, deep trough to high crest, indexed by
+ * WAVE_LEVELS + level. Monotonic in lightness and confined to indigo→cyan→white
+ * so neighbouring cells are always neighbouring colors: the ripple reads as a
+ * gradient over the letters instead of confetti. Still water sits mid-ramp.
+ */
+const WAVE_RAMP: readonly number[] = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
+const SPINNER_FRAMES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
+  unicode: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+  ascii: ['|', '/', '-', '\\'],
+};
+
+/** One word in the block font: SPLASH_ROWS lines of '#' ink on spaces. */
+export function wordArt(word: string): string[] {
+  const glyphs = [...word.toUpperCase()]
+    .map((ch) => SPLASH_FONT[ch])
+    .filter((g): g is readonly string[] => g !== undefined);
+  const widths = glyphs.map((g) => Math.max(...g.map((r) => r.length)));
+  const rows: string[] = [];
+  for (let r = 0; r < SPLASH_ROWS; r++) {
+    rows.push(glyphs.map((g, i) => (g[r] ?? '').padEnd(widths[i]!, ' ')).join(' '));
+  }
+  return rows;
+}
+
+/** Both words stacked and mutually centered, blank line between. */
+export function splashArt(): string[] {
+  const words = [wordArt('MELLOS'), wordArt('MAPPING')];
+  const width = Math.max(...words.flat().map((r) => r.length));
+  const centered = words.map((rows) => {
+    const own = Math.max(...rows.map((r) => r.length));
+    return rows.map((r) => ' '.repeat(Math.floor((width - own) / 2)) + r);
+  });
+  return [...centered[0]!, '', ...centered[1]!];
+}
+
+/**
+ * frames between births · frames a ring survives · art columns per frame.
+ * Tuned so three or four rings share the water: enough for collisions to
+ * happen often, few enough that the picture still reads as waves.
+ */
+const WAVE_INTERVAL = 18;
+const WAVE_LIFETIME = 64;
+const WAVE_SPEED = 0.9;
+/** Ring half-width in cells, and the angular wavenumber of its lobes. */
+const WAVE_ENVELOPE = 10;
+export const WAVE_NUMBER = 0.42;
+/**
+ * Levels either side of still water, and the surface-height-to-level gain.
+ * The gain is deliberately short of the top: one ring alone peaks around
+ * level 5, so the last two rungs of the ramp — the near-white glare — can
+ * only be reached where rings actually pile onto each other.
+ */
+export const WAVE_LEVELS = 7;
+const WAVE_GAIN = 4.5;
+
+/**
+ * Deterministic scramble standing in for a die roll — wave `n` always picks
+ * the same corner and the same birth jitter, on every machine and every run.
+ */
+export function waveHash(n: number): number {
+  let h = Math.imul(n + 1, 2654435761) >>> 0;
+  h ^= h >>> 15;
+  h = Math.imul(h, 2246822519) >>> 0;
+  h ^= h >>> 13;
+  return h >>> 0;
+}
+
+/** Corner origins as (x, y) fractions of the art block: TL, TR, BL, BR. */
+const WAVE_CORNERS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [1, 0],
+  [0, 1],
+  [1, 1],
+];
+
+export interface Ripple {
+  readonly ox: number;
+  readonly oy: number;
+  /** current radius of the ring front */
+  readonly r: number;
+  /** 1 at birth, 0 at the end of life */
+  readonly fade: number;
+}
+
+/** Every ring alive at `frame`, oldest first. */
+export function liveRipples(frame: number, width: number, height: number): Ripple[] {
+  const out: Ripple[] = [];
+  // a birth jitters up to WAVE_INTERVAL-1 frames late, so scan one slot wider
+  const first = Math.floor((frame - WAVE_LIFETIME - WAVE_INTERVAL) / WAVE_INTERVAL);
+  const last = Math.floor(frame / WAVE_INTERVAL);
+  for (let n = Math.max(0, first); n <= last; n++) {
+    const h = waveHash(n);
+    const age = frame - (n * WAVE_INTERVAL + (h % WAVE_INTERVAL));
+    if (age < 0 || age > WAVE_LIFETIME) continue;
+    const [fx, fy] = WAVE_CORNERS[h % WAVE_CORNERS.length]!;
+    out.push({
+      ox: fx * (width - 1),
+      oy: fy * (height - 1),
+      r: age * WAVE_SPEED,
+      fade: 1 - age / WAVE_LIFETIME,
+    });
+  }
+  return out;
+}
+
+/**
+ * Superpose the rings over one cell into a signed surface height: + crest,
+ * - trough, ~0 still water or two rings cancelling. Rows are half the height
+ * of columns in a terminal cell, so y is doubled to keep the rings round.
+ */
+export function waveAt(ripples: readonly Ripple[], x: number, y: number): number {
+  let value = 0;
+  for (const w of ripples) {
+    const front = Math.hypot(x - w.ox, (y - w.oy) * 2) - w.r;
+    value += Math.cos(front * WAVE_NUMBER) * Math.exp(-(front * front) / (2 * WAVE_ENVELOPE ** 2)) * w.fade;
+  }
+  return value;
+}
+
+/** Quantize surface height to a ramp index in [-WAVE_LEVELS, WAVE_LEVELS]. */
+export function waveLevel(value: number): number {
+  return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
+}
+
+/**
+ * The full standby frame, centered in a `width` x `height` viewport, ANSI
+ * already applied. Returns undefined when the pane is too small for the art —
+ * the caller then falls back to the plain one-line notice.
+ */
+export function splashFrame(
+  notice: string,
+  frame: number,
+  width: number,
+  height: number,
+  unicode: boolean,
+  color: boolean,
+): string[] | undefined {
+  const art = splashArt();
+  const artWidth = Math.max(...art.map((r) => r.length));
+  if (width < artWidth + 2 || height < art.length + 2) return undefined;
+
+  const mode = unicode ? 'unicode' : 'ascii';
+  const shades = SPLASH_SHADES[mode];
+  const solid = shades[shades.length - 1]!;
+  const indent = ' '.repeat(Math.floor((width - artWidth) / 2));
+  const ripples = liveRipples(frame, artWidth, art.length);
+
+  /** The paint of one ink cell: a 256-color code, or a shade char without color. */
+  const inkOf = (x: number, y: number): string => {
+    const level = waveLevel(waveAt(ripples, x, y));
+    return color ? `38;5;${WAVE_RAMP[WAVE_LEVELS + level]!}` : shades[Math.abs(level)]!;
+  };
+
+  const paintRow = (row: string, y: number): string => {
+    const cells = [...row].map((ch, x) => (ch === '#' ? inkOf(x, y) : undefined));
+    let out = '';
+    for (let i = 0; i < cells.length; ) {
+      const cell = cells[i];
+      let j = i;
+      while (j < cells.length && cells[j] === cell) j++;
+      if (cell === undefined) out += ' '.repeat(j - i);
+      else out += color ? `\x1b[${cell}m${solid.repeat(j - i)}${RESET}` : cell.repeat(j - i);
+      i = j;
+    }
+    return out;
+  };
+
+  const spinner = SPINNER_FRAMES[mode];
+  const status = fitWidth(`${spinner[frame % spinner.length]!} ${notice}`, Math.max(1, width - 2));
+  const statusIndent = ' '.repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
+  const block = [
+    ...art.map((row, y) => (row.trim() === '' ? '' : indent + paintRow(row, y))),
+    '',
+    statusIndent + (color ? `\x1b[90m${status}${RESET}` : status),
+  ];
+  return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ''), ...block];
+}
+
 /** The dashboard shown when nothing is focused. Exactly `rows` lines. */
 export function mapPanel(
   map: MellosMap,
@@ -443,6 +657,7 @@ function main(): void {
 
   let lastFrame = '';
   let spinnerFrame = 0;
+  let splashTick = 0;
   let map: MellosMap | undefined;
   let notice = `waiting for ${cfg.file} ...`;
   let lastCols = process.stdout.columns ?? 0;
@@ -576,7 +791,11 @@ function main(): void {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      body = [fitWidth(notice, Math.max(1, cols - 1))];
+      // No map yet: the standby splash, but only on a real TTY — a piped run
+      // must not stream an animation, so it keeps the one-line notice.
+      body =
+        (interactive ? splashFrame(notice, splashTick, cols, viewH, cfg.unicode, cfg.color) : undefined) ??
+        [fitWidth(notice, Math.max(1, cols - 1))];
     }
     if (notice !== '' && map !== undefined) {
       body[body.length - 1] = fitWidth(`  ${notice}`, Math.max(1, cols - 1));
@@ -921,6 +1140,15 @@ function main(): void {
 
   tick();
   setInterval(tick, cfg.intervalMs);
+  // The splash sweep runs faster than the file poll — its own timer, idle
+  // (one comparison) the moment a map exists.
+  if (interactive) {
+    setInterval(() => {
+      if (map !== undefined) return;
+      splashTick++;
+      paint();
+    }, 80);
+  }
 }
 
 /**

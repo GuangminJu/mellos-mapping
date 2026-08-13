@@ -1442,6 +1442,131 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
   }
   return lines.slice(0, rows);
 }
+var SPLASH_FONT = {
+  M: ["#   #", "## ##", "# # #", "#   #", "#   #"],
+  E: ["####", "#", "###", "#", "####"],
+  L: ["#", "#", "#", "#", "####"],
+  O: [" ###", "#   #", "#   #", "#   #", " ###"],
+  S: [" ####", "#", " ###", "    #", "####"],
+  A: [" ###", "#   #", "#####", "#   #", "#   #"],
+  P: ["####", "#   #", "####", "#", "#"],
+  I: ["###", " #", " #", " #", "###"],
+  N: ["#   #", "##  #", "# # #", "#  ##", "#   #"],
+  G: [" ####", "#", "#  ##", "#   #", " ###"]
+};
+var SPLASH_ROWS = 5;
+var SPLASH_SHADES = {
+  unicode: ["\u2591", "\u2591", "\u2592", "\u2592", "\u2593", "\u2593", "\u2588", "\u2588"],
+  ascii: [".", ".", ":", ":", "=", "=", "#", "#"]
+};
+var WAVE_RAMP = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
+var SPINNER_FRAMES = {
+  unicode: ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"],
+  ascii: ["|", "/", "-", "\\"]
+};
+function wordArt(word) {
+  const glyphs = [...word.toUpperCase()].map((ch) => SPLASH_FONT[ch]).filter((g) => g !== void 0);
+  const widths = glyphs.map((g) => Math.max(...g.map((r) => r.length)));
+  const rows = [];
+  for (let r = 0; r < SPLASH_ROWS; r++) {
+    rows.push(glyphs.map((g, i) => (g[r] ?? "").padEnd(widths[i], " ")).join(" "));
+  }
+  return rows;
+}
+function splashArt() {
+  const words = [wordArt("MELLOS"), wordArt("MAPPING")];
+  const width = Math.max(...words.flat().map((r) => r.length));
+  const centered = words.map((rows) => {
+    const own = Math.max(...rows.map((r) => r.length));
+    return rows.map((r) => " ".repeat(Math.floor((width - own) / 2)) + r);
+  });
+  return [...centered[0], "", ...centered[1]];
+}
+var WAVE_INTERVAL = 18;
+var WAVE_LIFETIME = 64;
+var WAVE_SPEED = 0.9;
+var WAVE_ENVELOPE = 10;
+var WAVE_NUMBER = 0.42;
+var WAVE_LEVELS = 7;
+var WAVE_GAIN = 4.5;
+function waveHash(n) {
+  let h = Math.imul(n + 1, 2654435761) >>> 0;
+  h ^= h >>> 15;
+  h = Math.imul(h, 2246822519) >>> 0;
+  h ^= h >>> 13;
+  return h >>> 0;
+}
+var WAVE_CORNERS = [
+  [0, 0],
+  [1, 0],
+  [0, 1],
+  [1, 1]
+];
+function liveRipples(frame, width, height) {
+  const out = [];
+  const first = Math.floor((frame - WAVE_LIFETIME - WAVE_INTERVAL) / WAVE_INTERVAL);
+  const last = Math.floor(frame / WAVE_INTERVAL);
+  for (let n = Math.max(0, first); n <= last; n++) {
+    const h = waveHash(n);
+    const age = frame - (n * WAVE_INTERVAL + h % WAVE_INTERVAL);
+    if (age < 0 || age > WAVE_LIFETIME) continue;
+    const [fx, fy] = WAVE_CORNERS[h % WAVE_CORNERS.length];
+    out.push({
+      ox: fx * (width - 1),
+      oy: fy * (height - 1),
+      r: age * WAVE_SPEED,
+      fade: 1 - age / WAVE_LIFETIME
+    });
+  }
+  return out;
+}
+function waveAt(ripples, x, y) {
+  let value = 0;
+  for (const w of ripples) {
+    const front = Math.hypot(x - w.ox, (y - w.oy) * 2) - w.r;
+    value += Math.cos(front * WAVE_NUMBER) * Math.exp(-(front * front) / (2 * WAVE_ENVELOPE ** 2)) * w.fade;
+  }
+  return value;
+}
+function waveLevel(value) {
+  return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
+}
+function splashFrame(notice, frame, width, height, unicode, color) {
+  const art = splashArt();
+  const artWidth = Math.max(...art.map((r) => r.length));
+  if (width < artWidth + 2 || height < art.length + 2) return void 0;
+  const mode = unicode ? "unicode" : "ascii";
+  const shades = SPLASH_SHADES[mode];
+  const solid = shades[shades.length - 1];
+  const indent = " ".repeat(Math.floor((width - artWidth) / 2));
+  const ripples = liveRipples(frame, artWidth, art.length);
+  const inkOf = (x, y) => {
+    const level = waveLevel(waveAt(ripples, x, y));
+    return color ? `38;5;${WAVE_RAMP[WAVE_LEVELS + level]}` : shades[Math.abs(level)];
+  };
+  const paintRow = (row, y) => {
+    const cells = [...row].map((ch, x) => ch === "#" ? inkOf(x, y) : void 0);
+    let out = "";
+    for (let i = 0; i < cells.length; ) {
+      const cell = cells[i];
+      let j = i;
+      while (j < cells.length && cells[j] === cell) j++;
+      if (cell === void 0) out += " ".repeat(j - i);
+      else out += color ? `\x1B[${cell}m${solid.repeat(j - i)}${RESET}` : cell.repeat(j - i);
+      i = j;
+    }
+    return out;
+  };
+  const spinner = SPINNER_FRAMES[mode];
+  const status = fitWidth(`${spinner[frame % spinner.length]} ${notice}`, Math.max(1, width - 2));
+  const statusIndent = " ".repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
+  const block = [
+    ...art.map((row, y) => row.trim() === "" ? "" : indent + paintRow(row, y)),
+    "",
+    statusIndent + (color ? `\x1B[90m${status}${RESET}` : status)
+  ];
+  return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ""), ...block];
+}
 function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const count = (s) => map.nodes.filter((n) => n.status === s).length;
@@ -1466,6 +1591,7 @@ function main() {
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";
   let spinnerFrame = 0;
+  let splashTick = 0;
   let map;
   let notice = `waiting for ${cfg.file} ...`;
   let lastCols = process.stdout.columns ?? 0;
@@ -1567,7 +1693,7 @@ function main() {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      body = [fitWidth(notice, Math.max(1, cols - 1))];
+      body = (interactive ? splashFrame(notice, splashTick, cols, viewH, cfg.unicode, cfg.color) : void 0) ?? [fitWidth(notice, Math.max(1, cols - 1))];
     }
     if (notice !== "" && map !== void 0) {
       body[body.length - 1] = fitWidth(`  ${notice}`, Math.max(1, cols - 1));
@@ -1854,6 +1980,13 @@ function main() {
   }
   tick();
   setInterval(tick, cfg.intervalMs);
+  if (interactive) {
+    setInterval(() => {
+      if (map !== void 0) return;
+      splashTick++;
+      paint();
+    }, 80);
+  }
 }
 function launchedAsEntry(argv1, moduleUrl) {
   if (argv1 === void 0) return false;
@@ -1868,17 +2001,26 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
 }
 export {
   PANEL_ROWS_MIN,
+  WAVE_LEVELS,
+  WAVE_NUMBER,
   anchorOffsets,
   clampPanelRows,
   diveOrigin,
   fitWidth,
   launchedAsEntry,
+  liveRipples,
   mapPanel,
   nearestHit,
   nodePanel,
   pageTabRow,
   panelRowsFromDividerY,
   parseArgs,
+  splashArt,
+  splashFrame,
   topLevelFiles,
+  waveAt,
+  waveHash,
+  waveLevel,
+  wordArt,
   wrapWidth
 };
