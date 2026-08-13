@@ -115,8 +115,11 @@ node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<版本>/scripts/codex
 项目里，与 Claude Code 下行为一致。注册的是版本相关的绝对路径——插件
 更新后重跑一次脚本即可。
 
-要在 Codex 会话旁边看实况面板，在项目目录下的第二个终端（或任意分屏）
-运行 `node <插件根>/dist/watch.mjs`。
+要在 Codex 会话旁边看实况面板，Windows 上运行
+`node <插件根>/scripts/open-pane.mjs <项目目录>`——它会在承载本会话的
+终端窗口里分屏（识别不到就确定性地开到专属的 "mellos-mapping" 窗口；
+`--window` 则是主动选择专属窗口）。其他环境在项目目录下的第二个终端
+（或任意分屏）运行 `node <插件根>/dist/watch.mjs`。
 
 ## 任意 MCP 客户端
 
@@ -143,7 +146,9 @@ npx -y -p mellos-mapping mellos-mapping-watch
    设计，并在工作过程中保持地图与现实一致。
 2. 运行 `/mellos-mapping:mmap` 打开实况分屏（Windows 上是 Windows
    Terminal 分屏，tmux 里是 tmux 分屏，其他环境会打印一条命令让你在
-   第二个终端里运行）。字体缺少制表符字形时用 `--ascii`。
+   第二个终端里运行）。Windows 上即使开着多个终端窗口，分屏也会落在
+   **你的会话所在的窗口**；想让地图独占一个窗口就加 `--window`。字体
+   缺少制表符字形时用 `--ascii`。
 3. 看着节点从底部一路亮起。图让你不安的时候就打断它——这正是它存在的
    意义。
 

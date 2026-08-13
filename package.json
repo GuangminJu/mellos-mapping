@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "mcpName": "io.github.GuangminJu/mellos-mapping",
   "description": "A live layered dependency map for bottom-up development — MCP server + terminal pane. Ghost the design first, then light nodes up from the bottom as they are built and verified.",
   "type": "module",
@@ -33,7 +33,8 @@
   "files": [
     "dist",
     "README.zh-CN.md",
-    "scripts/codex-register.mjs"
+    "scripts/codex-register.mjs",
+    "scripts/open-pane.mjs"
   ],
   "engines": {
     "node": ">=18"
