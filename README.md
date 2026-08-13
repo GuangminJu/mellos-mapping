@@ -125,7 +125,10 @@ session's working directory instead: the state file lands in your project,
 same as under Claude Code. The registered path is version-specific — re-run
 the script after updating the plugin.
 
-To watch the live pane beside a Codex session, run
+To watch the live pane beside a Codex session on Windows, run
+`node <plugin root>/scripts/open-pane.mjs <project dir>` — it splits the
+terminal window hosting the session (or falls back to a dedicated
+"mellos-mapping" window; `--window` picks that on purpose). Elsewhere run
 `node <plugin root>/dist/watch.mjs` from the project directory in a second
 terminal (or any terminal split).
 
@@ -154,7 +157,10 @@ get the four `mmap_*` tools and the pane, and bring their own prompting.
    declare the ghost design and keep the map current as it works.
 2. Run `/mellos-mapping:mmap` to open the live pane (Windows Terminal split
    on Windows, tmux split inside tmux, or a printed command to run in any
-   second terminal). Prefer `--ascii` if your font lacks box-drawing glyphs.
+   second terminal). On Windows the pane opens in the terminal window
+   hosting YOUR session, even with several windows open; pass `--window` to
+   put the map in its own dedicated window instead. Prefer `--ascii` if
+   your font lacks box-drawing glyphs.
 3. Watch nodes light up from the bottom. Interrupt when the picture worries
    you — that is what it is for.
 

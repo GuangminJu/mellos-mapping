@@ -1,6 +1,6 @@
 ---
 description: Open the live Mellos map in a terminal split pane beside this session
-argument-hint: "[--ascii]"
+argument-hint: "[--window] [--ascii]"
 allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 ---
 
@@ -13,18 +13,24 @@ Follow the platform-appropriate route:
 1. **Windows with Windows Terminal** (`wt` available — the usual case): run
 
    ```
-   wt -w 0 sp -V --size 0.42 --title "mellos map" -d "<PROJECT_DIR>" node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs"
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/open-pane.mjs" "<PROJECT_DIR>"
    ```
 
-   replacing `<PROJECT_DIR>` with the absolute project directory. This splits
-   the CURRENT Windows Terminal window vertically, map on the right.
+   replacing `<PROJECT_DIR>` with the absolute project directory. The
+   launcher identifies the Windows Terminal window hosting THIS session
+   (console-title nonce probe), brings it to the foreground, and splits it
+   vertically — the map lands beside the conversation even with several
+   terminal windows open. If the session window cannot be identified or
+   focused (session tab inactive, screen locked, not hosted in Windows
+   Terminal), it deterministically falls back to a dedicated window named
+   "mellos-mapping" — never a random window — and its output says which
+   mode it used and why; relay that to the user.
 
-   Caveat: `wt -w 0` resolves "current" to the MOST RECENTLY USED Windows
-   Terminal window, because this shell is not attached to the user's window.
-   With several terminal windows open (e.g. two Claude sessions), the pane
-   can land in the wrong window. If the user reports that, tell them to
-   focus the intended window first and rerun /mmap, or give them the route-3
-   command to run in the terminal where they want the map.
+   Flags: `--window` skips the split and opens the map in the dedicated
+   window on purpose — use it when the user prefers the map separate from
+   the chat (second monitor, small screens). `--ascii` for fonts without
+   box-drawing characters. `--force` opens another pane even though a
+   watcher for this project is already running (default is to skip).
 
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json"`.

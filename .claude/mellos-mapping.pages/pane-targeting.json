@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "title": "开窗定位 · 分屏到正确的窗口",
+  "layers": [
+    {
+      "id": "facts",
+      "name": "事实层 · Win32 可行性",
+      "rank": 0
+    },
+    {
+      "id": "launcher",
+      "name": "启动器 · 决策与拉起",
+      "rank": 1
+    },
+    {
+      "id": "wiring",
+      "name": "接线层 · 命令与文档",
+      "rank": 2
+    },
+    {
+      "id": "ship",
+      "name": "发布 · 0.13.0",
+      "rank": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": "win-probe",
+      "label": "枚举+聚焦探针",
+      "layer": "facts",
+      "status": "done",
+      "detail": "实测结论:①WT 单进程多窗口(5窗同 pid),进程树认不出窗口;②Bash 工具子进程挂隐藏控制台,需 FreeConsole+AttachConsole(claude pid) 后写 nonce 标题才能点亮所在窗口(实测命中 hwnd 724284,而旧图开在 6753172——bug 现场);③nonce 出现=我的标签正是该窗活动标签,识别与分屏前提合一;④前台锁存在(probe1 被拒/probe5 裸调成功),需级联 plain→Alt键→AttachThreadInput 并逐步验证;⑤标题恢复需 SetConsoleTitle 前后各留 100/300ms 冲刷。"
+    },
+    {
+      "id": "open-pane",
+      "label": "open-pane.mjs 启动器",
+      "layer": "launcher",
+      "status": "done",
+      "detail": "scripts/open-pane.mjs:祖先链 AttachConsole+nonce 识别宿主窗口(识别即验证\"我的标签是活动标签\")→聚焦级联 plain/Alt键/AttachThreadInput 逐步验证→验证通过才 wt -w 0 sp;任一步失败→确定性开 wt -w mellos-mapping 专属窗口;--window 显式选专属窗口;--file 令牌幂等守卫(--force 越过)。实证:锁屏下识别仍命中、聚焦全拒→兜底窗口正确打开;守卫 already-open 生效。分屏路径待用户解锁后实测。"
+    },
+    {
+      "id": "wiring-docs",
+      "label": "命令与文档接线",
+      "layer": "wiring",
+      "status": "done",
+      "detail": "mmap.md 路线1改走 open-pane.mjs(撤旧caveat,交代兜底语义与三个flag,要求转述模式与原因);SKILL 面板指引补 Windows 启动器与 --window;双语 README Codex 段+使用段同步;package.json files 白名单加入 scripts/open-pane.mjs。"
+    },
+    {
+      "id": "ship-0-13",
+      "label": "发布 0.13.0",
+      "layer": "ship",
+      "status": "in-progress",
+      "detail": "release.mjs bump→verify→合并推送 tag→npm(需用户点一次 Passkey)→registry 工作流→双端插件更新→真机开图验证。"
+    }
+  ],
+  "edges": [
+    {
+      "from": "open-pane",
+      "to": "win-probe"
+    },
+    {
+      "from": "wiring-docs",
+      "to": "open-pane"
+    },
+    {
+      "from": "ship-0-13",
+      "to": "wiring-docs"
+    }
+  ]
+}

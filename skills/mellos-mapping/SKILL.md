@@ -42,9 +42,14 @@ usually mean the server was never registered: have the user run
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
 2. **Offer the pane.** After the first declare, tell the user the map is live.
-   In Claude Code `/mellos-mapping:mmap` opens the split pane; in other
-   clients run `node <plugin root>/dist/watch.mjs` from the project directory
-   in a second terminal or split (this skill file lives under
+   In Claude Code `/mellos-mapping:mmap` opens the pane. In other clients on
+   Windows run `node <plugin root>/scripts/open-pane.mjs <project dir>` — it
+   locates the terminal window hosting THIS session and splits it there, or
+   falls back to a dedicated "mellos-mapping" window when the session window
+   cannot be identified or focused; pass `--window` to deliberately use the
+   dedicated window (some users want the map separate from the chat).
+   Elsewhere run `node <plugin root>/dist/watch.mjs` from the project
+   directory in a second terminal or split (this skill file lives under
    `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline
    anywhere.
 3. **Work bottom-up, one spinner at a time.** Set a node `in-progress` before

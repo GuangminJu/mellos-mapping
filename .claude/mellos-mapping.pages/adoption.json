@@ -54,7 +54,7 @@
       "layer": "artifacts",
       "status": "done",
       "detail": "bin 双命令(server/watch)、files 白名单、engines>=18、shebang。装好后任何 MCP 客户端一行接入 npx -y mellos-mapping。",
-      "evidence": "npm pack --dry-run:7 files 183.9kB 自包含;bin 双命令;私有标志已摘"
+      "evidence": "npm publish 200:0.12.0+0.12.1 已上线;npx 冒烟 serverInfo+四工具+declare 落盘;mcpName 归属字段随 0.12.1 发布"
     },
     {
       "id": "demo-svg",
@@ -86,7 +86,7 @@
       "layer": "facade",
       "status": "done",
       "detail": "官方 MCP registry 的 server.json 备好;awesome 列表的 PR 文案备好。对外提交动作先给用户过目再发。",
-      "evidence": "server.json 入库;awesome×3 一行文案+mcp-publisher 步骤备好(对外 PR 待用户点头)"
+      "evidence": "官方 MCP registry 已收录 io.github.GuangminJu/mellos-mapping@0.12.1(OIDC 工作流发布);awesome-mcp-servers PR#12055 已提交;awesome-claude-code 因14天规则定于8/26后由用户表单提交"
     },
     {
       "id": "announcements",
