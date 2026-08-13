@@ -14,8 +14,11 @@ description: >-
 
 Four MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`)
 maintain a **Mellos map**: a layered dependency map of the system under
-construction, persisted in `.claude/mellos-mapping.json` and rendered live in
-a terminal split pane beside the conversation.
+construction, persisted in `.claude/mellos-mapping.json` (default page) plus
+`.claude/mellos-mapping.pages/<slug>.json` (named pages) and rendered live in
+a terminal split pane beside the conversation. To learn whether a map already
+exists, call `mmap_view` — do not probe the default file, which is absent
+when all work lives on named pages.
 
 The map is a **ledger, not a judge**: the tools only refuse structural
 corruption; *when* to declare, start, or complete nodes is YOUR discipline,

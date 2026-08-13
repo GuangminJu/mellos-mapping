@@ -5,8 +5,13 @@ allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 ---
 
 Open the live Mellos map watcher for this project in a separate terminal pane.
-The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`; it polls
-`.claude/mellos-mapping.json` in the project directory and redraws on change.
+The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`. The store is
+MULTI-PAGE: the default page lives at `.claude/mellos-mapping.json` and named
+pages at `.claude/mellos-mapping.pages/<slug>.json` — the watcher takes the
+default path as its base, polls ALL of these files, and redraws on change.
+The default file is optional; a project whose work lives on named pages has
+no `.claude/mellos-mapping.json` at all. So never probe that single file to
+decide whether a map exists — call `mmap_view`, which reads the real store.
 
 Follow the platform-appropriate route:
 
@@ -41,7 +46,8 @@ Follow the platform-appropriate route:
    `--ascii` if their font lacks box-drawing characters).
 
 If launching fails (e.g. no graphical session), fall back to route 3. After
-the pane is up, confirm briefly; if no map exists yet the pane shows
-"waiting for <file>" until the first `mmap_declare`.
+the pane is up, confirm briefly; only when neither the default file nor any
+page file exists does the pane show "waiting for <file>", until the first
+`mmap_declare`.
 
 $ARGUMENTS

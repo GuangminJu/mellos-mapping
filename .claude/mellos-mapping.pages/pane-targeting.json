@@ -50,7 +50,7 @@
       "label": "发布 0.13.0",
       "layer": "ship",
       "status": "in-progress",
-      "detail": "release.mjs bump→verify→合并推送 tag→npm(需用户点一次 Passkey)→registry 工作流→双端插件更新→真机开图验证。"
+      "detail": "已完成:release.mjs 0.13.0(verify 152测试绿)→ feature/pane-targeting 合并 master → tag v0.13.0 + GitHub Release 推送 → 主干 CI 3系统绿 → Claude 插件 0.12.1→0.13.0、Codex 插件缓存刷新 0.13.0(MCP 注册直指仓库 dist,自动跟新)。待办:npm publish(需用户解锁后点一次 Passkey)→ registry 工作流;分屏路径真机实测(需用户在场)。"
     }
   ],
   "edges": [
