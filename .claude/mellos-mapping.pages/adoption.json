@@ -100,8 +100,9 @@
       "id": "release-closure",
       "label": "发布闭环",
       "layer": "closure",
-      "status": "in-progress",
-      "detail": "CI 三平台绿+双 tag+GitHub Release 完成。最后一步 npm publish 被 ENEEDAUTH 挡住:待用户 npm login 后 npm publish,随后可跑 mcp-publisher。"
+      "status": "done",
+      "detail": "CI 三平台绿+双 tag+GitHub Release 完成。最后一步 npm publish 被 ENEEDAUTH 挡住:待用户 npm login 后 npm publish,随后可跑 mcp-publisher。",
+      "evidence": "npm publish 200(web-auth 协议手工驱动);npx 冒烟:serverInfo 0.12.0+四工具+declare 落盘;CI 三平台绿;双 tag+Release"
     }
   ],
   "edges": [
