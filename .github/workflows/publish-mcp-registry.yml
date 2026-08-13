@@ -1,0 +1,25 @@
+# Publish server.json to the official MCP registry, authenticating via
+# GitHub Actions OIDC — the io.github.guangminju namespace is proven by the
+# repo's own identity, no device-flow login needed. Run manually after each
+# npm release: gh workflow run publish-mcp-registry
+name: publish-mcp-registry
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download mcp-publisher
+        run: |
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+      - name: Login via OIDC and publish
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
