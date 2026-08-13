@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -6912,8 +6913,9 @@ var require_dist = __commonJS({
 });
 
 // src/server/server.ts
+import { realpathSync } from "node:fs";
 import { join as join2 } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -22511,7 +22513,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.11.0";
+var SERVER_VERSION = "0.12.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var PAGE = ID.optional().describe(
   "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
@@ -22664,7 +22666,15 @@ async function main() {
   const server = buildServer(resolveStateFile(process.env, process.cwd()));
   await server.connect(new StdioServerTransport());
 }
-if (process.argv[1] !== void 0 && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function launchedAsEntry(argv1, moduleUrl) {
+  if (argv1 === void 0) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return pathToFileURL(argv1).href === moduleUrl;
+  }
+}
+if (launchedAsEntry(process.argv[1], import.meta.url)) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);
@@ -22674,5 +22684,6 @@ export {
   SERVER_NAME,
   SERVER_VERSION,
   buildServer,
+  launchedAsEntry,
   resolveStateFile
 };

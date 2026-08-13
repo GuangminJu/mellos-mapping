@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "title": "走向被很多人使用 · adoption",
+  "layers": [
+    {
+      "id": "groundwork",
+      "name": "地基 · 让分发成为可能",
+      "rank": 0
+    },
+    {
+      "id": "artifacts",
+      "name": "产物 · 可交付的东西",
+      "rank": 1
+    },
+    {
+      "id": "facade",
+      "name": "门面 · 被看见与被信任",
+      "rank": 2
+    },
+    {
+      "id": "closure",
+      "name": "闭环 · 发布并验证",
+      "rank": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": "bin-entry-fix",
+      "label": "bin 入口 realpath 修复",
+      "layer": "groundwork",
+      "status": "done",
+      "detail": "npx/bin 通过符号链接启动时 argv[1] 是链接路径,与 import.meta.url 不等,入口守卫误判导致服务器不启动。改用 realpath 比较。npm 分发的前置条件。",
+      "evidence": "vitest 152 全绿(新增 launchedAsEntry 3 specs);dist 两入口首行 shebang"
+    },
+    {
+      "id": "release-script",
+      "label": "release 脚本",
+      "layer": "groundwork",
+      "status": "done",
+      "detail": "scripts/release.mjs <version>:一次 bump 全部 5 处版本号并跑 verify,消除手滑。本次发版就用它(自吃狗粮)。",
+      "evidence": "自举:0.12.0 就由它 bump,5 处计数校验+verify 门禁"
+    },
+    {
+      "id": "demo-generator",
+      "label": "演示帧生成器",
+      "layer": "groundwork",
+      "status": "done",
+      "detail": "用真实 renderMap 逐帧渲染一段构建故事(幽灵→spinner→逐层变绿),ANSI 颜色转 SVG tspan,输出自包含动画 SVG。不录屏,可重复生成。",
+      "evidence": "62 帧×真实 renderMap,NBSP/CJK 宽度处理,输出 426x478"
+    },
+    {
+      "id": "npm-package",
+      "label": "npm 包装配",
+      "layer": "artifacts",
+      "status": "done",
+      "detail": "bin 双命令(server/watch)、files 白名单、engines>=18、shebang。装好后任何 MCP 客户端一行接入 npx -y mellos-mapping。",
+      "evidence": "npm pack --dry-run:7 files 183.9kB 自包含;bin 双命令;私有标志已摘"
+    },
+    {
+      "id": "demo-svg",
+      "label": "README 动图",
+      "layer": "artifacts",
+      "status": "done",
+      "detail": "生成 docs/demo.svg(暗色为主),嵌入双语 README 顶部。看见它动,才会有人装。",
+      "evidence": "docs/demo(.light).svg 生成并嵌入双语 README <picture>,暗浅双主题+reduced-motion 兜底"
+    },
+    {
+      "id": "ci-workflow",
+      "label": "CI 三平台矩阵",
+      "layer": "artifacts",
+      "status": "in-progress",
+      "detail": "GitHub Actions:ubuntu/macos/windows × verify(类型+测试+构建),外加 dist 与 src 一致性校验。绿徽章=信任信号,顺带首次覆盖 macOS。"
+    },
+    {
+      "id": "github-polish",
+      "label": "GitHub 门面",
+      "layer": "facade",
+      "status": "in-progress",
+      "detail": "topics、简介、CI 徽章入 README、git tag + GitHub Release。社交预览图需网页上传,留给用户。"
+    },
+    {
+      "id": "registry-listings",
+      "label": "目录登记准备",
+      "layer": "facade",
+      "status": "planned",
+      "detail": "官方 MCP registry 的 server.json 备好;awesome 列表的 PR 文案备好。对外提交动作先给用户过目再发。"
+    },
+    {
+      "id": "announcements",
+      "label": "宣发文案",
+      "layer": "facade",
+      "status": "planned",
+      "detail": "Show HN / r/ClaudeAI / X / V2EX 四份代笔稿,引用动图。发帖由用户出面。"
+    },
+    {
+      "id": "release-closure",
+      "label": "发布闭环",
+      "layer": "closure",
+      "status": "in-progress",
+      "detail": "release 脚本 bump → 提交合并推送 → CI 三平台真实变绿 → (若已登录)npm publish + npx 冒烟。"
+    }
+  ],
+  "edges": [
+    {
+      "from": "npm-package",
+      "to": "bin-entry-fix"
+    },
+    {
+      "from": "demo-svg",
+      "to": "demo-generator"
+    },
+    {
+      "from": "github-polish",
+      "to": "ci-workflow"
+    },
+    {
+      "from": "registry-listings",
+      "to": "npm-package"
+    },
+    {
+      "from": "announcements",
+      "to": "demo-svg"
+    },
+    {
+      "from": "release-closure",
+      "to": "release-script"
+    },
+    {
+      "from": "release-closure",
+      "to": "npm-package"
+    },
+    {
+      "from": "release-closure",
+      "to": "demo-svg"
+    },
+    {
+      "from": "release-closure",
+      "to": "github-polish"
+    }
+  ]
+}

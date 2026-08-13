@@ -15,8 +15,9 @@ const shared = {
   target: 'node18',
   legalComments: 'none',
   banner: {
-    // createRequire shim: some deps resolve optional requires at runtime
-    js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+    // Shebang first so npm bin shims can exec the bundles directly on POSIX;
+    // then the createRequire shim: some deps resolve optional requires at runtime.
+    js: "#!/usr/bin/env node\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },
 };
 

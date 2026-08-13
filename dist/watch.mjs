@@ -1,9 +1,10 @@
+#!/usr/bin/env node
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
 // src/watch/watch.ts
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { join as join2 } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
@@ -1854,7 +1855,15 @@ function main() {
   tick();
   setInterval(tick, cfg.intervalMs);
 }
-if (process.argv[1] !== void 0 && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function launchedAsEntry(argv1, moduleUrl) {
+  if (argv1 === void 0) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return pathToFileURL(argv1).href === moduleUrl;
+  }
+}
+if (launchedAsEntry(process.argv[1], import.meta.url)) {
   main();
 }
 export {
@@ -1863,6 +1872,7 @@ export {
   clampPanelRows,
   diveOrigin,
   fitWidth,
+  launchedAsEntry,
   mapPanel,
   nearestHit,
   nodePanel,

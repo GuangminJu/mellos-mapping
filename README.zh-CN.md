@@ -1,9 +1,18 @@
 # Mellos Mapping · 梅勒斯地图
 
+[![CI](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+
 [English](README.md) | 简体中文
 
-给 [Claude Code](https://claude.com/claude-code) 的自下而上开发实况地图，
-原生运行在终端里。
+给 [Claude Code](https://claude.com/claude-code) 与 Codex CLI 的自下而上
+开发实况地图，原生运行在终端里。
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/demo-light.svg">
+    <img alt="一张梅勒斯地图的自我构建：幽灵设计先行，spinner 逐层攀升，地基开裂向上传染，诚实修复" src="docs/demo.svg" width="620">
+  </picture>
+</p>
 
 Claude 为你构建系统时，对话旁边的分屏实时显示这个系统的**分层依赖地图**：
 最底层是原语，依赖边只允许向下指；虚线幽灵节点是已设计未实现的部分，
@@ -108,6 +117,25 @@ node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<版本>/scripts/codex
 
 要在 Codex 会话旁边看实况面板，在项目目录下的第二个终端（或任意分屏）
 运行 `node <插件根>/dist/watch.mjs`。
+
+## 任意 MCP 客户端
+
+服务器已发布到 npm，任何 MCP 客户端（Cursor、Windsurf、Zed、Gemini
+CLI……）都能用标准 stdio 条目接入：
+
+```
+npx -y mellos-mapping
+```
+
+地图文件落在客户端会话的工作目录（`.claude/mellos-mapping.json`）。在同
+一项目里打开实况面板：
+
+```
+npx -y -p mellos-mapping mellos-mapping-watch
+```
+
+技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得四个 `mmap_*`
+工具和面板，提示词自备。
 
 ## 使用
 

@@ -1,10 +1,36 @@
 {
   "name": "mellos-mapping",
-  "version": "0.11.0",
-  "description": "Mellos Mapping - a live layered-dependency map for bottom-up development in Claude Code",
+  "version": "0.12.0",
+  "description": "A live layered dependency map for bottom-up development — MCP server + terminal pane. Ghost the design first, then light nodes up from the bottom as they are built and verified.",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "author": "Mellos",
+  "homepage": "https://github.com/GuangminJu/mellos-mapping#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GuangminJu/mellos-mapping.git"
+  },
+  "bugs": "https://github.com/GuangminJu/mellos-mapping/issues",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "claude-code",
+    "codex",
+    "visualization",
+    "dependency-graph",
+    "bottom-up",
+    "terminal",
+    "tui"
+  ],
+  "bin": {
+    "mellos-mapping": "dist/server.mjs",
+    "mellos-mapping-watch": "dist/watch.mjs"
+  },
+  "files": [
+    "dist",
+    "README.zh-CN.md",
+    "scripts/codex-register.mjs"
+  ],
   "engines": {
     "node": ">=18"
   },
