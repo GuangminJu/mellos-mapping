@@ -31,7 +31,17 @@ import {
   nodePanel,
   pageTabRow,
   panelRowsFromDividerY,
+  type Ripple,
+  WAVE_LEVELS,
+  WAVE_NUMBER,
+  liveRipples,
+  splashArt,
+  splashFrame,
   topLevelFiles,
+  waveAt,
+  waveHash,
+  waveLevel,
+  wordArt,
   wrapWidth,
 } from './watch.js';
 
@@ -297,5 +307,128 @@ describe('zoom anchoring', () => {
     const hits = [hit('far', 50, 20), hit('near', 10, 5)];
     expect(nearestHit(hits, 12, 6)?.id).toBe('near');
     expect(nearestHit([], 12, 6)).toBeUndefined();
+  });
+});
+
+describe('standby splash', () => {
+  const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+  it('sets every word row to the same width in the block font', () => {
+    const rows = wordArt('MELLOS');
+    expect(rows).toHaveLength(5);
+    expect(new Set(rows.map((r) => r.length)).size).toBe(1);
+    expect(rows.join('')).toContain('#');
+  });
+
+  it('stacks both words centered on each other, blank line between', () => {
+    const art = splashArt();
+    expect(art).toHaveLength(11);
+    expect(art[5]).toBe('');
+    // MAPPING is the wider word, so it sets the block width and starts flush
+    expect(art[6]!.startsWith(' ')).toBe(false);
+    expect(art[0]!.startsWith(' ')).toBe(true);
+  });
+
+  it('rolls the same corners and jitters on every run', () => {
+    expect(waveHash(7)).toBe(waveHash(7));
+    expect(waveHash(7)).not.toBe(waveHash(8));
+    // over a long run every corner gets used
+    const corners = new Set(Array.from({ length: 60 }, (_, n) => waveHash(n) % 4));
+    expect([...corners].sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it('keeps a steady population of rings, each expanding and fading', () => {
+    expect(liveRipples(0, 40, 11).length).toBeLessThanOrEqual(1); // water starts still
+    const rings = liveRipples(200, 40, 11);
+    expect(rings.length).toBeGreaterThanOrEqual(2);
+    expect(rings.length).toBeLessThanOrEqual(6);
+    // oldest first: the widest ring is also the faintest
+    expect(rings[0]!.r).toBeGreaterThan(rings.at(-1)!.r);
+    expect(rings[0]!.fade).toBeLessThan(rings.at(-1)!.fade);
+    for (const r of rings) expect(r.fade).toBeGreaterThanOrEqual(0);
+  });
+
+  it('superposes rings: crests reinforce, a crest meets a trough and cancels', () => {
+    const ring = (r: number): Ripple => ({ ox: 0, oy: 0, r, fade: 1 });
+    const crest = waveAt([ring(10)], 10, 0); // cell sits exactly on the front
+    expect(crest).toBeCloseTo(1, 5);
+    expect(waveAt([ring(10), ring(10)], 10, 0)).toBeCloseTo(2, 5);
+    // a ring whose front trails by half a wavelength arrives in antiphase
+    expect(Math.abs(waveAt([ring(10), ring(10 - Math.PI / WAVE_NUMBER)], 10, 0))).toBeLessThan(crest);
+  });
+
+  it('keeps the top of the ramp out of reach for a lone ring', () => {
+    const ring = (r: number): Ripple => ({ ox: 0, oy: 0, r, fade: 1 });
+    const alone = waveLevel(waveAt([ring(10)], 10, 0));
+    expect(alone).toBeGreaterThan(0);
+    expect(alone).toBeLessThan(WAVE_LEVELS); // only a pile-up reaches the glare
+    expect(waveLevel(waveAt([ring(10), ring(10)], 10, 0))).toBe(WAVE_LEVELS);
+  });
+
+  it('quantizes surface height into the ramp, clamping the extremes', () => {
+    expect(waveLevel(0)).toBe(0);
+    expect(waveLevel(5)).toBe(WAVE_LEVELS);
+    expect(waveLevel(-5)).toBe(-WAVE_LEVELS);
+    expect(waveLevel(-0.5)).toBe(-2);
+  });
+
+  it('gives up on a pane too small for the art', () => {
+    expect(splashFrame('waiting', 0, 20, 40, true, true)).toBeUndefined();
+    expect(splashFrame('waiting', 0, 80, 6, true, true)).toBeUndefined();
+  });
+
+  it('centers the art and the notice inside the viewport', () => {
+    const frame = splashFrame('waiting for map.json', 0, 60, 30, true, false)!;
+    expect(frame.length).toBeLessThanOrEqual(30);
+    const notice = frame.at(-1)!;
+    expect(notice).toContain('waiting for map.json');
+    expect(notice.startsWith(' ')).toBe(true);
+    const inked = frame.filter((r) => /[░▒▓█]/.test(r));
+    expect(inked).toHaveLength(10); // 5 rows per word, blank divider excluded
+  });
+
+  it('animates without color by shading the ink instead', () => {
+    const a = splashFrame('waiting', 40, 60, 30, false, false)!.join('\n');
+    const b = splashFrame('waiting', 90, 60, 30, false, false)!.join('\n');
+    expect(a).not.toContain('\x1b[');
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/[#=:.]/);
+  });
+
+  it('rides the 256-color ramps and keeps the ink solid when color is on', () => {
+    const art = (frame: number): string[] => splashFrame('waiting', frame, 60, 30, true, true)!.slice(0, -1);
+    const a = art(40).join('\n');
+    const b = art(90).join('\n');
+    expect(a).toContain('\x1b[38;5;');
+    expect(a).not.toBe(b);
+    // color mode never shades: stripped of ANSI the two art frames are identical
+    expect(strip(a)).toBe(strip(b));
+  });
+
+  it('paints only from the one ramp — no color can appear off-palette', () => {
+    const ramp = new Set([17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195]);
+    for (let f = 0; f < 200; f += 7) {
+      const codes = splashFrame('waiting', f, 60, 30, true, true)!.join('\n').matchAll(/38;5;(\d+)/g);
+      for (const m of codes) expect(ramp.has(Number(m[1]))).toBe(true);
+    }
+  });
+
+  it('reads as a gradient, not confetti: touching ink cells stay close on the ramp', () => {
+    // Measured on the field itself — consecutive color runs in a painted row
+    // can sit cells apart, because letter strokes have gaps between them.
+    const art = splashArt();
+    const width = Math.max(...art.map((r) => r.length));
+    let widest = 0;
+    for (let f = 0; f < 400; f++) {
+      const rings = liveRipples(f, width, art.length);
+      for (const [y, row] of art.entries()) {
+        for (let x = 1; x < row.length; x++) {
+          if (row[x] !== '#' || row[x - 1] !== '#') continue;
+          const step = Math.abs(waveLevel(waveAt(rings, x, y)) - waveLevel(waveAt(rings, x - 1, y)));
+          widest = Math.max(widest, step);
+        }
+      }
+    }
+    expect(widest).toBeLessThanOrEqual(3);
   });
 });
