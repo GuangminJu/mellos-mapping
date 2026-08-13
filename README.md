@@ -1,4 +1,4 @@
-# Mellos Mapping · 梅勒斯地图
+# Mellos Mapping
 
 English | [简体中文](README.zh-CN.md)
 
@@ -12,30 +12,30 @@ designed, a spinner on what is being built right now, and solid green for
 what is built *and verified*.
 
 ```
-  梅勒斯地图 · mellos-mapping 插件
+  Mellos Mapping · the plugin itself
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 编排层
+━━━━━━━━━━━━━━━━━━━━━━━━━━ orchestration
 
   ╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮
   ╎ · MCP Server ╎
-  ╰╌╌╌┬┬╌╌╌╌┬╌╌╌╌╯
-      ││    │
-      └┼────┼───────────┐
-       │    └───┐       │
-       │        │       │
-━━━━━━━┿━━━━━━━━┿━━━━━━━┿━━━ 契约层
-       │        │       │
-  ┏━━━━┷━━━━━━━┓│ ╭╌╌╌╌╌┴╌╌╌╌╌╮
-  ┃ ■ 状态存储 ┃│ ╎ · Watcher ╎
-  ┗━━━━━┯━━━━━━┛│ ╰╌╌╌╌╌╌┬╌╌╌╌╯
-        │       │        │
-        │ ┌─────┘        │
-        │ │              │
-━━━━━━━━┿━┿━━━━━━━━━━━━━━┿━━ 原语层
-        │ │              │
-  ┏━━━━━┷━┷━━━━━━┓  ╭────┴────────╮
-  ┃ ■ 图领域模型 ┃  │ ⠋ ASCII渲染 │
-  ┗━━━━━━━━━━━━━━┛  ╰─────────────╯
+  ╰╌╌╌╌┬╌┬╌╌┬╌╌╌╌╯
+       │ │  │
+       └─┼──┼─────────────┐
+         │  └──────┐      │
+         │         │      │
+━━━━━━━━━┿━━━━━━━━━┿━━━━━━┿━━━ contracts
+         │         │      │
+  ┏━━━━━━┷━━━━━━━━┓│ ╭╌╌╌╌┴╌╌╌╌╌╌╮
+  ┃ ■ State Store ┃│ ╎ · Watcher ╎
+  ┗━━━━━┯━━━━━━━━━┛│ ╰╌╌╌╌╌┬╌╌╌╌╌╯
+        │          │       │
+        │ ┌────────┘       │
+        │ │                │
+━━━━━━━━┿━┿━━━━━━━━━━━━━━━━┿━ primitives
+        │ │                │
+  ┏━━━━━┷━┷━━━━━━┓  ╭──────┴───────────╮
+  ┃ ■ Map Domain ┃  │ ⠋ ASCII Renderer │
+  ┗━━━━━━━━━━━━━━┛  ╰──────────────────╯
 
   · planned   ⠋ in-progress   ■ done   ✗ regressed
 ```
@@ -43,7 +43,7 @@ what is built *and verified*.
 In a real terminal the wiring and band bars render FAINT while node boxes
 glow in their status colors with bold labels — a dark circuit board where
 the components are the bright things. Skip-level edges thread through gaps
-between boxes (watch the line dive between 状态存储 and Watcher above);
+between boxes (watch the line dive between State Store and Watcher above);
 non-overlapping wire segments share track rows to keep the bands close.
 
 *(This is the plugin's own map, mid-development. The spinner really spins.)*
@@ -138,7 +138,7 @@ detail ← 100% ← 85% ← 70% ← 55% ← overview
   stay boxes;
 - **below 55%** — labels would stop meaning anything, so the map AGGREGATES:
   each declared group (a labeled subsystem within a band) becomes one box
-  named `地基子系统 1/2` with its status derived from the members, edges
+  named `foundation subsystem 1/2` with its status derived from the members, edges
   collapse onto the groups, ungrouped nodes stay themselves. Like a real
   map, zooming out shows province names — not anonymous dots. (A map with
   no groups falls back to a pure glyph constellation with per-band counts.)
