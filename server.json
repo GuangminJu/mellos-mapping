@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
-  "name": "io.github.guangminju/mellos-mapping",
+  "name": "io.github.GuangminJu/mellos-mapping",
   "description": "Live layered dependency map for bottom-up development, drawn by the agent in a terminal pane.",
   "repository": {
     "url": "https://github.com/GuangminJu/mellos-mapping",
