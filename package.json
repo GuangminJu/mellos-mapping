@@ -26,6 +26,9 @@
     "mellos-mapping": "dist/server.mjs",
     "mellos-mapping-watch": "dist/watch.mjs"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "files": [
     "dist",
     "README.zh-CN.md",

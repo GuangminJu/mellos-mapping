@@ -68,36 +68,40 @@
       "id": "ci-workflow",
       "label": "CI 三平台矩阵",
       "layer": "artifacts",
-      "status": "in-progress",
-      "detail": "GitHub Actions:ubuntu/macos/windows × verify(类型+测试+构建),外加 dist 与 src 一致性校验。绿徽章=信任信号,顺带首次覆盖 macOS。"
+      "status": "done",
+      "detail": "GitHub Actions:ubuntu/macos/windows × verify(类型+测试+构建),外加 dist 与 src 一致性校验。绿徽章=信任信号,顺带首次覆盖 macOS。",
+      "evidence": "run 31677788998:ubuntu/macos/windows 三 job 全绿,macOS 首次真实验证,dist 一致性守卫通过"
     },
     {
       "id": "github-polish",
       "label": "GitHub 门面",
       "layer": "facade",
-      "status": "in-progress",
-      "detail": "topics、简介、CI 徽章入 README、git tag + GitHub Release。社交预览图需网页上传,留给用户。"
+      "status": "done",
+      "detail": "topics、简介、CI 徽章入 README、git tag + GitHub Release。社交预览图需网页上传,留给用户。",
+      "evidence": "topics×10+简介已设;README 双语徽章;tags v0.11.0/v0.12.0;Release v0.12.0 已发"
     },
     {
       "id": "registry-listings",
       "label": "目录登记准备",
       "layer": "facade",
-      "status": "planned",
-      "detail": "官方 MCP registry 的 server.json 备好;awesome 列表的 PR 文案备好。对外提交动作先给用户过目再发。"
+      "status": "done",
+      "detail": "官方 MCP registry 的 server.json 备好;awesome 列表的 PR 文案备好。对外提交动作先给用户过目再发。",
+      "evidence": "server.json 入库;awesome×3 一行文案+mcp-publisher 步骤备好(对外 PR 待用户点头)"
     },
     {
       "id": "announcements",
       "label": "宣发文案",
       "layer": "facade",
-      "status": "planned",
-      "detail": "Show HN / r/ClaudeAI / X / V2EX 四份代笔稿,引用动图。发帖由用户出面。"
+      "status": "done",
+      "detail": "Show HN / r/ClaudeAI / X / V2EX 四份代笔稿,引用动图。发帖由用户出面。",
+      "evidence": "HN/Reddit/X/V2EX 四稿成文,scratchpad/announcements.md"
     },
     {
       "id": "release-closure",
       "label": "发布闭环",
       "layer": "closure",
       "status": "in-progress",
-      "detail": "release 脚本 bump → 提交合并推送 → CI 三平台真实变绿 → (若已登录)npm publish + npx 冒烟。"
+      "detail": "CI 三平台绿+双 tag+GitHub Release 完成。最后一步 npm publish 被 ENEEDAUTH 挡住:待用户 npm login 后 npm publish,随后可跑 mcp-publisher。"
     }
   ],
   "edges": [
