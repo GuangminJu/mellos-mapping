@@ -89,6 +89,26 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 拉取本仓库的是第一条命令。重启 Claude Code 生效。发布即 `master` 分支
 上的版本号提升。（在对话里输入 `/plugin` 也能打开同一个管理界面。）
 
+## Codex CLI
+
+同一个仓库也是 Codex 插件（codex-cli 0.147+）。三行装完：
+
+```
+codex plugin marketplace add GuangminJu/mellos-mapping
+codex plugin add mellos-mapping@mellos-mapping
+node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<版本>/scripts/codex-register.mjs
+```
+
+前两行把技能（地图纪律）装成 Codex 插件。第三行在用户级注册 MCP
+服务器——必须这么做，因为 Codex 把插件自带的 MCP 服务器拉起在插件缓存里，
+且不给它任何感知工作区的途径，捆绑的服务器会把地图写进缓存。脚本写入的
+用户级 `codex mcp add` 条目会继承每个会话的工作目录：状态文件落在你的
+项目里，与 Claude Code 下行为一致。注册的是版本相关的绝对路径——插件
+更新后重跑一次脚本即可。
+
+要在 Codex 会话旁边看实况面板，在项目目录下的第二个终端（或任意分屏）
+运行 `node <插件根>/dist/watch.mjs`。
+
 ## 使用
 
 1. 让 Claude 构建一个非平凡的东西。捆绑的 skill 会让 Claude 先声明幽灵
