@@ -256,3 +256,52 @@ describe('atomicity (P2)', () => {
     expect(readdirSync(dir)).toEqual(['map.json']);
   });
 });
+
+describe('work spans on disk', () => {
+  const T = 1_700_000_000_000;
+
+  function timedMap(): MellosMap {
+    let map = must(declareLayer(EMPTY_MAP, { id: 'base' as LayerId, name: '原语层', rank: 0 }));
+    map = must(declareNode(map, { id: 'core' as NodeId, label: '核心', layer: 'base' as LayerId }));
+    map = must(updateNode(map, { id: 'core' as NodeId, status: 'in-progress', at: T }));
+    map = must(updateNode(map, { id: 'core' as NodeId, status: 'done', at: T + 60_000 }));
+    map = must(updateNode(map, { id: 'core' as NodeId, status: 'in-progress', at: T + 90_000 }));
+    return map;
+  }
+
+  it('survives a serialize/parse round trip, open stretch included', () => {
+    const map = timedMap();
+    const back = must(parseMap(JSON.parse(serializeMap(map)), 'test'));
+    expect(back.nodes[0]!.spans).toEqual([{ from: T, to: T + 60_000 }, { from: T + 90_000 }]);
+    expect(back).toEqual(map);
+  });
+
+  it('stays on version 1, so an older reader still opens the file', () => {
+    expect(JSON.parse(serializeMap(timedMap())).version).toBe(1);
+  });
+
+  it('reads a map written before timing existed', () => {
+    const legacy = {
+      version: 1,
+      layers: [{ id: 'base', name: '原语层', rank: 0 }],
+      nodes: [{ id: 'core', label: '核心', layer: 'base', status: 'done' }],
+      edges: [],
+    };
+    expect(must(parseMap(legacy, 'test')).nodes[0]!.spans).toBeUndefined();
+  });
+
+  it('refuses malformed spans rather than silently dropping time', () => {
+    const withSpans = (spans: unknown): unknown => ({
+      version: 1,
+      layers: [{ id: 'base', name: '原语层', rank: 0 }],
+      nodes: [{ id: 'core', label: '核心', layer: 'base', status: 'done', spans }],
+      edges: [],
+    });
+    expect(mustFail(parseMap(withSpans('soon'), 'test')).kind).toBe('bad-shape');
+    expect(mustFail(parseMap(withSpans([{ to: 5 }]), 'test')).kind).toBe('bad-shape');
+    expect(mustFail(parseMap(withSpans([{ from: 'yesterday' }]), 'test')).kind).toBe('bad-shape');
+    expect(mustFail(parseMap(withSpans([{ from: 1, to: null }]), 'test')).kind).toBe('bad-shape');
+    // an open stretch is legal, not malformed
+    expect(parseMap(withSpans([{ from: 1 }]), 'test').ok).toBe(true);
+  });
+});

@@ -46,7 +46,7 @@
  * box spec (size, border, content) and the whitespace geometry change.
  */
 
-import { groupStatus } from '../domain/ops.js';
+import { elapsedOf, groupStatus, isStalled } from '../domain/ops.js';
 import type { DepEdge, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
 
 /** One wheel tick on the zoom ladder; see module header. */
@@ -92,6 +92,12 @@ export interface RenderOptions {
   readonly focus?: string | undefined;
   /** Position on the zoom ladder; omitted means ZOOM_DEFAULT (100%). */
   readonly zoom?: ZoomStep | undefined;
+  /**
+   * Wall clock (epoch ms) used to measure still-open work spans, so the legend
+   * can carry the map's elapsed time. Omitted means no timing is drawn — this
+   * module reads no clock of its own, exactly like spinnerFrame.
+   */
+  readonly now?: number | undefined;
 }
 
 /** A window over the rendered picture, in cell coordinates (0-based). */
@@ -131,6 +137,23 @@ export function displayWidth(text: string): number {
   let w = 0;
   for (const ch of text) w += charWidth(ch.codePointAt(0)!);
   return w;
+}
+
+/**
+ * A duration in milliseconds as a compact human string: `42s`, `4m12s`,
+ * `2h05m`, `3d04h`. Always two magnitudes at most, so it stays narrow enough
+ * to ride along in a panel header that is already crowded. Sub-second
+ * durations round down to `0s` rather than inventing precision nobody asked
+ * for; negatives (a clock that went backwards) clamp to zero.
+ */
+export function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const [s, m, h, d] = [total % 60, Math.floor(total / 60) % 60, Math.floor(total / 3600) % 24, Math.floor(total / 86400)];
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  if (d > 0) return `${d}d${pad(h)}h`;
+  if (h > 0) return `${h}h${pad(m)}m`;
+  if (m > 0) return `${m}m${pad(s)}s`;
+  return `${s}s`;
 }
 
 /** Truncate to a display width, ANSI-free input, appending … when cut. */
@@ -1062,6 +1085,15 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     for (const [status, style] of legendEntries) {
       if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, '   ', 'none');
       lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+    }
+    // Calendar time the map has cost — parallel work counted once (elapsedOf).
+    // A trailing + means a node is still spinning past the idle cap, so the
+    // number is a floor rather than a measurement.
+    const elapsed = opts.now !== undefined ? elapsedOf(map.nodes, opts.now) : 0;
+    if (elapsed > 0) {
+      const floor = isStalled(map.nodes, opts.now!) ? '+' : '';
+      lx = canvas.text(lx, legendY, '   ', 'none');
+      lx = canvas.text(lx, legendY, `~ ${formatDuration(elapsed)}${floor}`, 'faint');
     }
   }
 

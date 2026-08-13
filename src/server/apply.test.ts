@@ -8,7 +8,24 @@
 import { describe, expect, it } from 'vitest';
 
 import { EMPTY_MAP, type MellosMap, type Result } from '../domain/types.js';
-import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
+import {
+  type DeclareInput,
+  type UpdateInput,
+  applyDeclare as applyDeclareAt,
+  applyRemove,
+  applyUpdate as applyUpdateAt,
+  summarize,
+} from './apply.js';
+
+/**
+ * Every apply* entry point takes the wall clock as an argument, so these specs
+ * pin it. Cases that care about elapsed time call the *At forms directly with
+ * their own stamps; everything else runs at T0 and never notices timing exists.
+ */
+const T0 = 1_700_000_000_000;
+const applyDeclare = (map: MellosMap, input: DeclareInput): Result<MellosMap, string> =>
+  applyDeclareAt(map, input, T0);
+const applyUpdate = (map: MellosMap, input: UpdateInput): Result<MellosMap, string> => applyUpdateAt(map, input, T0);
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);

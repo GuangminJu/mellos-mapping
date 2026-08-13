@@ -137,6 +137,34 @@ function groupStatus(map, id) {
 function mapStatus(map) {
   return aggregateStatus(map.nodes);
 }
+var IDLE_CAP_MS = 30 * 6e4;
+function spanTotal(spans, now, idleCap = IDLE_CAP_MS) {
+  const closed = spans.map((s) => ({
+    from: s.from,
+    to: Math.max(s.from, s.to ?? Math.min(now, s.from + idleCap))
+  })).sort((a, b) => a.from - b.from);
+  let total = 0;
+  let covered = -Infinity;
+  for (const s of closed) {
+    const start = Math.max(s.from, covered);
+    if (s.to > start) total += s.to - start;
+    covered = Math.max(covered, s.to);
+  }
+  return total;
+}
+function elapsedOf(nodes, now, idleCap = IDLE_CAP_MS) {
+  return spanTotal(
+    nodes.flatMap((n) => n.spans ?? []),
+    now,
+    idleCap
+  );
+}
+function isStalled(nodes, now, idleCap = IDLE_CAP_MS) {
+  return nodes.some((n) => (n.spans ?? []).some((s) => s.to === void 0 && now - s.from > idleCap));
+}
+function effortOf(nodes, now, idleCap = IDLE_CAP_MS) {
+  return nodes.reduce((sum, n) => sum + elapsedOf([n], now, idleCap), 0);
+}
 function declareNode(map, input) {
   if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
@@ -154,7 +182,8 @@ function declareNode(map, input) {
     ...input.group !== void 0 ? { group: input.group } : {},
     ...input.kind !== void 0 ? { kind: input.kind } : {},
     ...input.lane !== void 0 ? { lane: input.lane } : {},
-    ...input.submap !== void 0 ? { submap: input.submap } : {}
+    ...input.submap !== void 0 ? { submap: input.submap } : {},
+    ...input.spans !== void 0 ? { spans: input.spans } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -170,6 +199,14 @@ function linkNodes(map, from, to, label) {
   if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
   return ok({ ...map, edges: [...map.edges, { from, to, ...label !== void 0 ? { label } : {} }] });
 }
+function stampSpans(node, status, at) {
+  if (status === void 0 || at === void 0) return node.spans;
+  const spans = node.spans ?? [];
+  const open = spans.findIndex((s) => s.to === void 0);
+  if (status === "in-progress") return open >= 0 ? node.spans : [...spans, { from: at }];
+  if (open < 0) return node.spans;
+  return spans.map((s, i) => i === open ? { from: s.from, to: Math.max(s.from, at) } : s);
+}
 function updateNode(map, input) {
   const node = findNode(map, input.id);
   if (!node) return err({ kind: "unknown-node", id: input.id });
@@ -180,7 +217,8 @@ function updateNode(map, input) {
   if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
     return err({ kind: "unknown-lane", id: input.lane });
   }
-  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
+  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, spans: _spans, ...bare } = node;
+  const nextSpans = stampSpans(node, input.status, input.at);
   const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
   const nextKind = input.kind === void 0 ? currentKind : input.kind === null ? void 0 : input.kind;
   const nextLane = input.lane === void 0 ? currentLane : input.lane === null ? void 0 : input.lane;
@@ -191,6 +229,7 @@ function updateNode(map, input) {
     ...nextKind !== void 0 ? { kind: nextKind } : {},
     ...nextLane !== void 0 ? { lane: nextLane } : {},
     ...nextSubmap !== void 0 ? { submap: nextSubmap } : {},
+    ...nextSpans !== void 0 ? { spans: nextSpans } : {},
     ...input.status !== void 0 ? { status: input.status } : {},
     ...input.label !== void 0 ? { label: input.label } : {},
     ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
@@ -250,6 +289,15 @@ function displayWidth(text) {
   let w = 0;
   for (const ch of text) w += charWidth(ch.codePointAt(0));
   return w;
+}
+function formatDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1e3));
+  const [s, m, h, d] = [total % 60, Math.floor(total / 60) % 60, Math.floor(total / 3600) % 24, Math.floor(total / 86400)];
+  const pad = (n) => String(n).padStart(2, "0");
+  if (d > 0) return `${d}d${pad(h)}h`;
+  if (h > 0) return `${h}h${pad(m)}m`;
+  if (m > 0) return `${m}m${pad(s)}s`;
+  return `${s}s`;
 }
 function fitWidth(s, width) {
   if (displayWidth(s) <= width) return s;
@@ -928,6 +976,12 @@ function buildCanvasWith(map, opts, geo) {
       if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
       lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
     }
+    const elapsed = opts.now !== void 0 ? elapsedOf(map.nodes, opts.now) : 0;
+    if (elapsed > 0) {
+      const floor = isStalled(map.nodes, opts.now) ? "+" : "";
+      lx = canvas.text(lx, legendY, "   ", "none");
+      lx = canvas.text(lx, legendY, `~ ${formatDuration(elapsed)}${floor}`, "faint");
+    }
   }
   const hits = [...boxes.values()].map((b) => ({
     id: b.node.id,
@@ -1009,6 +1063,24 @@ function asArray(v) {
 }
 function optionalString(v) {
   return typeof v === "string" ? v : void 0;
+}
+function parseSpans(v) {
+  if (v === void 0) return void 0;
+  if (!Array.isArray(v)) return { ok: false, detail: "spans is not an array" };
+  const out = [];
+  for (const [i, raw] of v.entries()) {
+    if (!isRecord(raw)) return { ok: false, detail: `spans[${i}] is not an object` };
+    const from = raw["from"];
+    const to = raw["to"];
+    if (typeof from !== "number" || !Number.isFinite(from)) {
+      return { ok: false, detail: `spans[${i}] needs a finite numeric from` };
+    }
+    if (to !== void 0 && (typeof to !== "number" || !Number.isFinite(to))) {
+      return { ok: false, detail: `spans[${i}].to must be a finite number when present` };
+    }
+    out.push(to === void 0 ? { from } : { from, to });
+  }
+  return { ok: true, value: out };
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
@@ -1098,6 +1170,10 @@ function parseMap(raw, path) {
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       submap = made.value;
     }
+    const spans = parseSpans(rawNode["spans"]);
+    if (spans !== void 0 && !spans.ok) {
+      return err({ kind: "bad-shape", path, detail: `nodes[${i}].${spans.detail}` });
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
@@ -1107,7 +1183,8 @@ function parseMap(raw, path) {
       ...group !== void 0 ? { group } : {},
       ...nodeKind !== void 0 ? { kind: nodeKind } : {},
       ...lane !== void 0 ? { lane } : {},
-      ...submap !== void 0 ? { submap } : {}
+      ...submap !== void 0 ? { submap } : {},
+      ...spans !== void 0 && spans.ok ? { spans: spans.value } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
@@ -1355,7 +1432,11 @@ function nearestHit(hits, cx, cy) {
   }
   return best;
 }
-function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS) {
+function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS, now) {
+  const clockOf = (nodes) => {
+    const ms = now === void 0 ? 0 : elapsedOf(nodes, now);
+    return ms > 0 ? [`~ ${formatDuration(ms)}${isStalled(nodes, now) ? "+" : ""}`] : [];
+  };
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
   const group = map.groups.find((gr) => gr.id === focusId);
@@ -1383,7 +1464,7 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
     const lines2 = [
       {
         text: fitWidth(
-          `${g(status)} ${group.label} [${group.id}] \xB7 ${layerName2} \xB7 ${status} \xB7 ${members.length} member(s)${pinMark}`,
+          [`${g(status)} ${group.label} [${group.id}]`, layerName2, status, `${members.length} member(s)`].concat(clockOf(members)).join(" \xB7 ") + pinMark,
           width
         ),
         sgr: `${STATUS_SGR[status]};1`
@@ -1419,6 +1500,7 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
     ...laneLabel !== void 0 ? [laneLabel] : [],
     ...node.kind !== void 0 ? [node.kind] : [],
     ...neutral ? [] : [node.status],
+    ...neutral ? [] : clockOf([node]),
     ...node.submap !== void 0 ? [`${unicode ? "\u229E" : "+"} ${node.submap}`] : []
   ];
   const [usesWord, usedByWord] = map.kind === "sequence" ? ["after", "before"] : ["uses", "used by"];
@@ -1442,19 +1524,23 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
   }
   return lines.slice(0, rows);
 }
-function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
+function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS, now) {
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const count = (s) => map.nodes.filter((n) => n.status === s).length;
   const statuses = ["done", "in-progress", "planned", "regressed"];
   const counts = statuses.filter((s) => count(s) > 0).map((s) => `${g(s)} ${count(s)} ${s}`).join("   ");
   const parts = [`${map.layers.length} layers`, `${map.nodes.length} nodes`, `${map.edges.length} edges`];
   if (map.lanes.length > 0) parts.push(`${map.lanes.length} lanes`);
+  const elapsed = now === void 0 ? 0 : elapsedOf(map.nodes, now);
+  const effort = now === void 0 ? 0 : effortOf(map.nodes, now);
+  const floor = elapsed > 0 && isStalled(map.nodes, now) ? "+" : "";
+  const timing = elapsed > 0 ? `~ ${formatDuration(elapsed)}${floor} elapsed \xB7 ${formatDuration(effort)}${floor} effort` + (effort > elapsed ? ` \xB7 ${(effort / elapsed).toFixed(1)}\xD7 parallel` : "") : "";
   const lines = [
     { text: fitWidth(map.title ?? "mellos map", width), sgr: "1" },
     { text: fitWidth(parts.join(" \xB7 "), width), sgr: "90" },
     // documentation kinds document structure, not progress
     { text: fitWidth(isNeutralKind(map) ? `${map.kind} diagram` : counts, width), sgr: isNeutralKind(map) ? "90" : "" },
-    { text: "", sgr: "" },
+    { text: fitWidth(timing, width), sgr: "90" },
     { text: "hover a node to inspect \xB7 click to pin", sgr: "90" }
   ];
   while (lines.length < rows) lines.push({ text: "", sgr: "" });
@@ -1544,13 +1630,14 @@ function main() {
     panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
+    const now = Date.now();
     let body;
     let panned = "";
     let pannable = false;
     if (map !== void 0) {
       const windowed = renderMapWindow(
         map,
-        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
+        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom, now },
         { x: offsetX, y: offsetY, width: cols, height: viewH }
       );
       const maxX = Math.max(0, windowed.contentWidth - cols);
@@ -1577,9 +1664,9 @@ function main() {
     if (map === void 0) {
       panel = Array.from({ length: panelContentRows }, () => ({ text: "", sgr: "" }));
     } else if (focus !== void 0) {
-      panel = nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows) ?? mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
+      panel = nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows, now) ?? mapPanel(map, cfg.unicode, panelWidth, panelContentRows, now);
     } else {
-      panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
+      panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows, now);
     }
     const grip = cfg.unicode ? " \u22EF " : " ~ ";
     const bar = (cfg.unicode ? "\u2500" : "-").repeat(cols);

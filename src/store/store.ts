@@ -30,6 +30,7 @@ import {
   type MapError,
   type MellosMap,
   type Result,
+  type WorkSpan,
   describeMapError,
   err,
   makeGroupId,
@@ -124,6 +125,34 @@ function asArray(v: unknown): readonly unknown[] {
 
 function optionalString(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
+}
+
+/**
+ * Read a node's work spans. Absent (the common case, and every map written
+ * before timing existed) yields undefined; anything present must be
+ * well-formed, because a silently-dropped span would understate a duration
+ * and no reader could tell. Ordering and overlap are NOT checked — spanTotal
+ * is total, and the domain deliberately holds no invariant there.
+ */
+function parseSpans(
+  v: unknown,
+): { ok: true; value: readonly WorkSpan[] } | { ok: false; detail: string } | undefined {
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v)) return { ok: false, detail: 'spans is not an array' };
+  const out: WorkSpan[] = [];
+  for (const [i, raw] of v.entries()) {
+    if (!isRecord(raw)) return { ok: false, detail: `spans[${i}] is not an object` };
+    const from = raw['from'];
+    const to = raw['to'];
+    if (typeof from !== 'number' || !Number.isFinite(from)) {
+      return { ok: false, detail: `spans[${i}] needs a finite numeric from` };
+    }
+    if (to !== undefined && (typeof to !== 'number' || !Number.isFinite(to))) {
+      return { ok: false, detail: `spans[${i}].to must be a finite number when present` };
+    }
+    out.push(to === undefined ? { from } : { from, to });
+  }
+  return { ok: true, value: out };
 }
 
 /**
@@ -226,6 +255,10 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
       submap = made.value;
     }
+    const spans = parseSpans(rawNode['spans']);
+    if (spans !== undefined && !spans.ok) {
+      return err({ kind: 'bad-shape', path, detail: `nodes[${i}].${spans.detail}` });
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
@@ -236,6 +269,7 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       ...(nodeKind !== undefined ? { kind: nodeKind } : {}),
       ...(lane !== undefined ? { lane } : {}),
       ...(submap !== undefined ? { submap } : {}),
+      ...(spans !== undefined && spans.ok ? { spans: spans.value } : {}),
     });
     if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
     map = declared.value;

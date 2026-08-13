@@ -27,6 +27,7 @@ import {
   type NodeStatus,
   type Result,
   type SubmapRef,
+  type WorkSpan,
   err,
   ok,
 } from './types.js';
@@ -173,6 +174,77 @@ export function mapStatus(map: MellosMap): NodeStatus {
   return aggregateStatus(map.nodes);
 }
 
+/**
+ * How long a single OPEN span is allowed to accrue. A node left spinning
+ * because a session ended would otherwise bill the whole night to the map, and
+ * `14h` on the dashboard is worse than useless — it drowns every honest number
+ * beside it. Closed spans are never capped: they carry two real stamps.
+ *
+ * The cap makes a capped total a FLOOR, not a measurement, so every surface
+ * that shows one marks it (a trailing `+`). Deliberately crude — better a
+ * plainly-labelled lower bound than a precise-looking lie.
+ */
+export const IDLE_CAP_MS = 30 * 60_000;
+
+/**
+ * Measure of the UNION of `spans` — the wall-clock time during which at least
+ * one of them was running. Overlap is counted ONCE, which is the whole point:
+ * two nodes worked on in parallel cost one stretch of calendar, not two.
+ *
+ * Open spans run up to `now` (this layer has no clock, so the caller supplies
+ * it) or `idleCap` past their start, whichever comes first. A total function:
+ * any order, any overlap, any nesting, and a `to` that precedes its `from` (a
+ * clock that went backwards) all yield a non-negative answer, never a refusal.
+ */
+export function spanTotal(spans: readonly WorkSpan[], now: number, idleCap: number = IDLE_CAP_MS): number {
+  const closed = spans
+    .map((s) => ({
+      from: s.from,
+      to: Math.max(s.from, s.to ?? Math.min(now, s.from + idleCap)),
+    }))
+    .sort((a, b) => a.from - b.from);
+  let total = 0;
+  let covered = -Infinity; // right edge of everything merged so far
+  for (const s of closed) {
+    const start = Math.max(s.from, covered);
+    if (s.to > start) total += s.to - start;
+    covered = Math.max(covered, s.to);
+  }
+  return total;
+}
+
+/**
+ * Derived, never stored: calendar time a set of nodes has cost. Parallel work
+ * collapses, so this is what a stopwatch on the wall would have read.
+ * One node, a group's members, a band, the whole map — same call.
+ */
+export function elapsedOf(nodes: readonly MapNode[], now: number, idleCap: number = IDLE_CAP_MS): number {
+  return spanTotal(
+    nodes.flatMap((n) => n.spans ?? []),
+    now,
+    idleCap,
+  );
+}
+
+/**
+ * Whether any of these nodes is still spinning past the idle cap — i.e. the
+ * duration beside it stopped being a measurement and became a lower bound.
+ * Surfaces use this to append `+`; nothing about the stored data changes.
+ */
+export function isStalled(nodes: readonly MapNode[], now: number, idleCap: number = IDLE_CAP_MS): boolean {
+  return nodes.some((n) => (n.spans ?? []).some((s) => s.to === undefined && now - s.from > idleCap));
+}
+
+/**
+ * Derived, never stored: attention spent — every node's own elapsed, added up.
+ * Exceeds elapsedOf by exactly the overlap, so effort / elapsed is the average
+ * number of nodes in flight. Report the two together or the pair reads as a
+ * bug; alone, either number misleads.
+ */
+export function effortOf(nodes: readonly MapNode[], now: number, idleCap: number = IDLE_CAP_MS): number {
+  return nodes.reduce((sum, n) => sum + elapsedOf([n], now, idleCap), 0);
+}
+
 export interface DeclareNodeInput {
   readonly id: NodeId;
   readonly label: string;
@@ -183,6 +255,8 @@ export interface DeclareNodeInput {
   readonly kind?: NodeKind;
   readonly lane?: LaneId;
   readonly submap?: SubmapRef;
+  /** Restored verbatim (the store replays a saved node); no clock is consulted. */
+  readonly spans?: readonly WorkSpan[];
 }
 
 /**
@@ -208,6 +282,7 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     ...(input.kind !== undefined ? { kind: input.kind } : {}),
     ...(input.lane !== undefined ? { lane: input.lane } : {}),
     ...(input.submap !== undefined ? { submap: input.submap } : {}),
+    ...(input.spans !== undefined ? { spans: input.spans } : {}),
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -247,12 +322,41 @@ export interface UpdateNodeInput {
   readonly lane?: LaneId | null;
   /** A SubmapRef links a child map page; null unlinks it. */
   readonly submap?: SubmapRef | null;
+  /**
+   * Wall-clock stamp (epoch ms) for this status change, supplied by the
+   * boundary — this layer owns no clock. Omit it and no timing is recorded,
+   * which is exactly what a pure relabel or a store replay wants.
+   */
+  readonly at?: number;
+}
+
+/**
+ * Span bookkeeping for one status change. Entering `in-progress` opens a
+ * stretch unless one is already open; leaving it closes the open one. Both are
+ * no-ops without a stamp, and a close never yields a backwards stretch.
+ *
+ * Note what is NOT here: no rejection of odd sequences. Two `in-progress`
+ * reports in a row keep the one stretch; a `done` with nothing open changes
+ * nothing. The ledger records, it does not police.
+ */
+function stampSpans(
+  node: MapNode,
+  status: NodeStatus | undefined,
+  at: number | undefined,
+): readonly WorkSpan[] | undefined {
+  if (status === undefined || at === undefined) return node.spans;
+  const spans = node.spans ?? [];
+  const open = spans.findIndex((s) => s.to === undefined);
+  if (status === 'in-progress') return open >= 0 ? node.spans : [...spans, { from: at }];
+  if (open < 0) return node.spans;
+  return spans.map((s, i) => (i === open ? { from: s.from, to: Math.max(s.from, at) } : s));
 }
 
 /**
  * Update a node's status, label, evidence, design detail, group membership,
  * kind and/or lane. Absent fields are left untouched. No transition rules:
  * the ledger records whatever the caller reports, whenever they report it.
+ * When `at` is supplied, a status change also opens or closes a work span.
  */
 export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<MellosMap, MapError> {
   const node = findNode(map, input.id);
@@ -265,7 +369,8 @@ export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<Mello
     return err({ kind: 'unknown-lane', id: input.lane });
   }
 
-  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
+  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, spans: _spans, ...bare } = node;
+  const nextSpans = stampSpans(node, input.status, input.at);
   const nextGroup = input.group === undefined ? currentGroup : input.group === null ? undefined : input.group;
   const nextKind = input.kind === undefined ? currentKind : input.kind === null ? undefined : input.kind;
   const nextLane = input.lane === undefined ? currentLane : input.lane === null ? undefined : input.lane;
@@ -276,6 +381,7 @@ export function updateNode(map: MellosMap, input: UpdateNodeInput): Result<Mello
     ...(nextKind !== undefined ? { kind: nextKind } : {}),
     ...(nextLane !== undefined ? { lane: nextLane } : {}),
     ...(nextSubmap !== undefined ? { submap: nextSubmap } : {}),
+    ...(nextSpans !== undefined ? { spans: nextSpans } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),

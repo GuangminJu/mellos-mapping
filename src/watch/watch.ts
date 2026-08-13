@@ -37,7 +37,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { groupStatus, mapStatus } from '../domain/ops.js';
+import { effortOf, elapsedOf, groupStatus, isStalled, mapStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
 import {
   type BoxHit,
@@ -46,6 +46,7 @@ import {
   clampZoom,
   displayWidth,
   fitWidth,
+  formatDuration,
   isNeutralKind,
   kindGlyph,
   renderMapWindow,
@@ -304,7 +305,17 @@ export function nodePanel(
   width: number,
   pinned: boolean,
   rows: number = PANEL_CONTENT_ROWS,
+  now?: number,
 ): PanelLine[] | undefined {
+  /**
+   * `~ 4m12s` for anything that has been worked on; nothing at all for the
+   * untouched (a bare `0s` would suggest it had been measured). A trailing `+`
+   * marks a total the idle cap turned into a floor.
+   */
+  const clockOf = (nodes: readonly MellosMap['nodes'][number][]): string[] => {
+    const ms = now === undefined ? 0 : elapsedOf(nodes, now);
+    return ms > 0 ? [`~ ${formatDuration(ms)}${isStalled(nodes, now!) ? '+' : ''}`] : [];
+  };
   const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
 
@@ -338,7 +349,9 @@ export function nodePanel(
     const lines: PanelLine[] = [
       {
         text: fitWidth(
-          `${g(status)} ${group.label} [${group.id}] · ${layerName} · ${status} · ${members.length} member(s)${pinMark}`,
+          [`${g(status)} ${group.label} [${group.id}]`, layerName, status, `${members.length} member(s)`]
+            .concat(clockOf(members))
+            .join(' · ') + pinMark,
           width,
         ),
         sgr: `${STATUS_SGR[status]};1`,
@@ -382,6 +395,7 @@ export function nodePanel(
     ...(laneLabel !== undefined ? [laneLabel] : []),
     ...(node.kind !== undefined ? [node.kind as string] : []),
     ...(neutral ? [] : [node.status]),
+    ...(neutral ? [] : clockOf([node])),
     ...(node.submap !== undefined ? [`${unicode ? '⊞' : '+'} ${node.submap}`] : []),
   ];
   // On sequence pages an edge is a moment in time, not a dependency:
@@ -414,6 +428,7 @@ export function mapPanel(
   unicode: boolean,
   width: number,
   rows: number = PANEL_CONTENT_ROWS,
+  now?: number,
 ): PanelLine[] {
   const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const count = (s: NodeStatus): number => map.nodes.filter((n) => n.status === s).length;
@@ -424,12 +439,27 @@ export function mapPanel(
     .join('   ');
   const parts = [`${map.layers.length} layers`, `${map.nodes.length} nodes`, `${map.edges.length} edges`];
   if (map.lanes.length > 0) parts.push(`${map.lanes.length} lanes`);
+  // Elapsed is calendar time (parallel work counted once); effort is the sum of
+  // the nodes' own times. Never show one without the other: alone, elapsed hides
+  // how much was going on and effort reads as a wall clock that lost its mind.
+  // Their ratio is what the pair is really for — how many nodes ran at a time.
+  // A trailing + on both: a node still spinning past the idle cap has stopped
+  // accruing, so each number is a floor rather than a measurement.
+  const elapsed = now === undefined ? 0 : elapsedOf(map.nodes, now);
+  const effort = now === undefined ? 0 : effortOf(map.nodes, now);
+  const floor = elapsed > 0 && isStalled(map.nodes, now!) ? '+' : '';
+  const timing =
+    elapsed > 0
+      ? `~ ${formatDuration(elapsed)}${floor} elapsed · ${formatDuration(effort)}${floor} effort` +
+        (effort > elapsed ? ` · ${(effort / elapsed).toFixed(1)}× parallel` : '')
+      : '';
+
   const lines: PanelLine[] = [
     { text: fitWidth(map.title ?? 'mellos map', width), sgr: '1' },
     { text: fitWidth(parts.join(' · '), width), sgr: '90' },
     // documentation kinds document structure, not progress
     { text: fitWidth(isNeutralKind(map) ? `${map.kind} diagram` : counts, width), sgr: isNeutralKind(map) ? '90' : '' },
-    { text: '', sgr: '' },
+    { text: fitWidth(timing, width), sgr: '90' },
     { text: 'hover a node to inspect · click to pin', sgr: '90' },
   ];
   while (lines.length < rows) lines.push({ text: '', sgr: '' });
@@ -551,6 +581,9 @@ function main(): void {
     panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
+    // One clock read per frame: the panels and the picture must not disagree
+    // about how long an open span has been running.
+    const now = Date.now();
 
     let body: string[];
     let panned = '';
@@ -558,7 +591,7 @@ function main(): void {
     if (map !== undefined) {
       const windowed = renderMapWindow(
         map,
-        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
+        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom, now },
         { x: offsetX, y: offsetY, width: cols, height: viewH },
       );
       // clamp AFTER measuring so a shrinking map pulls the view back in
@@ -589,10 +622,10 @@ function main(): void {
       panel = Array.from({ length: panelContentRows }, () => ({ text: '', sgr: '' }));
     } else if (focus !== undefined) {
       panel =
-        nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows) ??
-        mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
+        nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows, now) ??
+        mapPanel(map, cfg.unicode, panelWidth, panelContentRows, now);
     } else {
-      panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
+      panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows, now);
     }
     // the separator doubles as the drag handle — mark its grip in the middle
     const grip = cfg.unicode ? ' ⋯ ' : ' ~ ';

@@ -23,6 +23,11 @@ import {
   removeNode,
   setKind,
   setTitle,
+  IDLE_CAP_MS,
+  effortOf,
+  elapsedOf,
+  isStalled,
+  spanTotal,
   updateNode,
 } from './ops.js';
 import {
@@ -30,8 +35,10 @@ import {
   type GroupId,
   type LaneId,
   type LayerId,
+  type MapNode,
   type MellosMap,
   type NodeId,
+  type WorkSpan,
   type NodeKind,
   type Result,
   type SubmapRef,
@@ -410,5 +417,108 @@ describe('operations are pure', () => {
 
   it('setTitle returns a retitled copy', () => {
     expect(setTitle(EMPTY_MAP, '梅勒斯地图').title).toBe('梅勒斯地图');
+  });
+});
+
+describe('work spans and elapsed time', () => {
+  const T = 1_700_000_000_000;
+  const s = (from: number, to?: number): WorkSpan => (to === undefined ? { from } : { from, to });
+  const findNode = (map: MellosMap, id: string): MapNode | undefined => map.nodes.find((n) => (n.id as string) === id);
+
+  it('measures a union, so overlapping stretches are counted once', () => {
+    expect(spanTotal([], T)).toBe(0);
+    expect(spanTotal([s(0, 10)], T)).toBe(10);
+    // disjoint: both count
+    expect(spanTotal([s(0, 10), s(20, 30)], T)).toBe(20);
+    // overlapping: the shared middle is counted once, not twice
+    expect(spanTotal([s(0, 10), s(5, 15)], T)).toBe(15);
+    // fully nested: the inner stretch adds nothing
+    expect(spanTotal([s(0, 100), s(10, 20)], T)).toBe(100);
+    // touching end to end merges seamlessly
+    expect(spanTotal([s(0, 10), s(10, 20)], T)).toBe(20);
+  });
+
+  it('is order-independent and survives a clock that ran backwards', () => {
+    expect(spanTotal([s(20, 30), s(0, 10), s(5, 25)], T)).toBe(30);
+    // to before from would be a negative stretch; it clamps to zero instead of refusing
+    expect(spanTotal([s(50, 40)], T)).toBe(0);
+  });
+
+  it('runs an open stretch up to now', () => {
+    expect(spanTotal([s(T - 5_000)], T)).toBe(5_000);
+    expect(spanTotal([s(T - 5_000), s(T - 3_000)], T)).toBe(5_000); // two open stretches still overlap
+  });
+
+  it('caps an open stretch at the idle limit, but never a closed one', () => {
+    const night = 14 * 3_600_000;
+    // abandoned spinner: bills the cap, not the night
+    expect(spanTotal([s(T - night)], T)).toBe(IDLE_CAP_MS);
+    // a genuinely long stretch that was closed has two real stamps — untouched
+    expect(spanTotal([s(T - night, T)], T)).toBe(night);
+    // the cap is a parameter, so a caller with different tolerance can say so
+    expect(spanTotal([s(T - night)], T, 60_000)).toBe(60_000);
+  });
+
+  it('reports when a total has become a floor rather than a measurement', () => {
+    const node = (spans: WorkSpan[]): MapNode => ({ id: nid('n'), label: 'N', layer: lid('base'), status: 'in-progress', spans });
+    expect(isStalled([node([s(T - IDLE_CAP_MS - 1)])], T)).toBe(true);
+    expect(isStalled([node([s(T - 1_000)])], T)).toBe(false); // open but young
+    expect(isStalled([node([s(T - 10 * 3_600_000, T)])], T)).toBe(false); // long but closed
+    expect(isStalled([node([])], T)).toBe(false);
+  });
+
+  it('opens a span on entering in-progress and closes it on leaving', () => {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('core'), label: '核心', layer: lid('primitives') }));
+    expect(findNode(map, 'core')?.spans).toBeUndefined();
+
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T }));
+    expect(findNode(map, 'core')?.spans).toEqual([{ from: T }]);
+
+    // a second in-progress report keeps the one open stretch
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T + 1_000 }));
+    expect(findNode(map, 'core')?.spans).toEqual([{ from: T }]);
+
+    map = must(updateNode(map, { id: nid('core'), status: 'done', at: T + 60_000 }));
+    expect(findNode(map, 'core')?.spans).toEqual([{ from: T, to: T + 60_000 }]);
+    expect(elapsedOf([findNode(map, 'core')!], T + 999_999)).toBe(60_000);
+  });
+
+  it('gives rework its own stretch instead of overwriting the first', () => {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('core'), label: '核心', layer: lid('primitives') }));
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T }));
+    map = must(updateNode(map, { id: nid('core'), status: 'done', at: T + 10_000 }));
+    map = must(updateNode(map, { id: nid('core'), status: 'regressed', at: T + 20_000 }));
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T + 30_000 }));
+    map = must(updateNode(map, { id: nid('core'), status: 'done', at: T + 45_000 }));
+    expect(findNode(map, 'core')?.spans).toEqual([
+      { from: T, to: T + 10_000 },
+      { from: T + 30_000, to: T + 45_000 },
+    ]);
+    expect(elapsedOf([findNode(map, 'core')!], T)).toBe(25_000); // 10s + 15s, the idle gap excluded
+  });
+
+  it('records nothing without a stamp, so relabels and store replays stay inert', () => {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('core'), label: '核心', layer: lid('primitives') }));
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress' }));
+    expect(findNode(map, 'core')?.spans).toBeUndefined();
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T }));
+    map = must(updateNode(map, { id: nid('core'), label: '核心模块' }));
+    expect(findNode(map, 'core')?.spans).toEqual([{ from: T }]); // a relabel never closes a stretch
+  });
+
+  it('separates calendar time from effort, and their ratio is the parallelism', () => {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('a'), label: 'A', layer: lid('primitives') }));
+    map = must(declareNode(map, { id: nid('b'), label: 'B', layer: lid('primitives') }));
+    // both worked on over the very same minute
+    for (const id of ['a', 'b']) {
+      map = must(updateNode(map, { id: nid(id), status: 'in-progress', at: T }));
+      map = must(updateNode(map, { id: nid(id), status: 'done', at: T + 60_000 }));
+    }
+    expect(elapsedOf(map.nodes, T)).toBe(60_000); // one minute of calendar
+    expect(effortOf(map.nodes, T)).toBe(120_000); // two minutes of attention
   });
 });

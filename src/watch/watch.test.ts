@@ -130,6 +130,73 @@ describe('mapPanel (dashboard)', () => {
   });
 });
 
+describe('timing in the panels', () => {
+  const T = 1_700_000_000_000;
+
+  function timed(): MellosMap {
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: '原语层', rank: 0 }));
+    map = must(declareGroup(map, { id: gid('kernel'), label: '内核', layer: lid('base') }));
+    map = must(declareNode(map, { id: nid('a'), label: 'A', layer: lid('base'), group: gid('kernel') }));
+    map = must(declareNode(map, { id: nid('b'), label: 'B', layer: lid('base'), group: gid('kernel') }));
+    // A and B are worked on over the same minute, so they cost one minute of calendar
+    for (const id of ['a', 'b']) {
+      map = must(updateNode(map, { id: nid(id), status: 'in-progress', at: T }));
+      map = must(updateNode(map, { id: nid(id), status: 'done', at: T + 60_000 }));
+    }
+    return map;
+  }
+
+  it("puts a node's own elapsed time in its header", () => {
+    const panel = nodePanel(timed(), 'a', true, 200, false, 6, T + 999_999)!;
+    expect(panel[0]!.text).toContain('~ 1m00s');
+  });
+
+  it('leaves the header alone for a node nobody has started', () => {
+    const map = must(declareNode(timed(), { id: nid('ghost'), label: '幽灵', layer: lid('base') }));
+    expect(nodePanel(map, 'ghost', true, 200, false, 6, T + 999_999)![0]!.text).not.toContain('~ ');
+    // and with no clock at all, even a worked node stays silent
+    expect(nodePanel(map, 'a', true, 200, false, 6)![0]!.text).not.toContain('~ ');
+  });
+
+  it('collapses parallel members into one stretch on a group header', () => {
+    const panel = nodePanel(timed(), 'kernel', true, 200, false, 6, T + 999_999)!;
+    expect(panel[0]!.text).toContain('~ 1m00s'); // not 2m00s — the two ran together
+  });
+
+  it('shows calendar time beside effort, and the parallelism between them', () => {
+    const line = mapPanel(timed(), true, 200, 6, T + 999_999)[3]!.text;
+    expect(line).toContain('1m00s elapsed');
+    expect(line).toContain('2m00s effort');
+    expect(line).toContain('2.0× parallel');
+  });
+
+  it('stops an abandoned spinner from billing the whole night, and says so', () => {
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: '原语层', rank: 0 }));
+    map = must(declareNode(map, { id: nid('left-running'), label: '忘了收工', layer: lid('base') }));
+    map = must(updateNode(map, { id: nid('left-running'), status: 'in-progress', at: T }));
+
+    const overnight = T + 14 * 3_600_000;
+    const header = nodePanel(map, 'left-running', true, 200, false, 6, overnight)![0]!.text;
+    expect(header).toContain('~ 30m00s+'); // capped, and marked as a floor
+    expect(header).not.toContain('14h');
+
+    // under the cap it is an ordinary measurement, no plus sign
+    const early = nodePanel(map, 'left-running', true, 200, false, 6, T + 300_000)![0]!.text;
+    expect(early).toContain('~ 5m00s');
+    expect(early).not.toContain('+');
+  });
+
+  it('drops the parallel factor when nothing actually overlapped', () => {
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: '原语层', rank: 0 }));
+    map = must(declareNode(map, { id: nid('solo'), label: '独', layer: lid('base') }));
+    map = must(updateNode(map, { id: nid('solo'), status: 'in-progress', at: T }));
+    map = must(updateNode(map, { id: nid('solo'), status: 'done', at: T + 30_000 }));
+    const line = mapPanel(map, true, 200, 6, T + 999_999)[3]!.text;
+    expect(line).toContain('30s elapsed');
+    expect(line).not.toContain('parallel'); // 1.0× is noise, not information
+  });
+});
+
 describe('pageTabRow', () => {
   const tabs: PageTab[] = [
     { title: '开发回放', status: 'done', active: true, fresh: false },

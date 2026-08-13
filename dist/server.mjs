@@ -21306,6 +21306,31 @@ function aggregateStatus(nodes) {
 function groupStatus(map, id) {
   return aggregateStatus(map.nodes.filter((n) => n.group === id));
 }
+var IDLE_CAP_MS = 30 * 6e4;
+function spanTotal(spans, now, idleCap = IDLE_CAP_MS) {
+  const closed = spans.map((s) => ({
+    from: s.from,
+    to: Math.max(s.from, s.to ?? Math.min(now, s.from + idleCap))
+  })).sort((a, b) => a.from - b.from);
+  let total = 0;
+  let covered = -Infinity;
+  for (const s of closed) {
+    const start = Math.max(s.from, covered);
+    if (s.to > start) total += s.to - start;
+    covered = Math.max(covered, s.to);
+  }
+  return total;
+}
+function elapsedOf(nodes, now, idleCap = IDLE_CAP_MS) {
+  return spanTotal(
+    nodes.flatMap((n) => n.spans ?? []),
+    now,
+    idleCap
+  );
+}
+function isStalled(nodes, now, idleCap = IDLE_CAP_MS) {
+  return nodes.some((n) => (n.spans ?? []).some((s) => s.to === void 0 && now - s.from > idleCap));
+}
 function declareNode(map, input) {
   if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
@@ -21323,7 +21348,8 @@ function declareNode(map, input) {
     ...input.group !== void 0 ? { group: input.group } : {},
     ...input.kind !== void 0 ? { kind: input.kind } : {},
     ...input.lane !== void 0 ? { lane: input.lane } : {},
-    ...input.submap !== void 0 ? { submap: input.submap } : {}
+    ...input.submap !== void 0 ? { submap: input.submap } : {},
+    ...input.spans !== void 0 ? { spans: input.spans } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -21339,6 +21365,14 @@ function linkNodes(map, from, to, label) {
   if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
   return ok({ ...map, edges: [...map.edges, { from, to, ...label !== void 0 ? { label } : {} }] });
 }
+function stampSpans(node, status, at) {
+  if (status === void 0 || at === void 0) return node.spans;
+  const spans = node.spans ?? [];
+  const open = spans.findIndex((s) => s.to === void 0);
+  if (status === "in-progress") return open >= 0 ? node.spans : [...spans, { from: at }];
+  if (open < 0) return node.spans;
+  return spans.map((s, i) => i === open ? { from: s.from, to: Math.max(s.from, at) } : s);
+}
 function updateNode(map, input) {
   const node = findNode(map, input.id);
   if (!node) return err({ kind: "unknown-node", id: input.id });
@@ -21349,7 +21383,8 @@ function updateNode(map, input) {
   if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
     return err({ kind: "unknown-lane", id: input.lane });
   }
-  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
+  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, spans: _spans, ...bare } = node;
+  const nextSpans = stampSpans(node, input.status, input.at);
   const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
   const nextKind = input.kind === void 0 ? currentKind : input.kind === null ? void 0 : input.kind;
   const nextLane = input.lane === void 0 ? currentLane : input.lane === null ? void 0 : input.lane;
@@ -21360,6 +21395,7 @@ function updateNode(map, input) {
     ...nextKind !== void 0 ? { kind: nextKind } : {},
     ...nextLane !== void 0 ? { lane: nextLane } : {},
     ...nextSubmap !== void 0 ? { submap: nextSubmap } : {},
+    ...nextSpans !== void 0 ? { spans: nextSpans } : {},
     ...input.status !== void 0 ? { status: input.status } : {},
     ...input.label !== void 0 ? { label: input.label } : {},
     ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
@@ -21423,6 +21459,15 @@ function displayWidth(text2) {
   let w = 0;
   for (const ch of text2) w += charWidth(ch.codePointAt(0));
   return w;
+}
+function formatDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1e3));
+  const [s, m, h, d] = [total % 60, Math.floor(total / 60) % 60, Math.floor(total / 3600) % 24, Math.floor(total / 86400)];
+  const pad = (n) => String(n).padStart(2, "0");
+  if (d > 0) return `${d}d${pad(h)}h`;
+  if (h > 0) return `${h}h${pad(m)}m`;
+  if (m > 0) return `${m}m${pad(s)}s`;
+  return `${s}s`;
 }
 function fitWidth(s, width) {
   if (displayWidth(s) <= width) return s;
@@ -22096,6 +22141,12 @@ function buildCanvasWith(map, opts, geo) {
       if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
       lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
     }
+    const elapsed = opts.now !== void 0 ? elapsedOf(map.nodes, opts.now) : 0;
+    if (elapsed > 0) {
+      const floor = isStalled(map.nodes, opts.now) ? "+" : "";
+      lx = canvas.text(lx, legendY, "   ", "none");
+      lx = canvas.text(lx, legendY, `~ ${formatDuration(elapsed)}${floor}`, "faint");
+    }
   }
   const hits = [...boxes.values()].map((b) => ({
     id: b.node.id,
@@ -22159,6 +22210,24 @@ function asArray(v) {
 }
 function optionalString(v) {
   return typeof v === "string" ? v : void 0;
+}
+function parseSpans(v) {
+  if (v === void 0) return void 0;
+  if (!Array.isArray(v)) return { ok: false, detail: "spans is not an array" };
+  const out = [];
+  for (const [i, raw] of v.entries()) {
+    if (!isRecord(raw)) return { ok: false, detail: `spans[${i}] is not an object` };
+    const from = raw["from"];
+    const to = raw["to"];
+    if (typeof from !== "number" || !Number.isFinite(from)) {
+      return { ok: false, detail: `spans[${i}] needs a finite numeric from` };
+    }
+    if (to !== void 0 && (typeof to !== "number" || !Number.isFinite(to))) {
+      return { ok: false, detail: `spans[${i}].to must be a finite number when present` };
+    }
+    out.push(to === void 0 ? { from } : { from, to });
+  }
+  return { ok: true, value: out };
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
@@ -22248,6 +22317,10 @@ function parseMap(raw, path) {
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       submap = made.value;
     }
+    const spans = parseSpans(rawNode["spans"]);
+    if (spans !== void 0 && !spans.ok) {
+      return err({ kind: "bad-shape", path, detail: `nodes[${i}].${spans.detail}` });
+    }
     const declared = declareNode(map, {
       id: id.value,
       label,
@@ -22257,7 +22330,8 @@ function parseMap(raw, path) {
       ...group !== void 0 ? { group } : {},
       ...nodeKind !== void 0 ? { kind: nodeKind } : {},
       ...lane !== void 0 ? { lane } : {},
-      ...submap !== void 0 ? { submap } : {}
+      ...submap !== void 0 ? { submap } : {},
+      ...spans !== void 0 && spans.ok ? { spans: spans.value } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
@@ -22318,7 +22392,7 @@ function saveMapFile(path, map) {
 }
 
 // src/server/apply.ts
-function applyDeclare(map, input) {
+function applyDeclare(map, input, at) {
   let next = input.title !== void 0 ? setTitle(map, input.title) : map;
   if (input.kind !== void 0) {
     const kind = makeMapKind(input.kind);
@@ -22392,7 +22466,9 @@ function applyDeclare(map, input) {
       ...group !== void 0 ? { group } : {},
       ...kind !== void 0 ? { kind } : {},
       ...lane !== void 0 ? { lane } : {},
-      ...submap !== void 0 ? { submap } : {}
+      ...submap !== void 0 ? { submap } : {},
+      // declared straight into work: the clock starts now
+      ...status === "in-progress" ? { spans: [{ from: at }] } : {}
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -22408,7 +22484,7 @@ function applyDeclare(map, input) {
   }
   return ok(next);
 }
-function applyUpdate(map, input) {
+function applyUpdate(map, input, at) {
   let next = map;
   for (const [i, u] of input.updates.entries()) {
     const id = makeNodeId(u.id);
@@ -22449,6 +22525,7 @@ function applyUpdate(map, input) {
     }
     const updated = updateNode(next, {
       id: id.value,
+      at,
       ...status !== void 0 ? { status } : {},
       ...u.label !== void 0 ? { label: u.label } : {},
       ...u.evidence !== void 0 ? { evidence: u.evidence } : {},
@@ -22597,7 +22674,7 @@ function buildServer(stateFile) {
         edges: external_exports.array(EDGE.extend({ label: external_exports.string().max(80).optional().describe("what flows along the edge") })).optional()
       }
     },
-    (input) => mutate(input.page, (map) => applyDeclare(map, input))
+    (input) => mutate(input.page, (map) => applyDeclare(map, input, Date.now()))
   );
   server.registerTool(
     "mmap_update",
@@ -22621,7 +22698,7 @@ function buildServer(stateFile) {
         ).min(1)
       }
     },
-    (input) => mutate(input.page, (map) => applyUpdate(map, input))
+    (input) => mutate(input.page, (map) => applyUpdate(map, input, Date.now()))
   );
   server.registerTool(
     "mmap_remove",
@@ -22653,7 +22730,9 @@ function buildServer(stateFile) {
       const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
-      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n"));
+      return text(
+        renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom, now: Date.now() }).join("\n")
+      );
     }
   );
   return server;

@@ -21,7 +21,15 @@ import {
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
-import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
+import {
+  type ZoomStep,
+  clampZoom,
+  displayWidth,
+  formatDuration,
+  renderMap,
+  renderMapWindow,
+  zoomLabel,
+} from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -392,5 +400,40 @@ describe('diagram kinds', () => {
     // -3 zoom truncates the label, but never the badge
     const tight = renderMap(map, { ...MONO, zoom: -3 }).join('\n');
     expect(tight).toContain('… ⊞');
+  });
+});
+
+describe('duration formatting and the legend clock', () => {
+  it('keeps a duration to two magnitudes', () => {
+    expect(formatDuration(0)).toBe('0s');
+    expect(formatDuration(900)).toBe('0s'); // sub-second rounds down, no invented precision
+    expect(formatDuration(42_000)).toBe('42s');
+    expect(formatDuration(252_000)).toBe('4m12s');
+    expect(formatDuration(7_500_000)).toBe('2h05m');
+    expect(formatDuration(273_600_000)).toBe('3d04h');
+    expect(formatDuration(-5_000)).toBe('0s'); // a backwards clock clamps
+  });
+
+  it('adds elapsed time to the legend only when a clock and spans are both present', () => {
+    const T = 1_700_000_000_000;
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: '原语层', rank: 0 }));
+    map = must(declareNode(map, { id: nid('core'), label: '核心', layer: lid('base') }));
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T }));
+    map = must(updateNode(map, { id: nid('core'), status: 'done', at: T + 252_000 }));
+
+    expect(renderMap(map, { ...MONO, now: T + 999_999 }).join('\n')).toContain('~ 4m12s');
+    // no clock supplied: the picture carries no timing at all
+    expect(renderMap(map, MONO).join('\n')).not.toContain('~ ');
+    // a clock but nothing ever worked on: still nothing to say
+    const untouched = must(declareNode(map, { id: nid('ghost'), label: '幽灵', layer: lid('base') }));
+    expect(renderMap({ ...untouched, nodes: [untouched.nodes[1]!] }, { ...MONO, now: T }).join('\n')).not.toContain('~ ');
+  });
+
+  it('marks a stalled legend total with a trailing plus', () => {
+    const T = 1_700_000_000_000;
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: '原语层', rank: 0 }));
+    map = must(declareNode(map, { id: nid('core'), label: '核心', layer: lid('base') }));
+    map = must(updateNode(map, { id: nid('core'), status: 'in-progress', at: T }));
+    expect(renderMap(map, { ...MONO, now: T + 14 * 3_600_000 }).join('\n')).toContain('~ 30m00s+');
   });
 });

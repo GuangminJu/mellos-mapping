@@ -102,8 +102,12 @@ export interface RemoveInput {
   readonly layers?: ReadonlyArray<string> | undefined;
 }
 
-/** Grow the map: title, kind, bands, lanes, groups, nodes, edges — in that order. */
-export function applyDeclare(map: MellosMap, input: DeclareInput): Result<MellosMap, string> {
+/**
+ * Grow the map: title, kind, bands, lanes, groups, nodes, edges — in that order.
+ * `at` is the wall-clock stamp for this batch (the domain owns no clock); a
+ * node declared straight into `in-progress` starts its first work span here.
+ */
+export function applyDeclare(map: MellosMap, input: DeclareInput, at: number): Result<MellosMap, string> {
   let next = input.title !== undefined ? setTitle(map, input.title) : map;
   if (input.kind !== undefined) {
     const kind = makeMapKind(input.kind);
@@ -182,6 +186,8 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       ...(kind !== undefined ? { kind } : {}),
       ...(lane !== undefined ? { lane } : {}),
       ...(submap !== undefined ? { submap } : {}),
+      // declared straight into work: the clock starts now
+      ...(status === 'in-progress' ? { spans: [{ from: at }] } : {}),
     });
     if (!declared.ok) return err(`nodes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
@@ -200,8 +206,12 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
   return ok(next);
 }
 
-/** Record progress: status, label and evidence changes on existing nodes. */
-export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMap, string> {
+/**
+ * Record progress: status, label and evidence changes on existing nodes.
+ * `at` stamps every status change in the batch, so a node entering
+ * `in-progress` opens a work span and one leaving it closes that span.
+ */
+export function applyUpdate(map: MellosMap, input: UpdateInput, at: number): Result<MellosMap, string> {
   let next = map;
   for (const [i, u] of input.updates.entries()) {
     const id = makeNodeId(u.id);
@@ -242,6 +252,7 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
     }
     const updated = updateNode(next, {
       id: id.value,
+      at,
       ...(status !== undefined ? { status } : {}),
       ...(u.label !== undefined ? { label: u.label } : {}),
       ...(u.evidence !== undefined ? { evidence: u.evidence } : {}),

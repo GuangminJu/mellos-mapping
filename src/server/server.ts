@@ -184,7 +184,7 @@ export function buildServer(stateFile: string): McpServer {
           .optional(),
       },
     },
-    (input) => mutate(input.page, (map) => applyDeclare(map, input)),
+    (input) => mutate(input.page, (map) => applyDeclare(map, input, Date.now())),
   );
 
   server.registerTool(
@@ -224,7 +224,7 @@ export function buildServer(stateFile: string): McpServer {
           .min(1),
       },
     },
-    (input) => mutate(input.page, (map) => applyUpdate(map, input)),
+    (input) => mutate(input.page, (map) => applyUpdate(map, input, Date.now())),
   );
 
   server.registerTool(
@@ -270,7 +270,9 @@ export function buildServer(stateFile: string): McpServer {
       const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
-      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n'));
+      return text(
+        renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom, now: Date.now() }).join('\n'),
+      );
     },
   );
 

@@ -136,6 +136,23 @@ export interface MapLane {
   readonly label: string;
 }
 
+/**
+ * One stretch of wall-clock time a node spent in progress, in epoch
+ * milliseconds. An absent `to` means the stretch is still open — the node is
+ * being worked on right now, and its length is only known relative to a `now`
+ * supplied from outside.
+ *
+ * Deliberately NOT an invariant: nothing here requires spans to be ordered,
+ * disjoint, or to hold at most one open stretch. Every consumer goes through
+ * spanTotal, which measures the UNION and is therefore total for any input —
+ * so a caller reporting overlapping stretches gets a defensible number instead
+ * of a refusal. The ledger records; it does not police (see module header).
+ */
+export interface WorkSpan {
+  readonly from: number;
+  readonly to?: number;
+}
+
 /** A unit of work living in exactly one band. */
 export interface MapNode {
   readonly id: NodeId;
@@ -154,6 +171,8 @@ export interface MapNode {
   readonly lane?: LaneId;
   /** Child map page: the pane badges the node ⊞ and double-click dives in. */
   readonly submap?: SubmapRef;
+  /** Stretches this node spent in progress. Absent = never started, or a map written before timing existed. */
+  readonly spans?: readonly WorkSpan[];
 }
 
 /** `from` USES `to`. Must point strictly downward (invariant I4). */
