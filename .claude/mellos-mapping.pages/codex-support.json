@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "title": "Codex 支持 · 一套服务器两家客户端",
+  "layers": [
+    {
+      "id": "facts",
+      "name": "事实层 · Codex 如何加载插件",
+      "rank": 0
+    },
+    {
+      "id": "packaging",
+      "name": "打包层 · 插件清单与注册",
+      "rank": 1
+    },
+    {
+      "id": "surface",
+      "name": "呈现层 · 技能与文档",
+      "rank": 2
+    },
+    {
+      "id": "e2e",
+      "name": "验证层 · 真机端到端",
+      "rank": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": "probe-spawn",
+      "label": "spawn 行为探针",
+      "layer": "facts",
+      "status": "done",
+      "detail": "实证结论(codex-cli 0.147.0):插件 .mcp.json 无变量展开;cwd 缺省=会话工作目录,设置后锁定在插件根内;不注入任何 CODEX_*/PLUGIN_* env。工作区信息不会传给插件自带的 MCP 服务器——这是结构性事实。",
+      "evidence": "三探针 dump:无cwd=会话目录;${CODEX_PLUGIN_ROOT}不展开;cwd=.锁插件缓存根"
+    },
+    {
+      "id": "resolve-chain",
+      "label": "工作区解析链",
+      "layer": "facts",
+      "status": "done",
+      "detail": "resolveStateFile 优先链无需扩展:codex mcp add 注册的服务器继承会话 cwd,最后一环兜底即命中工作区。不加 MCP roots(codex 客户端不支持,加了是投机抽象)。",
+      "evidence": "probe-abs:codex mcp add 路径下 cwd=工作区,现有 MELLOS_MAPPING_CWD→CLAUDE_PROJECT_DIR→cwd 链零改动可用"
+    },
+    {
+      "id": "codex-manifest",
+      "label": ".codex-plugin 清单",
+      "layer": "packaging",
+      "status": "done",
+      "detail": "plugin.json:name/version/description + skills 指向现有 skills/ 目录(SKILL.md 两家同标准,零拷贝复用)。",
+      "evidence": "npm run verify 全绿;清单+.agents marketplace 就位,待本地安装复核"
+    },
+    {
+      "id": "codex-mcp-entry",
+      "label": "MCP 注册方式",
+      "layer": "packaging",
+      "status": "done",
+      "detail": "定案:不走插件 .mcp.json(工作区不可达),改为 scripts/codex-register.mjs——自定位插件根,执行 codex mcp add mellos-mapping -- node <根>/dist/server.mjs。插件更新后重跑一次,README 与技能里写明。",
+      "evidence": "scripts/codex-register.mjs 完成,幂等 remove+add,Windows shell 引号处理"
+    },
+    {
+      "id": "skill-portable",
+      "label": "技能措辞通用化",
+      "layer": "surface",
+      "status": "done",
+      "detail": "SKILL.md 中 Claude 专有指引(/mmap 斜杠命令等)改为客户端无关表述或分客户端说明,面板打开方式两家各给一条命令。",
+      "evidence": "codex exec 技能列表含 mellos-mapping:mellos-mapping;SKILL 措辞已客户端中立;verify 149 绿"
+    },
+    {
+      "id": "readme-codex",
+      "label": "README Codex 安装节",
+      "layer": "surface",
+      "status": "done",
+      "detail": "中英双语:marketplace add → plugin add → MCP 注册,与 Claude 安装节并列。",
+      "evidence": "双语 Codex 节:三行安装+注册原理+面板命令"
+    },
+    {
+      "id": "codex-e2e",
+      "label": "codex exec 端到端",
+      "layer": "e2e",
+      "status": "done",
+      "detail": "真机验证:codex exec 在测试项目里调 mmap_declare,状态文件落在该项目 .claude/ 下,面板能显示。",
+      "evidence": "codex exec(gpt-5.5) 调 mmap_declare 成功,状态文件落 probe-project/.claude/,非插件缓存"
+    }
+  ],
+  "edges": [
+    {
+      "from": "codex-manifest",
+      "to": "probe-spawn"
+    },
+    {
+      "from": "codex-mcp-entry",
+      "to": "probe-spawn"
+    },
+    {
+      "from": "codex-mcp-entry",
+      "to": "resolve-chain"
+    },
+    {
+      "from": "skill-portable",
+      "to": "codex-manifest"
+    },
+    {
+      "from": "readme-codex",
+      "to": "codex-mcp-entry"
+    },
+    {
+      "from": "codex-e2e",
+      "to": "skill-portable"
+    },
+    {
+      "from": "codex-e2e",
+      "to": "readme-codex"
+    }
+  ]
+}

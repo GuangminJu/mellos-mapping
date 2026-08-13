@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.10.2",
+  "version": "0.11.0",
   "description": "Mellos Mapping - a live layered-dependency map for bottom-up development in Claude Code",
   "type": "module",
   "private": true,

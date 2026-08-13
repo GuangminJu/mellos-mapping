@@ -30,7 +30,9 @@ is noise. When unsure, ask.
 Caught mid-implementation without a map on work that deserves one? Stop and
 declare it with honest statuses (written-but-unverified is `in-progress`, not
 `done`). If the mmap tools are missing from the session, SAY SO and offer a
-restart — never silently skip the map.
+restart — never silently skip the map. (Under Codex CLI, missing tools
+usually mean the server was never registered: have the user run
+`node <plugin root>/scripts/codex-register.mjs`.)
 
 ## The working loop
 
@@ -39,8 +41,12 @@ restart — never silently skip the map.
    layer bands (rank 0 = most primitive, at the bottom), every planned node,
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
-2. **Offer the pane.** After the first declare, tell the user the map is live:
-   `/mellos-mapping:mmap` opens the split pane, `mmap_view` shows it inline.
+2. **Offer the pane.** After the first declare, tell the user the map is live.
+   In Claude Code `/mellos-mapping:mmap` opens the split pane; in other
+   clients run `node <plugin root>/dist/watch.mjs` from the project directory
+   in a second terminal or split (this skill file lives under
+   `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline
+   anywhere.
 3. **Work bottom-up, one spinner at a time.** Set a node `in-progress` before
    implementing it. Prefer finishing its lower dependencies first; if you
    deliberately deviate, say why in conversation.

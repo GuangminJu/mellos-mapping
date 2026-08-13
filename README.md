@@ -97,6 +97,29 @@ marketplace clone — the first command is what actually pulls this repo.
 Restart Claude Code to apply. Releases are version bumps on `master`.
 (In-app, `/plugin` opens the same management UI.)
 
+## Codex CLI
+
+The same repo doubles as a Codex plugin (codex-cli 0.147+). Three lines:
+
+```
+codex plugin marketplace add GuangminJu/mellos-mapping
+codex plugin add mellos-mapping@mellos-mapping
+node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<version>/scripts/codex-register.mjs
+```
+
+The first two install the skill (the map discipline) as a Codex plugin. The
+third registers the MCP server at user level — needed because Codex spawns
+plugin-bundled MCP servers inside the plugin cache with no way to see your
+workspace, so a bundled server would write the map into the cache. A
+user-level `codex mcp add` entry (which the script writes) inherits each
+session's working directory instead: the state file lands in your project,
+same as under Claude Code. The registered path is version-specific — re-run
+the script after updating the plugin.
+
+To watch the live pane beside a Codex session, run
+`node <plugin root>/dist/watch.mjs` from the project directory in a second
+terminal (or any terminal split).
+
 ## Use
 
 1. Ask Claude to build something non-trivial. The bundled skill has Claude

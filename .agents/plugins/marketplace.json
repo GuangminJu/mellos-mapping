@@ -1,0 +1,12 @@
+{
+  "name": "mellos-mapping",
+  "plugins": [
+    {
+      "name": "mellos-mapping",
+      "source": {
+        "source": "local",
+        "path": "./"
+      }
+    }
+  ]
+}
