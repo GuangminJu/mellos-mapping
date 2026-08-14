@@ -40,7 +40,7 @@
  * a poll tick — so re-running with --page is also how you steer an open pane.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -244,9 +244,13 @@ function openDedicatedWindow(reason) {
 if (!flags.has('--force') && watcherAlreadyRunning()) {
   if (pageSlug !== undefined) {
     // One-shot focus request (see takeFocusRequest in src/store/store.ts):
-    // the running watcher consumes and deletes it within a poll tick.
+    // the running watcher consumes and deletes it within a poll tick. Temp +
+    // rename because the watcher polls: a torn read would be swept as junk,
+    // silently losing the request.
     mkdirSync(dirname(mapFile), { recursive: true });
-    writeFileSync(join(dirname(mapFile), 'mellos-mapping.focus'), JSON.stringify({ page: pageSlug }));
+    const focusFile = join(dirname(mapFile), 'mellos-mapping.focus');
+    writeFileSync(`${focusFile}.tmp`, JSON.stringify({ page: pageSlug }));
+    renameSync(`${focusFile}.tmp`, focusFile);
     console.log(`MMAP_PANE already-open refocused=${pageSlug}`);
     console.log(`A watcher for ${mapFile} is already running — asked it to show page "${pageSlug}".`);
   } else {
