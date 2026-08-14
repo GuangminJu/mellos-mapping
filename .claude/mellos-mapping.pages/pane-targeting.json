@@ -47,10 +47,10 @@
     },
     {
       "id": "ship-0-13",
-      "label": "发布 0.13.0",
+      "label": "发布 0.13.0→0.14.0",
       "layer": "ship",
-      "status": "in-progress",
-      "detail": "已完成:release.mjs 0.13.0(verify 152测试绿)→ feature/pane-targeting 合并 master → tag v0.13.0 + GitHub Release 推送 → 主干 CI 3系统绿 → Claude 插件 0.12.1→0.13.0、Codex 插件缓存刷新 0.13.0(MCP 注册直指仓库 dist,自动跟新)。待办:npm publish(需用户解锁后点一次 Passkey)→ registry 工作流;分屏路径真机实测(需用户在场)。"
+      "status": "done",
+      "detail": "0.13.0(开窗定位)+0.14.0(PR#1 splash+多页文档契约)全链路完成:tag+GitHub Release+CI 三系统绿;npm publish 200(registry latest=0.14.0);官方 MCP registry 0.14.0 isLatest=true;本机 Claude/Codex 插件 0.14.0。分屏主路径真机实证:用户在场时 open-pane 输出 mode=split hwnd=724284,地图落在对话所在窗口——原 bug(开到别的窗口)不再复现;兜底路径(锁屏/焦点不可得→专属窗口)此前已两次实证。"
     }
   ],
   "edges": [
