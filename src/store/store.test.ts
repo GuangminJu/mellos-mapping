@@ -3,7 +3,7 @@
  * invariants) and P2 (writes are atomic; round-trips are lossless).
  */
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,6 +22,7 @@ import {
   type SubmapRef,
 } from '../domain/types.js';
 import {
+  focusFilePath,
   listPageFiles,
   loadMapFile,
   makePageId,
@@ -30,6 +31,7 @@ import {
   parseMap,
   saveMapFile,
   serializeMap,
+  takeFocusRequest,
 } from './store.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -238,6 +240,42 @@ describe('pages — one effort, one file', () => {
     expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual([undefined, 'alpha', 'zeta']);
     // a page saved through the normal path loads back losslessly
     expect(must(loadMapFile(pageFilePath(defaultFile, must(makePageId('alpha')))))).toEqual(sampleMap());
+  });
+});
+
+describe('focus requests — one-shot "show this page" channel', () => {
+  it('the focus file sits beside the default file', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    expect(focusFilePath(defaultFile)).toBe(join(dir, 'mellos-mapping.focus'));
+  });
+
+  it('no file means no request', () => {
+    expect(takeFocusRequest(join(dir, 'mellos-mapping.json'))).toBeUndefined();
+  });
+
+  it('consuming a request returns the page AND deletes the file (one-shot)', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    writeFileSync(focusFilePath(defaultFile), '{"page":"page-focus"}');
+    expect(takeFocusRequest(defaultFile)).toEqual({ page: 'page-focus' });
+    expect(existsSync(focusFilePath(defaultFile))).toBe(false);
+    expect(takeFocusRequest(defaultFile)).toBeUndefined();
+  });
+
+  it('page null (or absent) requests the default page', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    writeFileSync(focusFilePath(defaultFile), '{"page":null}');
+    expect(takeFocusRequest(defaultFile)).toEqual({ page: undefined });
+    writeFileSync(focusFilePath(defaultFile), '{}');
+    expect(takeFocusRequest(defaultFile)).toEqual({ page: undefined });
+  });
+
+  it('junk in the channel is no request, and the delete sweeps it', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    for (const junk of ['not json', '"just-a-string"', '{"page":5}', '{"page":"NOT A SLUG"}']) {
+      writeFileSync(focusFilePath(defaultFile), junk);
+      expect(takeFocusRequest(defaultFile)).toBeUndefined();
+      expect(existsSync(focusFilePath(defaultFile))).toBe(false);
+    }
   });
 });
 

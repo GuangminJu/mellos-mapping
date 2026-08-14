@@ -967,11 +967,14 @@ function drawBox(canvas, box, opts, neutral, focused = false) {
 }
 
 // src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 var PAGES_DIR_NAME = "mellos-mapping.pages";
+function makePageId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
 function pageFilePath(defaultFile, page) {
   return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
 }
@@ -992,6 +995,35 @@ function listPageFiles(defaultFile) {
     if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
+}
+var FOCUS_FILE_NAME = "mellos-mapping.focus";
+function focusFilePath(defaultFile) {
+  return join(dirname(defaultFile), FOCUS_FILE_NAME);
+}
+function takeFocusRequest(defaultFile) {
+  const path = focusFilePath(defaultFile);
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return void 0;
+  }
+  try {
+    rmSync(path, { force: true });
+  } catch {
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null) return void 0;
+  const page = parsed.page;
+  if (page === void 0 || page === null) return { page: void 0 };
+  if (typeof page !== "string") return void 0;
+  const id = makePageId(page);
+  return id.ok ? { page: id.value } : void 0;
 }
 function describeStoreError(e) {
   switch (e.kind) {
@@ -1241,11 +1273,17 @@ function parseArgs(argv, cwd) {
   let unicode = true;
   let color = true;
   let mouse = true;
+  let page;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case "--file":
         file = argv[++i] ?? file;
         break;
+      case "--page": {
+        const parsed = makePageId(argv[++i] ?? "");
+        if (parsed.ok) page = parsed.value;
+        break;
+      }
       case "--interval":
         intervalMs = Math.max(50, Number(argv[++i]) || intervalMs);
         break;
@@ -1262,7 +1300,19 @@ function parseArgs(argv, cwd) {
         break;
     }
   }
-  return { file, intervalMs, unicode, color, mouse };
+  return { file, intervalMs, unicode, color, mouse, page };
+}
+function mostRecentPageFile(files, mtimeOf) {
+  let best;
+  let bestMtime = -Infinity;
+  for (const file of files) {
+    const mtime = mtimeOf(file);
+    if (mtime !== void 0 && mtime > bestMtime) {
+      best = file;
+      bestMtime = mtime;
+    }
+  }
+  return best ?? files[0];
 }
 var HIDE_CURSOR = "\x1B[?25l";
 var SHOW_CURSOR = "\x1B[?25h";
@@ -1627,6 +1677,7 @@ function main() {
   const pageViews = /* @__PURE__ */ new Map();
   let activeFile;
   let firstScan = true;
+  let pendingFocusFile = cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page);
   let lastTabSegments = [];
   let tabScroll = 0;
   let offsetX = 0;
@@ -1656,7 +1707,7 @@ function main() {
       parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
     }
     if (parent !== void 0 && parent !== activeFile) {
-      switchPage(parent);
+      handSwitch(parent);
       return true;
     }
     return false;
@@ -1690,6 +1741,10 @@ function main() {
     const top = topFiles();
     const tabIndex = top.indexOf(file);
     if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
+  };
+  const handSwitch = (file) => {
+    pendingFocusFile = void 0;
+    switchPage(file);
   };
   const hitTest = (termX, termY) => {
     const sx = termX - 1;
@@ -1846,8 +1901,18 @@ function main() {
         if (file === activeFile) notice = describeStoreError(loaded.error);
       }
     }
+    const request = takeFocusRequest(cfg.file);
+    if (request !== void 0 && !(firstScan && pendingFocusFile !== void 0)) {
+      pendingFocusFile = pageFilePath(cfg.file, request.page);
+    }
+    if (pendingFocusFile !== void 0 && pageFiles.includes(pendingFocusFile)) {
+      if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
+      pendingFocusFile = void 0;
+    }
     firstScan = false;
-    if (activeFile === void 0 || !pageFiles.includes(activeFile)) switchPage(pageFiles[0]);
+    if (activeFile === void 0 || !pageFiles.includes(activeFile)) {
+      switchPage(mostRecentPageFile(pageFiles, (f) => pageData.get(f)?.mtimeMs));
+    }
     if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === "in-progress"))) spinnerFrame++;
     if (flash !== void 0 && Date.now() > flash.until) flash = void 0;
     paint();
@@ -1959,7 +2024,7 @@ function main() {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
-                  if (target !== void 0 && target !== activeFile) switchPage(target);
+                  if (target !== void 0 && target !== activeFile) handSwitch(target);
                 }
               } else {
                 const id = hitTest(event.x, event.y);
@@ -1970,7 +2035,7 @@ function main() {
                     const target = pageFilePath(cfg.file, submap);
                     if (pageFiles.includes(target) && target !== activeFile) {
                       diveStack.push(activeFile);
-                      switchPage(target);
+                      handSwitch(target);
                     } else if (!pageFiles.includes(target)) {
                       flash = { text: `submap "${submap}" has no page yet`, until: now + 2500 };
                     }
@@ -1994,7 +2059,7 @@ function main() {
               const step = event.kind === "next-page" ? 1 : -1;
               const target = top[(current + step + top.length) % top.length];
               if (target !== activeFile) {
-                switchPage(target);
+                handSwitch(target);
                 dirty = true;
               }
             }
@@ -2003,7 +2068,7 @@ function main() {
           case "page": {
             const target = topFiles()[event.index];
             if (target !== void 0 && target !== activeFile) {
-              switchPage(target);
+              handSwitch(target);
               dirty = true;
             }
             break;
@@ -2049,6 +2114,7 @@ export {
   launchedAsEntry,
   liveRipples,
   mapPanel,
+  mostRecentPageFile,
   nearestHit,
   nodePanel,
   pageTabRow,

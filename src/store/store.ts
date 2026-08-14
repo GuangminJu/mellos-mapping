@@ -18,7 +18,7 @@
  * allowed to propagate as exceptions.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
@@ -93,6 +93,62 @@ export function listPageFiles(defaultFile: string): string[] {
     if (e.endsWith('.json')) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// focus requests — "show this page" messages from pane openers to the watcher
+// ---------------------------------------------------------------------------
+//
+// State files flow one way, MCP server → watcher; a launcher that wants an
+// ALREADY-RUNNING pane to show a particular page has no channel to it. The
+// focus file is that channel, one-shot on purpose: the watcher consumes the
+// request AND DELETES the file, so a request lives about one poll tick —
+// nothing stale survives to misdirect tomorrow's pane, and the project's git
+// status barely ever sees the file exist.
+
+/** Sibling of the default file carrying a one-shot "show this page" request. */
+export const FOCUS_FILE_NAME = 'mellos-mapping.focus';
+
+export function focusFilePath(defaultFile: string): string {
+  return join(dirname(defaultFile), FOCUS_FILE_NAME);
+}
+
+/** A consumed focus request: the page to show (undefined = the default page). */
+export interface FocusRequest {
+  readonly page: PageId | undefined;
+}
+
+/**
+ * Consume a pending focus request: read it, delete the file, return it.
+ * Absent file — the overwhelmingly common case — or junk content means no
+ * request; the channel is best-effort and junk is swept by the same delete.
+ */
+export function takeFocusRequest(defaultFile: string): FocusRequest | undefined {
+  const path = focusFilePath(defaultFile);
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // deletion is a courtesy: re-consuming next tick is harmless because
+    // switching to the already-shown page is a no-op
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const page = (parsed as { readonly page?: unknown }).page;
+  if (page === undefined || page === null) return { page: undefined };
+  if (typeof page !== 'string') return undefined;
+  const id = makePageId(page);
+  return id.ok ? { page: id.value } : undefined;
 }
 
 export type StoreError =

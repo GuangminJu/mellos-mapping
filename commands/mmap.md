@@ -1,6 +1,6 @@
 ---
 description: Open the live Mellos map in a terminal split pane beside this session
-argument-hint: "[--window] [--ascii]"
+argument-hint: "[--page <slug>] [--window] [--ascii]"
 allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 ---
 
@@ -18,10 +18,16 @@ Follow the platform-appropriate route:
 1. **Windows with Windows Terminal** (`wt` available — the usual case): run
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/open-pane.mjs" "<PROJECT_DIR>"
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/open-pane.mjs" "<PROJECT_DIR>" --page <PAGE_SLUG>
    ```
 
-   replacing `<PROJECT_DIR>` with the absolute project directory. The
+   replacing `<PROJECT_DIR>` with the absolute project directory and
+   `<PAGE_SLUG>` with the page THIS conversation's effort lives on — the same
+   slug you pass to the mmap tools. Care about what the pane actually shows:
+   without `--page` it opens on the most recently written page, which after a
+   gap or in a multi-effort project may not be the one under discussion. Omit
+   `--page` only when no particular page is the subject (the user just wants
+   the map open), or for the default page. The
    launcher identifies the Windows Terminal window hosting THIS session
    (console-title nonce probe), brings it to the foreground, and splits it
    vertically — the map lands beside the conversation even with several
@@ -31,17 +37,24 @@ Follow the platform-appropriate route:
    "mellos-mapping" — never a random window — and its output says which
    mode it used and why; relay that to the user.
 
-   Flags: `--window` skips the split and opens the map in the dedicated
-   window on purpose — use it when the user prefers the map separate from
-   the chat (second monitor, small screens). `--ascii` for fonts without
-   box-drawing characters. `--force` opens another pane even though a
-   watcher for this project is already running (default is to skip).
+   Flags: `--page <slug>` names the page to show. When a watcher for the
+   project is ALREADY running, the launcher does not open another pane — it
+   retargets the existing one (output says `refocused=<slug>`, picked up
+   within a poll tick). So rerunning the launcher with a new `--page` is
+   also how you steer an open pane when the effort changes mid-session; do
+   that when you start work on a different page. `--window` skips the split
+   and opens the map in the dedicated window on purpose — use it when the
+   user prefers the map separate from the chat (second monitor, small
+   screens). `--ascii` for fonts without box-drawing characters. `--force`
+   opens another pane even though a watcher for this project is already
+   running (default is to skip).
 
 2. **tmux session**: run
-   `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json"`.
+   `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json" --page <PAGE_SLUG>`
+   (same `--page` judgment as route 1; omit it when no page is the subject).
 
 3. **Neither**: print the command
-   `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json"`
+   `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json" --page <PAGE_SLUG>`
    and tell the user to run it in any second terminal themselves (add
    `--ascii` if their font lacks box-drawing characters).
 
