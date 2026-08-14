@@ -118,8 +118,10 @@ node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<版本>/scripts/codex
 要在 Codex 会话旁边看实况面板，Windows 上运行
 `node <插件根>/scripts/open-pane.mjs <项目目录>`——它会在承载本会话的
 终端窗口里分屏（识别不到就确定性地开到专属的 "mellos-mapping" 窗口；
-`--window` 则是主动选择专属窗口）。其他环境在项目目录下的第二个终端
-（或任意分屏）运行 `node <插件根>/dist/watch.mjs`。
+`--window` 则是主动选择专属窗口）。加 `--page <slug>` 指定打开哪一页；
+面板已经开着时，带 `--page` 重跑一次不会再开新面板，而是让现有面板
+切到那一页。其他环境在项目目录下的第二个终端（或任意分屏）运行
+`node <插件根>/dist/watch.mjs`（同样支持 `--page`）。
 
 ## 任意 MCP 客户端
 

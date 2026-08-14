@@ -22133,7 +22133,7 @@ function drawBox(canvas, box, opts, neutral, focused = false) {
 }
 
 // src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 var STATE_FILE_VERSION = 1;
 var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");

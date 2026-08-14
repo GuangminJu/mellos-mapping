@@ -27,8 +27,10 @@ import {
   diveOrigin,
   fitWidth,
   mapPanel,
+  mostRecentPageFile,
   nearestHit,
   nodePanel,
+  parseArgs,
   pageTabRow,
   panelRowsFromDividerY,
   type Ripple,
@@ -469,5 +471,32 @@ describe('standby splash', () => {
       }
     }
     expect(widest).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('page selection', () => {
+  it('parseArgs accepts --page with a valid slug and drops invalid ones', () => {
+    expect(parseArgs(['--page', 'page-focus'], '/w').page).toBe('page-focus');
+    expect(parseArgs(['--page', 'NOT A SLUG'], '/w').page).toBeUndefined();
+    expect(parseArgs(['--page'], '/w').page).toBeUndefined();
+    expect(parseArgs([], '/w').page).toBeUndefined();
+  });
+
+  it('mostRecentPageFile picks the page last written, not the first listed', () => {
+    const mtimes = new Map([
+      ['default.json', 100],
+      ['alpha.json', 900],
+      ['zeta.json', 500],
+    ]);
+    const files = ['default.json', 'alpha.json', 'zeta.json'];
+    expect(mostRecentPageFile(files, (f) => mtimes.get(f))).toBe('alpha.json');
+  });
+
+  it('falls back to list order when no page has a readable mtime', () => {
+    expect(mostRecentPageFile(['default.json', 'alpha.json'], () => undefined)).toBe('default.json');
+    // files that never resolved an mtime lose to any file that did
+    expect(
+      mostRecentPageFile(['default.json', 'alpha.json'], (f) => (f === 'alpha.json' ? 5 : undefined)),
+    ).toBe('alpha.json');
   });
 });

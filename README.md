@@ -128,9 +128,11 @@ the script after updating the plugin.
 To watch the live pane beside a Codex session on Windows, run
 `node <plugin root>/scripts/open-pane.mjs <project dir>` — it splits the
 terminal window hosting the session (or falls back to a dedicated
-"mellos-mapping" window; `--window` picks that on purpose). Elsewhere run
-`node <plugin root>/dist/watch.mjs` from the project directory in a second
-terminal (or any terminal split).
+"mellos-mapping" window; `--window` picks that on purpose). Add
+`--page <slug>` to open on a particular page — and with a pane already open,
+rerunning with `--page` retargets it instead of opening another. Elsewhere
+run `node <plugin root>/dist/watch.mjs` (same `--page` flag) from the
+project directory in a second terminal (or any terminal split).
 
 ## Any MCP client
 

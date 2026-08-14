@@ -2,7 +2,7 @@
 /**
  * Open the live map pane in the RIGHT Windows Terminal window.
  *
- *   node scripts/open-pane.mjs <project-dir> [--window] [--ascii] [--force]
+ *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--ascii] [--force]
  *
  * Why this exists: the agent's shell runs on a hidden console (no WT_SESSION),
  * so a bare `wt -w 0 sp` targets the MOST RECENTLY USED terminal window — with
@@ -33,18 +33,38 @@
  * Known race, accepted: if the user focuses a DIFFERENT terminal window in
  * the ~1s between our focus-verify and wt reading its MRU state, the split
  * can still land there. The window is at least one the user is actively in.
+ *
+ * --page <slug> opens the map ON that page (the effort under discussion, not
+ * whatever page the store lists first). With a watcher already running it
+ * writes the one-shot focus file instead — the existing pane retargets within
+ * a poll tick — so re-running with --page is also how you steer an open pane.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const USAGE = 'usage: node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--ascii] [--force]';
+
 const argv = process.argv.slice(2);
-const flags = new Set(argv.filter((a) => a.startsWith('--')));
-const positional = argv.filter((a) => !a.startsWith('--'));
+const flags = new Set();
+const positional = [];
+let pageSlug;
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--page') pageSlug = argv[++i];
+  else if (a.startsWith('--')) flags.add(a);
+  else positional.push(a);
+}
 
 if (positional.length !== 1) {
-  console.error('usage: node scripts/open-pane.mjs <project-dir> [--window] [--ascii] [--force]');
+  console.error(USAGE);
+  process.exit(1);
+}
+// Mirrors ID_RULE in src/domain/types.ts — this script runs standalone and
+// cannot import the TypeScript sources.
+if (pageSlug !== undefined && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pageSlug)) {
+  console.error(`--page needs a kebab-case slug (got "${pageSlug}")\n${USAGE}`);
   process.exit(1);
 }
 if (process.platform !== 'win32') {
@@ -203,6 +223,7 @@ Write-Output "FOCUS=$(if ($focused) { 1 } else { 0 })"
 function paneCommand() {
   const cmd = ['--title', 'mellos map', '-d', projectDir, 'node', watchPath, '--file', mapFile];
   if (flags.has('--ascii')) cmd.push('--ascii');
+  if (pageSlug !== undefined) cmd.push('--page', pageSlug);
   return cmd;
 }
 
@@ -221,8 +242,17 @@ function openDedicatedWindow(reason) {
 }
 
 if (!flags.has('--force') && watcherAlreadyRunning()) {
-  console.log('MMAP_PANE already-open');
-  console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
+  if (pageSlug !== undefined) {
+    // One-shot focus request (see takeFocusRequest in src/store/store.ts):
+    // the running watcher consumes and deletes it within a poll tick.
+    mkdirSync(dirname(mapFile), { recursive: true });
+    writeFileSync(join(dirname(mapFile), 'mellos-mapping.focus'), JSON.stringify({ page: pageSlug }));
+    console.log(`MMAP_PANE already-open refocused=${pageSlug}`);
+    console.log(`A watcher for ${mapFile} is already running — asked it to show page "${pageSlug}".`);
+  } else {
+    console.log('MMAP_PANE already-open');
+    console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
+  }
   process.exit(0);
 }
 

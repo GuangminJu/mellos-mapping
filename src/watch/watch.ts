@@ -32,7 +32,7 @@
  * the last good picture stays up and the next poll retries.
  *
  * Usage: node watch.mjs [--file <path>] [--interval <ms>] [--ascii]
- *                       [--no-color] [--no-mouse]
+ *                       [--no-color] [--no-mouse] [--page <slug>]
  */
 
 import { realpathSync, statSync } from 'node:fs';
@@ -60,8 +60,10 @@ import {
   describeStoreError,
   listPageFiles,
   loadMapFile,
+  makePageId,
   pageFilePath,
   pageIdOfFile,
+  takeFocusRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
 
@@ -74,6 +76,8 @@ interface WatchConfig {
   readonly unicode: boolean;
   readonly color: boolean;
   readonly mouse: boolean;
+  /** Page to open on (undefined = pick a default); may not exist yet. */
+  readonly page: PageId | undefined;
 }
 
 export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
@@ -82,11 +86,17 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
   let unicode = true;
   let color = true;
   let mouse = true;
+  let page: PageId | undefined;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--file':
         file = argv[++i] ?? file;
         break;
+      case '--page': {
+        const parsed = makePageId(argv[++i] ?? '');
+        if (parsed.ok) page = parsed.value; // invalid slugs are ignored — the pane must come up
+        break;
+      }
       case '--interval':
         intervalMs = Math.max(50, Number(argv[++i]) || intervalMs);
         break;
@@ -103,7 +113,29 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
         break; // unknown flags are ignored; the pane must come up regardless
     }
   }
-  return { file, intervalMs, unicode, color, mouse };
+  return { file, intervalMs, unicode, color, mouse, page };
+}
+
+/**
+ * The page a pane shows when nobody asked for one: the most recently WRITTEN
+ * page — the ledger last touched is almost always the effort under way. Files
+ * without a readable mtime lose; an empty store falls back to list order
+ * (default page first, then slug order).
+ */
+export function mostRecentPageFile(
+  files: readonly string[],
+  mtimeOf: (file: string) => number | undefined,
+): string | undefined {
+  let best: string | undefined;
+  let bestMtime = -Infinity;
+  for (const file of files) {
+    const mtime = mtimeOf(file);
+    if (mtime !== undefined && mtime > bestMtime) {
+      best = file;
+      bestMtime = mtime;
+    }
+  }
+  return best ?? files[0];
 }
 
 const HIDE_CURSOR = '\x1b[?25l';
@@ -752,6 +784,8 @@ function main(): void {
   const pageViews = new Map<string, PageView>();
   let activeFile: string | undefined;
   let firstScan = true;
+  /** A requested page whose file may not exist yet — shown the moment it appears. */
+  let pendingFocusFile: string | undefined = cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page);
   let lastTabSegments: readonly TabSegment[] = [];
   /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
   let tabScroll = 0;
@@ -790,7 +824,7 @@ function main(): void {
       parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
     }
     if (parent !== undefined && parent !== activeFile) {
-      switchPage(parent);
+      handSwitch(parent);
       return true;
     }
     return false;
@@ -832,6 +866,12 @@ function main(): void {
     const top = topFiles();
     const tabIndex = top.indexOf(file);
     if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
+  };
+
+  /** A page switch the USER made — it also withdraws any pending focus request. */
+  const handSwitch = (file: string): void => {
+    pendingFocusFile = undefined;
+    switchPage(file);
   };
 
   /** Terminal cell (1-based) -> node under it, honoring tab row and pan. */
@@ -1040,9 +1080,25 @@ function main(): void {
         if (file === activeFile) notice = describeStoreError(loaded.error);
       }
     }
+    // An explicit focus request (--page, or the one-shot focus file) outranks
+    // every default. On the spawn tick the --page argument is the newest
+    // intent — a leftover focus file from a dead watcher merely gets swept;
+    // afterwards the file channel is how a running pane is retargeted.
+    const request = takeFocusRequest(cfg.file);
+    if (request !== undefined && !(firstScan && pendingFocusFile !== undefined)) {
+      pendingFocusFile = pageFilePath(cfg.file, request.page);
+    }
+    if (pendingFocusFile !== undefined && pageFiles.includes(pendingFocusFile)) {
+      if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
+      pendingFocusFile = undefined;
+    }
     firstScan = false;
 
-    if (activeFile === undefined || !pageFiles.includes(activeFile)) switchPage(pageFiles[0]!);
+    // nobody asked for a page: the most recently written one is the effort
+    // under way — never just "first in the list"
+    if (activeFile === undefined || !pageFiles.includes(activeFile)) {
+      switchPage(mostRecentPageFile(pageFiles, (f) => pageData.get(f)?.mtimeMs)!);
+    }
 
     // any page spinning keeps the animation alive
     if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
@@ -1166,7 +1222,7 @@ function main(): void {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
-                  if (target !== undefined && target !== activeFile) switchPage(target);
+                  if (target !== undefined && target !== activeFile) handSwitch(target);
                 }
               } else {
                 // a press that never dragged is a click: pin, or unpin on empty.
@@ -1180,7 +1236,7 @@ function main(): void {
                     const target = pageFilePath(cfg.file, submap as unknown as PageId);
                     if (pageFiles.includes(target) && target !== activeFile) {
                       diveStack.push(activeFile);
-                      switchPage(target);
+                      handSwitch(target);
                     } else if (!pageFiles.includes(target)) {
                       flash = { text: `submap "${submap as string}" has no page yet`, until: now + 2500 };
                     }
@@ -1205,7 +1261,7 @@ function main(): void {
               const step = event.kind === 'next-page' ? 1 : -1;
               const target = top[(current + step + top.length) % top.length]!;
               if (target !== activeFile) {
-                switchPage(target);
+                handSwitch(target);
                 dirty = true;
               }
             }
@@ -1214,7 +1270,7 @@ function main(): void {
           case 'page': {
             const target = topFiles()[event.index];
             if (target !== undefined && target !== activeFile) {
-              switchPage(target);
+              handSwitch(target);
               dirty = true;
             }
             break;

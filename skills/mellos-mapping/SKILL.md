@@ -44,14 +44,20 @@ usually mean the server was never registered: have the user run
    layer bands (rank 0 = most primitive, at the bottom), every planned node,
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
-2. **Offer the pane.** After the first declare, tell the user the map is live.
-   In Claude Code `/mellos-mapping:mmap` opens the pane. In other clients on
-   Windows run `node <plugin root>/scripts/open-pane.mjs <project dir>` — it
-   locates the terminal window hosting THIS session and splits it there, or
-   falls back to a dedicated "mellos-mapping" window when the session window
-   cannot be identified or focused; pass `--window` to deliberately use the
-   dedicated window (some users want the map separate from the chat).
-   Elsewhere run `node <plugin root>/dist/watch.mjs` from the project
+2. **Offer the pane — showing the RIGHT page.** After the first declare, tell
+   the user the map is live. In Claude Code `/mellos-mapping:mmap` opens the
+   pane. In other clients on Windows run
+   `node <plugin root>/scripts/open-pane.mjs <project dir> --page <slug>` —
+   it locates the terminal window hosting THIS session and splits it there,
+   or falls back to a dedicated "mellos-mapping" window when the session
+   window cannot be identified or focused; pass `--window` to deliberately
+   use the dedicated window (some users want the map separate from the
+   chat). Always pass `--page` with the page your effort lives on: without
+   it the pane shows the most recently written page, not necessarily the one
+   under discussion. If a pane is already open, rerunning the launcher with
+   `--page` retargets it instead of opening another — do that whenever the
+   page you are working on changes. Elsewhere run
+   `node <plugin root>/dist/watch.mjs --page <slug>` from the project
    directory in a second terminal or split (this skill file lives under
    `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline
    anywhere.
