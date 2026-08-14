@@ -37,7 +37,9 @@ import {
   liveRipples,
   splashArt,
   splashFrame,
+  tabScrollFor,
   topLevelFiles,
+  usableColumns,
   waveAt,
   waveHash,
   waveLevel,
@@ -160,11 +162,36 @@ describe('pageTabRow', () => {
     expect(segments[0]!.hi - segments[0]!.lo + 1).toBe(14); // ' ● ■ 开发回放 ' = 6 narrow + 4 CJK
   });
 
-  it('drops tabs that no longer fit, truncating the last partial one', () => {
+  it('overflow shows a › that browses the strip without switching pages', () => {
     const segments = pageTabRow(tabs, 20, true);
-    expect(segments.length).toBe(2);
-    expect(segments[1]!.text.endsWith('…')).toBe(true);
+    expect(segments.map((s) => s.text)).toEqual([' ● ■ 开发回放 ', ' › ']);
+    expect(segments[0]!.action).toEqual({ kind: 'switch', index: 0 });
+    expect(segments[1]!.action).toEqual({ kind: 'scroll', delta: 1 }); // browse, never switch
+    expect(segments[1]!.sgr).toBe('90');
     expect(segments[1]!.hi).toBeLessThanOrEqual(20);
+  });
+
+  const five: PageTab[] = ['p1', 'p2', 'p3', 'p4', 'p5'].map((title, i) => ({
+    title,
+    status: 'planned' as const,
+    active: i === 2,
+    fresh: false,
+  }));
+
+  it('a scrolled strip windows from the scroll index with indicators both sides', () => {
+    const segments = pageTabRow(five, 30, true, 1);
+    expect(segments.map((s) => s.text)).toEqual([' ‹ ', ' ○ · p2 ', ' ● · p3 ', ' ○ · p4 ', ' › ']);
+    expect(segments[0]!.action).toEqual({ kind: 'scroll', delta: -1 });
+    expect(segments[2]!.action).toEqual({ kind: 'switch', index: 2 });
+    expect(segments[4]!.action).toEqual({ kind: 'scroll', delta: 1 });
+    for (let i = 1; i < segments.length; i++) expect(segments[i]!.lo).toBe(segments[i - 1]!.hi + 1);
+    expect(segments[segments.length - 1]!.hi).toBe(30);
+  });
+
+  it('tabScrollFor slides only as far as needed to reveal the active tab', () => {
+    expect(tabScrollFor(five, 30, true, 0, 4)).toBe(2); // reveal the far end
+    expect(tabScrollFor(five, 30, true, 1, 2)).toBe(1); // already visible — untouched
+    expect(tabScrollFor(five, 30, true, 3, 0)).toBe(0); // reveal to the left = jump there
   });
 });
 
@@ -246,6 +273,18 @@ describe('sub-map hierarchy — interior pages are not sibling tabs', () => {
     expect(diveOrigin(DEFAULT, child, [DEFAULT, child], mapOf)).toEqual({ parent: DEFAULT, label: '核心' });
     expect(diveOrigin(DEFAULT, effort, [DEFAULT, child, effort], mapOf)).toBeUndefined();
     expect(diveOrigin(DEFAULT, DEFAULT, [DEFAULT], mapOf)).toBeUndefined(); // the default page has no parent
+  });
+});
+
+describe('frame width — the reserved last column', () => {
+  it('keeps every frame row one column short of the terminal', () => {
+    // A glyph in the terminal's last column arms deferred autowrap and the
+    // ERASE_LINE_END after it erases that glyph — the map's rightmost column
+    // would be visible on no terminal, and the pan clamp would refuse to
+    // scroll past it. One column is reserved instead.
+    expect(usableColumns(100)).toBe(99);
+    expect(usableColumns(2)).toBe(1);
+    expect(usableColumns(1)).toBe(1); // a degenerate pane still gets one column
   });
 });
 

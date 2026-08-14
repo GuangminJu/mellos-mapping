@@ -35,7 +35,9 @@
  * step would leave labels too short to mean anything does the picture switch
  * mode — to a borderless glyph constellation whose band bars carry
  * done/total counts. Zooming in past 100% unfolds evidence and design notes
- * inside the boxes. The ladder, one wheel tick per step:
+ * inside the boxes; a second step widens the boxes and unfolds the notes
+ * further. The ladder, one wheel tick per step:
+ *   +2   detail+       wider boxes, design notes unfold almost fully
  *   +1   detail        evidence + design notes unfold inside boxes
  *    0   100%          the standard working view (default, unchanged)
  *   -1   85%           labels truncated to 85%, geometry still roomy
@@ -50,10 +52,10 @@ import { groupStatus } from '../domain/ops.js';
 import type { DepEdge, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
 
 /** One wheel tick on the zoom ladder; see module header. */
-export type ZoomStep = -4 | -3 | -2 | -1 | 0 | 1;
+export type ZoomStep = -4 | -3 | -2 | -1 | 0 | 1 | 2;
 
 export const ZOOM_MIN: ZoomStep = -4;
-export const ZOOM_MAX: ZoomStep = 1;
+export const ZOOM_MAX: ZoomStep = 2;
 export const ZOOM_DEFAULT: ZoomStep = 0;
 
 export function clampZoom(n: number): ZoomStep {
@@ -63,6 +65,8 @@ export function clampZoom(n: number): ZoomStep {
 /** What the footer shows: a percentage while scaling, a mode name at the ends. */
 export function zoomLabel(zoom: ZoomStep): string {
   switch (zoom) {
+    case 2:
+      return 'detail+';
     case 1:
       return 'detail';
     case 0:
@@ -472,6 +476,19 @@ const BOX_H = 3;
 const BOX_GAP = 2;
 const LEFT_MARGIN = 2;
 
+/** Box content budget for a detail step; present exactly when mode is 'detail'. */
+interface DetailBudget {
+  /** Clamp range for the box's inner width. */
+  readonly innerMin: number;
+  readonly innerMax: number;
+  /** Design-note rows shown before the … cut. */
+  readonly noteRows: number;
+}
+
+/** +1: a readable unfold. +2: the box grows into a reading card. */
+const DETAIL_BUDGET: DetailBudget = { innerMin: 22, innerMax: 32, noteRows: 3 };
+const DETAIL_PLUS_BUDGET: DetailBudget = { innerMin: 30, innerMax: 48, noteRows: 12 };
+
 /** How one zoom step translates into whitespace geometry; see module header. */
 interface ZoomGeometry {
   readonly mode: 'constellation' | 'boxes' | 'detail';
@@ -488,12 +505,16 @@ interface ZoomGeometry {
   readonly barGap: 0 | 1;
   /** Band bars carry done/total counts once boxes are too small to speak. */
   readonly bandCounts: boolean;
+  /** Content budget of the detail steps; set exactly when mode is 'detail'. */
+  readonly detail?: DetailBudget;
 }
 
 function zoomGeometry(zoom: ZoomStep): ZoomGeometry {
   switch (zoom) {
+    case 2:
+      return { mode: 'detail', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: 'detail', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode: 'detail', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
       return { mode: 'boxes', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
@@ -528,9 +549,6 @@ interface BoxLayout {
   y: number;
 }
 
-const DETAIL_INNER_MIN = 22;
-const DETAIL_INNER_MAX = 32;
-const DETAIL_NOTE_ROWS = 3;
 const LABEL_BUDGET_MIN = 4;
 
 /** Size and content of one node's box under the given zoom geometry. */
@@ -546,14 +564,15 @@ function boxSpec(node: MapNode, geo: ZoomGeometry, unicode: boolean, neutral: bo
   if (geo.mode === 'constellation') {
     return { w: 3, h: 1, label: '', pad: 0, borderless: true, extra: [] };
   }
-  if (geo.mode === 'detail') {
-    const innerW = Math.min(Math.max(displayWidth(text) + badgeW + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+  if (geo.mode === 'detail' && geo.detail !== undefined) {
+    const budget = geo.detail;
+    const innerW = Math.min(Math.max(displayWidth(text) + badgeW + 4, budget.innerMin), budget.innerMax);
     const extra: ExtraRow[] = [];
     if (node.evidence !== undefined) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: 'faint' });
     if (node.detail !== undefined) {
       const wrapped = wrapWidth(node.detail, innerW - 2);
-      for (let i = 0; i < Math.min(wrapped.length, DETAIL_NOTE_ROWS); i++) {
-        const cut = i === DETAIL_NOTE_ROWS - 1 && wrapped.length > DETAIL_NOTE_ROWS;
+      for (let i = 0; i < Math.min(wrapped.length, budget.noteRows); i++) {
+        const cut = i === budget.noteRows - 1 && wrapped.length > budget.noteRows;
         extra.push({ text: ` ${cut ? fitWidth(wrapped[i]! + '…', innerW - 2) : wrapped[i]!}`, style: 'none' });
       }
     }

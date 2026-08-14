@@ -17,6 +17,8 @@
  *   Tab / Shift+Tab / 1-9 / click a tab   switch pages (parallel maps);
  *                  each page keeps its own pan/zoom/pin, background page
  *                  changes light their tab up instead of stealing the view
+ *   wheel on the tab row / click ‹ ›   browse an overflowing tab strip
+ *                  without switching pages
  *   q              quit
  *
  * The bottom of the pane is a fixed-height detail panel: a separator, a
@@ -120,6 +122,19 @@ export const PANEL_ROWS_MIN = 2;
 /** The map keeps at least this many body rows however far the divider is pulled. */
 const MAP_ROWS_MIN = 4;
 
+/**
+ * Usable frame width: one column narrower than the terminal. A glyph written
+ * into the terminal's LAST column arms deferred autowrap; the ERASE_LINE_END
+ * that follows it then erases that very glyph (xterm / Windows Terminal), or
+ * the wrap fires immediately and shears the whole frame (legacy conhost).
+ * Every frame row — map body, tab bar, separator, footer — must stay inside
+ * this budget, and the pan clamp must use it too, otherwise the map's
+ * rightmost column(s) can never be brought into view.
+ */
+export function usableColumns(cols: number): number {
+  return Math.max(1, cols - 1);
+}
+
 /** Clamp a wanted panel height to what the terminal can spare. */
 export function clampPanelRows(wanted: number, totalRows: number, tabRows: number): number {
   const largest = totalRows - tabRows - MAP_ROWS_MIN - 2; // separator + footer stay
@@ -179,55 +194,112 @@ export interface PageTab {
   readonly neutral?: boolean;
 }
 
+/** What clicking a tab-row segment does. Scrolling browses the strip only. */
+export type TabAction =
+  | { readonly kind: 'switch'; readonly index: number }
+  | { readonly kind: 'scroll'; readonly delta: -1 | 1 }
+  /** The breadcrumb inside a sub-map: the whole row climbs back out. */
+  | { readonly kind: 'back' };
+
 export interface TabSegment {
   readonly text: string;
   readonly sgr: string; // '' = default color
   /** 1-based inclusive terminal column span, for click hit-testing. */
   readonly lo: number;
   readonly hi: number;
-  readonly index: number;
+  readonly action: TabAction;
 }
+
+/** Column width of one ‹ / › strip-scroll indicator in the tab row. */
+const TAB_INDICATOR_W = 3;
 
 /**
  * Render the page tab bar as ANSI-free segments with column spans. The
  * active tab is bold in its map's aggregate status color; inactive tabs
  * are faint — unless fresh (changed since last viewed), which keep their
  * status color so background progress catches the eye without stealing
- * the view. Tabs that would overflow the width are dropped, the last
- * partially-fitting one truncated.
+ * the view.
+ *
+ * When the tabs overflow the width, the row becomes a window starting at
+ * `scroll` (a tab index, clamped), with a ‹ / › indicator on each side
+ * that still hides tabs. Indicators SCROLL the strip — browsing never
+ * switches the page; the caller owns the scroll state and clicks a tab to
+ * actually switch. Keeping the ACTIVE tab visible when the page changes
+ * is also the caller's move: see tabScrollFor.
  */
-export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boolean): TabSegment[] {
-  const segments: TabSegment[] = [];
-  let col = 1;
-  for (const [index, tab] of tabs.entries()) {
-    const room = width - (col - 1);
-    if (room <= 3) break;
+export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boolean, scroll = 0): TabSegment[] {
+  const texts = tabs.map((tab) => {
     const marker = tab.active ? (unicode ? '●' : '*') : unicode ? '○' : 'o';
     const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
     // Neutral (documentation) pages carry no status: no glyph, activity in cyan.
-    const text = fitWidth(tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `, room);
-    const w = displayWidth(text);
-    segments.push({
-      text,
-      sgr:
-        tab.neutral === true
-          ? tab.active
-            ? '1'
-            : tab.fresh
-              ? '36'
-              : '90'
-          : tab.active
-            ? `${STATUS_SGR[tab.status]};1`
-            : tab.fresh
-              ? STATUS_SGR[tab.status]
-              : '90',
-      lo: col,
-      hi: col + w - 1,
-      index,
-    });
-    col += w;
+    return tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `;
+  });
+  const sgrOf = (tab: PageTab): string =>
+    tab.neutral === true
+      ? tab.active
+        ? '1'
+        : tab.fresh
+          ? '36'
+          : '90'
+      : tab.active
+        ? `${STATUS_SGR[tab.status]};1`
+        : tab.fresh
+          ? STATUS_SGR[tab.status]
+          : '90';
+  const widths = texts.map(displayWidth);
+  const count = tabs.length;
+
+  // -- window selection: everything, or as much as fits from `scroll` on --
+  let lo = 0;
+  let hi = count - 1;
+  if (widths.reduce((a, b) => a + b, 0) > width) {
+    lo = Math.max(0, Math.min(scroll, count - 1));
+    hi = lo;
+    // total cost of a candidate window, indicators included when a side hides tabs
+    const cost = (l: number, h: number): number =>
+      widths.slice(l, h + 1).reduce((a, b) => a + b, 0) +
+      (l > 0 ? TAB_INDICATOR_W : 0) +
+      (h < count - 1 ? TAB_INDICATOR_W : 0);
+    while (hi + 1 < count && cost(lo, hi + 1) <= width) hi++;
   }
+
+  // -- emit --
+  const segments: TabSegment[] = [];
+  let col = 1;
+  const push = (text: string, sgr: string, action: TabAction): void => {
+    const w = displayWidth(text);
+    segments.push({ text, sgr, lo: col, hi: col + w - 1, action });
+    col += w;
+  };
+  if (lo > 0) push(unicode ? ' ‹ ' : ' < ', '90', { kind: 'scroll', delta: -1 });
+  const tail = hi < count - 1 ? TAB_INDICATOR_W : 0;
+  for (let i = lo; i <= hi; i++) {
+    // the window is chosen to fit; only a lone leading tab can still overflow
+    push(fitWidth(texts[i]!, Math.max(1, width - (col - 1) - tail)), sgrOf(tabs[i]!), { kind: 'switch', index: i });
+  }
+  if (hi < count - 1) push(unicode ? ' › ' : ' > ', '90', { kind: 'scroll', delta: 1 });
   return segments;
+}
+
+/**
+ * The smallest scroll adjustment that brings tab `index` fully into the
+ * strip window. Called when the ACTIVE page changes (keys, dive, climb),
+ * so cycling never lands on an off-strip tab; manual ‹ › / wheel browsing
+ * keeps its own scroll and is never snapped back.
+ */
+export function tabScrollFor(
+  tabs: readonly PageTab[],
+  width: number,
+  unicode: boolean,
+  scroll: number,
+  index: number,
+): number {
+  if (index <= scroll) return Math.max(0, index);
+  const visibleAt = (s: number): boolean =>
+    pageTabRow(tabs, width, unicode, s).some((seg) => seg.action.kind === 'switch' && seg.action.index === index);
+  let s = Math.max(0, Math.min(scroll, tabs.length - 1));
+  while (s < index && !visibleAt(s)) s++;
+  return s;
 }
 
 /**
@@ -681,6 +753,8 @@ function main(): void {
   let activeFile: string | undefined;
   let firstScan = true;
   let lastTabSegments: readonly TabSegment[] = [];
+  /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
+  let tabScroll = 0;
 
   // viewport pan/zoom + interaction state (of the ACTIVE page)
   let offsetX = 0;
@@ -721,10 +795,24 @@ function main(): void {
     }
     return false;
   };
+  const viewWidth = (): number => usableColumns(process.stdout.columns ?? 100);
   const viewHeight = (): number =>
     Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
   /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
   const dividerY = (): number => tabRows() + viewHeight() + 1;
+
+  /** The tab strip's view models for `files`, in tab order. */
+  const pageTabsOf = (files: readonly string[]): PageTab[] =>
+    files.map((f) => {
+      const m = pageData.get(f)?.map;
+      return {
+        title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
+        status: m !== undefined ? mapStatus(m) : 'planned',
+        active: f === activeFile,
+        fresh: pageData.get(f)?.fresh ?? false,
+        neutral: m !== undefined && isNeutralKind(m),
+      };
+    });
 
   /** Park the current view, activate `file`, restore its view (or defaults). */
   const switchPage = (file: string): void => {
@@ -740,12 +828,17 @@ function main(): void {
     if (entry !== undefined && entry.fresh) pageData.set(file, { ...entry, fresh: false });
     map = entry?.map;
     notice = map === undefined ? `waiting for ${file} ...` : '';
+    // the strip follows the switch — the active tab must never sit off-screen
+    const top = topFiles();
+    const tabIndex = top.indexOf(file);
+    if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
   };
 
   /** Terminal cell (1-based) -> node under it, honoring tab row and pan. */
   const hitTest = (termX: number, termY: number): string | undefined => {
     const sx = termX - 1;
     const sy = termY - 1 - tabRows();
+    if (sx < 0 || sx >= viewWidth()) return undefined; // the reserved last column shows nothing
     if (sy < 0 || sy >= viewHeight()) return undefined; // tab bar or detail panel, not the map
     const cx = sx + offsetX;
     const cy = sy + offsetY;
@@ -762,6 +855,7 @@ function main(): void {
 
   const paint = (): void => {
     const cols = process.stdout.columns ?? 100;
+    const viewW = viewWidth();
     // a shrunken terminal may no longer afford the dragged panel height
     panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
     const viewH = viewHeight();
@@ -774,10 +868,10 @@ function main(): void {
       const windowed = renderMapWindow(
         map,
         { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
-        { x: offsetX, y: offsetY, width: cols, height: viewH },
+        { x: offsetX, y: offsetY, width: viewW, height: viewH },
       );
       // clamp AFTER measuring so a shrinking map pulls the view back in
-      const maxX = Math.max(0, windowed.contentWidth - cols);
+      const maxX = Math.max(0, windowed.contentWidth - viewW);
       const maxY = Math.max(0, windowed.contentHeight - viewH);
       if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
         offsetX = Math.min(Math.max(0, offsetX), maxX);
@@ -794,11 +888,11 @@ function main(): void {
       // No map yet: the standby splash, but only on a real TTY — a piped run
       // must not stream an animation, so it keeps the one-line notice.
       body =
-        (interactive ? splashFrame(notice, splashTick, cols, viewH, cfg.unicode, cfg.color) : undefined) ??
-        [fitWidth(notice, Math.max(1, cols - 1))];
+        (interactive ? splashFrame(notice, splashTick, viewW, viewH, cfg.unicode, cfg.color) : undefined) ??
+        [fitWidth(notice, viewW)];
     }
     if (notice !== '' && map !== undefined) {
-      body[body.length - 1] = fitWidth(`  ${notice}`, Math.max(1, cols - 1));
+      body[body.length - 1] = fitWidth(`  ${notice}`, viewW);
     }
 
     // -- detail panel --
@@ -815,9 +909,9 @@ function main(): void {
     }
     // the separator doubles as the drag handle — mark its grip in the middle
     const grip = cfg.unicode ? ' ⋯ ' : ' ~ ';
-    const bar = (cfg.unicode ? '─' : '-').repeat(cols);
-    const gripAt = Math.max(0, Math.floor((cols - grip.length) / 2));
-    const separator = cols > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
+    const bar = (cfg.unicode ? '─' : '-').repeat(viewW);
+    const gripAt = Math.max(0, Math.floor((viewW - grip.length) / 2));
+    const separator = viewW > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
     const panelRows = [
       cfg.color ? `\x1b[90m${separator}${RESET}` : separator,
       ...panel.map((l) =>
@@ -842,31 +936,21 @@ function main(): void {
           : 'main';
       const nodeLabel = scanned?.label ?? map?.title ?? '';
       const crumbHead = ` ${cfg.unicode ? '⌫' : '<'} ${parentTitle} ${cfg.unicode ? '▸' : '>'} `;
-      const head: TabSegment = { text: crumbHead, sgr: '90', lo: 1, hi: displayWidth(crumbHead), index: -1 };
-      const tailText = fitWidth(`${nodeLabel} `, Math.max(1, cols - displayWidth(crumbHead)));
+      const head: TabSegment = { text: crumbHead, sgr: '90', lo: 1, hi: displayWidth(crumbHead), action: { kind: 'back' } };
+      const tailText = fitWidth(`${nodeLabel} `, Math.max(1, viewW - displayWidth(crumbHead)));
       const tail: TabSegment = {
         text: tailText,
         sgr: '1',
         lo: head.hi + 1,
         hi: head.hi + displayWidth(tailText),
-        index: -1,
+        action: { kind: 'back' },
       };
       lastTabSegments = [head, tail];
       tabLine = lastTabSegments
         .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
         .join('');
     } else if (tabRows() > 0) {
-      const tabs: PageTab[] = lastTabFiles.map((f) => {
-        const m = pageData.get(f)?.map;
-        return {
-          title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
-          status: m !== undefined ? mapStatus(m) : 'planned',
-          active: f === activeFile,
-          fresh: pageData.get(f)?.fresh ?? false,
-          neutral: m !== undefined && isNeutralKind(m),
-        };
-      });
-      const segments = pageTabRow(tabs, cols, cfg.unicode);
+      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll);
       lastTabSegments = segments;
       tabLine = segments
         .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
@@ -883,7 +967,7 @@ function main(): void {
         (pannable ? 'drag pan · ' : '') +
         'hover/click · 0 reset · q quit';
     // A footer wider than the pane would wrap and shear the whole frame.
-    const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
+    const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;
 
     let frame = HOME;
@@ -997,12 +1081,17 @@ function main(): void {
             dirty = true;
             break;
           case 'zoom': {
+            // a wheel over the tab strip browses the strip, not the zoom ladder
+            if (event.at !== undefined && event.at.y === 1 && tabRows() > 0 && !inSubmap()) {
+              tabScroll = Math.max(0, Math.min(tabScroll + (event.delta === 1 ? -1 : 1), topFiles().length - 1));
+              dirty = true;
+              break;
+            }
             const next = clampZoom(zoom + event.delta);
             if (next === zoom || map === undefined) break;
             // anchor on the focused node, else whatever sits mid-view
-            const cols = process.stdout.columns ?? 100;
             const anchorId =
-              hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + cols / 2, offsetY + viewHeight() / 2)?.id;
+              hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
             zoom = next;
             const sized = renderMapWindow(
@@ -1070,11 +1159,13 @@ function main(): void {
                   ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi)
                   : undefined;
               if (tabHit !== undefined) {
-                // top row: a breadcrumb click climbs back, a tab click switches
-                if (tabHit.index === -1) {
+                // top row: the breadcrumb climbs back, ‹ › browse the strip, a tab switches
+                if (tabHit.action.kind === 'back') {
                   climbBack();
+                } else if (tabHit.action.kind === 'scroll') {
+                  tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
                 } else {
-                  const target = lastTabFiles[tabHit.index];
+                  const target = lastTabFiles[tabHit.action.index];
                   if (target !== undefined && target !== activeFile) switchPage(target);
                 }
               } else {
