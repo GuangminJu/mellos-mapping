@@ -47,8 +47,8 @@ describe('SGR mouse', () => {
   });
 
   it('maps the wheel to zoom steps (up = closer) and shift+wheel to scrolling', () => {
-    expect(parseInput('\x1b[<64;5;5M').events).toEqual([{ kind: 'zoom', delta: 1 }]);
-    expect(parseInput('\x1b[<65;5;5M').events).toEqual([{ kind: 'zoom', delta: -1 }]);
+    expect(parseInput('\x1b[<64;5;5M').events).toEqual([{ kind: 'zoom', delta: 1, at: { x: 5, y: 5 } }]);
+    expect(parseInput('\x1b[<65;5;5M').events).toEqual([{ kind: 'zoom', delta: -1, at: { x: 5, y: 5 } }]);
     expect(parseInput('\x1b[<68;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: -3 }]);
     expect(parseInput('\x1b[<69;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: 3 }]);
   });

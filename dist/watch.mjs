@@ -201,13 +201,15 @@ function updateNode(map, input) {
 
 // src/render/render.ts
 var ZOOM_MIN = -4;
-var ZOOM_MAX = 1;
+var ZOOM_MAX = 2;
 var ZOOM_DEFAULT = 0;
 function clampZoom(n) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n)));
 }
 function zoomLabel(zoom) {
   switch (zoom) {
+    case 2:
+      return "detail+";
     case 1:
       return "detail";
     case 0:
@@ -495,10 +497,14 @@ function neutralSkin(unicode) {
 var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
+var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
+var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
   switch (zoom) {
+    case 2:
+      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
       return { mode: "boxes", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
@@ -511,9 +517,6 @@ function zoomGeometry(zoom) {
       return { mode: "constellation", scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
-var DETAIL_INNER_MIN = 22;
-var DETAIL_INNER_MAX = 32;
-var DETAIL_NOTE_ROWS = 3;
 var LABEL_BUDGET_MIN = 4;
 function boxSpec(node, geo, unicode, neutral) {
   const glyph = node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0;
@@ -523,14 +526,15 @@ function boxSpec(node, geo, unicode, neutral) {
   if (geo.mode === "constellation") {
     return { w: 3, h: 1, label: "", pad: 0, borderless: true, extra: [] };
   }
-  if (geo.mode === "detail") {
-    const innerW = Math.min(Math.max(displayWidth(text) + badgeW + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+  if (geo.mode === "detail" && geo.detail !== void 0) {
+    const budget2 = geo.detail;
+    const innerW = Math.min(Math.max(displayWidth(text) + badgeW + 4, budget2.innerMin), budget2.innerMax);
     const extra = [];
     if (node.evidence !== void 0) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: "faint" });
     if (node.detail !== void 0) {
       const wrapped = wrapWidth(node.detail, innerW - 2);
-      for (let i = 0; i < Math.min(wrapped.length, DETAIL_NOTE_ROWS); i++) {
-        const cut = i === DETAIL_NOTE_ROWS - 1 && wrapped.length > DETAIL_NOTE_ROWS;
+      for (let i = 0; i < Math.min(wrapped.length, budget2.noteRows); i++) {
+        const cut = i === budget2.noteRows - 1 && wrapped.length > budget2.noteRows;
         extra.push({ text: ` ${cut ? fitWidth(wrapped[i] + "\u2026", innerW - 2) : wrapped[i]}`, style: "none" });
       }
     }
@@ -1175,7 +1179,7 @@ var KEY_PAN = {
 function mouseEvent(code, x, y, final) {
   if (code & WHEEL) {
     const down = (code & 1) !== 0;
-    return code & SHIFT ? { kind: "pan", dx: 0, dy: (down ? 1 : -1) * WHEEL_V_STEP } : { kind: "zoom", delta: down ? -1 : 1 };
+    return code & SHIFT ? { kind: "pan", dx: 0, dy: (down ? 1 : -1) * WHEEL_V_STEP } : { kind: "zoom", delta: down ? -1 : 1, at: { x, y } };
   }
   const buttons = code & BUTTON_BITS;
   if (final === "m") return buttons === 0 ? { kind: "mouse-up", x, y } : void 0;
@@ -1271,6 +1275,9 @@ var RESET = "\x1B[0m";
 var PANEL_CONTENT_ROWS = 6;
 var PANEL_ROWS_MIN = 2;
 var MAP_ROWS_MIN = 4;
+function usableColumns(cols) {
+  return Math.max(1, cols - 1);
+}
 function clampPanelRows(wanted, totalRows, tabRows) {
   const largest = totalRows - tabRows - MAP_ROWS_MIN - 2;
   return Math.max(PANEL_ROWS_MIN, Math.min(wanted, largest));
@@ -1302,26 +1309,45 @@ function anchorOffsets(anchor, offset, before, after) {
     y: before.h > 0 ? Math.round(offset.y * after.h / before.h) : 0
   };
 }
-function pageTabRow(tabs, width, unicode) {
-  const segments = [];
-  let col = 1;
-  for (const [index, tab] of tabs.entries()) {
-    const room = width - (col - 1);
-    if (room <= 3) break;
+var TAB_INDICATOR_W = 3;
+function pageTabRow(tabs, width, unicode, scroll = 0) {
+  const texts = tabs.map((tab) => {
     const marker = tab.active ? unicode ? "\u25CF" : "*" : unicode ? "\u25CB" : "o";
     const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
-    const text = fitWidth(tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `, room);
-    const w = displayWidth(text);
-    segments.push({
-      text,
-      sgr: tab.neutral === true ? tab.active ? "1" : tab.fresh ? "36" : "90" : tab.active ? `${STATUS_SGR[tab.status]};1` : tab.fresh ? STATUS_SGR[tab.status] : "90",
-      lo: col,
-      hi: col + w - 1,
-      index
-    });
-    col += w;
+    return tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `;
+  });
+  const sgrOf = (tab) => tab.neutral === true ? tab.active ? "1" : tab.fresh ? "36" : "90" : tab.active ? `${STATUS_SGR[tab.status]};1` : tab.fresh ? STATUS_SGR[tab.status] : "90";
+  const widths = texts.map(displayWidth);
+  const count = tabs.length;
+  let lo = 0;
+  let hi = count - 1;
+  if (widths.reduce((a, b) => a + b, 0) > width) {
+    lo = Math.max(0, Math.min(scroll, count - 1));
+    hi = lo;
+    const cost = (l, h) => widths.slice(l, h + 1).reduce((a, b) => a + b, 0) + (l > 0 ? TAB_INDICATOR_W : 0) + (h < count - 1 ? TAB_INDICATOR_W : 0);
+    while (hi + 1 < count && cost(lo, hi + 1) <= width) hi++;
   }
+  const segments = [];
+  let col = 1;
+  const push = (text, sgr, action) => {
+    const w = displayWidth(text);
+    segments.push({ text, sgr, lo: col, hi: col + w - 1, action });
+    col += w;
+  };
+  if (lo > 0) push(unicode ? " \u2039 " : " < ", "90", { kind: "scroll", delta: -1 });
+  const tail = hi < count - 1 ? TAB_INDICATOR_W : 0;
+  for (let i = lo; i <= hi; i++) {
+    push(fitWidth(texts[i], Math.max(1, width - (col - 1) - tail)), sgrOf(tabs[i]), { kind: "switch", index: i });
+  }
+  if (hi < count - 1) push(unicode ? " \u203A " : " > ", "90", { kind: "scroll", delta: 1 });
   return segments;
+}
+function tabScrollFor(tabs, width, unicode, scroll, index) {
+  if (index <= scroll) return Math.max(0, index);
+  const visibleAt = (s2) => pageTabRow(tabs, width, unicode, s2).some((seg) => seg.action.kind === "switch" && seg.action.index === index);
+  let s = Math.max(0, Math.min(scroll, tabs.length - 1));
+  while (s < index && !visibleAt(s)) s++;
+  return s;
 }
 function topLevelFiles(defaultFile, files, mapOf) {
   const refs = /* @__PURE__ */ new Set();
@@ -1602,6 +1628,7 @@ function main() {
   let activeFile;
   let firstScan = true;
   let lastTabSegments = [];
+  let tabScroll = 0;
   let offsetX = 0;
   let offsetY = 0;
   let zoom = ZOOM_DEFAULT;
@@ -1634,8 +1661,19 @@ function main() {
     }
     return false;
   };
+  const viewWidth = () => usableColumns(process.stdout.columns ?? 100);
   const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
   const dividerY = () => tabRows() + viewHeight() + 1;
+  const pageTabsOf = (files) => files.map((f) => {
+    const m = pageData.get(f)?.map;
+    return {
+      title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? "main"),
+      status: m !== void 0 ? mapStatus(m) : "planned",
+      active: f === activeFile,
+      fresh: pageData.get(f)?.fresh ?? false,
+      neutral: m !== void 0 && isNeutralKind(m)
+    };
+  });
   const switchPage = (file) => {
     if (activeFile !== void 0) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
     activeFile = file;
@@ -1649,10 +1687,14 @@ function main() {
     if (entry !== void 0 && entry.fresh) pageData.set(file, { ...entry, fresh: false });
     map = entry?.map;
     notice = map === void 0 ? `waiting for ${file} ...` : "";
+    const top = topFiles();
+    const tabIndex = top.indexOf(file);
+    if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
   };
   const hitTest = (termX, termY) => {
     const sx = termX - 1;
     const sy = termY - 1 - tabRows();
+    if (sx < 0 || sx >= viewWidth()) return void 0;
     if (sy < 0 || sy >= viewHeight()) return void 0;
     const cx = sx + offsetX;
     const cy = sy + offsetY;
@@ -1667,6 +1709,7 @@ function main() {
   process.on("SIGTERM", restore);
   const paint = () => {
     const cols = process.stdout.columns ?? 100;
+    const viewW = viewWidth();
     panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
@@ -1677,9 +1720,9 @@ function main() {
       const windowed = renderMapWindow(
         map,
         { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
-        { x: offsetX, y: offsetY, width: cols, height: viewH }
+        { x: offsetX, y: offsetY, width: viewW, height: viewH }
       );
-      const maxX = Math.max(0, windowed.contentWidth - cols);
+      const maxX = Math.max(0, windowed.contentWidth - viewW);
       const maxY = Math.max(0, windowed.contentHeight - viewH);
       if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
         offsetX = Math.min(Math.max(0, offsetX), maxX);
@@ -1693,10 +1736,10 @@ function main() {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      body = (interactive ? splashFrame(notice, splashTick, cols, viewH, cfg.unicode, cfg.color) : void 0) ?? [fitWidth(notice, Math.max(1, cols - 1))];
+      body = (interactive ? splashFrame(notice, splashTick, viewW, viewH, cfg.unicode, cfg.color) : void 0) ?? [fitWidth(notice, viewW)];
     }
     if (notice !== "" && map !== void 0) {
-      body[body.length - 1] = fitWidth(`  ${notice}`, Math.max(1, cols - 1));
+      body[body.length - 1] = fitWidth(`  ${notice}`, viewW);
     }
     const panelWidth = Math.max(10, cols - 2);
     let panel;
@@ -1708,9 +1751,9 @@ function main() {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
     const grip = cfg.unicode ? " \u22EF " : " ~ ";
-    const bar = (cfg.unicode ? "\u2500" : "-").repeat(cols);
-    const gripAt = Math.max(0, Math.floor((cols - grip.length) / 2));
-    const separator = cols > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
+    const bar = (cfg.unicode ? "\u2500" : "-").repeat(viewW);
+    const gripAt = Math.max(0, Math.floor((viewW - grip.length) / 2));
+    const separator = viewW > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
     const panelRows = [
       cfg.color ? `\x1B[90m${separator}${RESET}` : separator,
       ...panel.map(
@@ -1726,29 +1769,19 @@ function main() {
       const parentTitle = parentFile !== void 0 ? pageData.get(parentFile)?.map?.title ?? (pageIdOfFile(cfg.file, parentFile) ?? "main") : "main";
       const nodeLabel = scanned?.label ?? map?.title ?? "";
       const crumbHead = ` ${cfg.unicode ? "\u232B" : "<"} ${parentTitle} ${cfg.unicode ? "\u25B8" : ">"} `;
-      const head = { text: crumbHead, sgr: "90", lo: 1, hi: displayWidth(crumbHead), index: -1 };
-      const tailText = fitWidth(`${nodeLabel} `, Math.max(1, cols - displayWidth(crumbHead)));
+      const head = { text: crumbHead, sgr: "90", lo: 1, hi: displayWidth(crumbHead), action: { kind: "back" } };
+      const tailText = fitWidth(`${nodeLabel} `, Math.max(1, viewW - displayWidth(crumbHead)));
       const tail = {
         text: tailText,
         sgr: "1",
         lo: head.hi + 1,
         hi: head.hi + displayWidth(tailText),
-        index: -1
+        action: { kind: "back" }
       };
       lastTabSegments = [head, tail];
       tabLine = lastTabSegments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
     } else if (tabRows() > 0) {
-      const tabs = lastTabFiles.map((f) => {
-        const m = pageData.get(f)?.map;
-        return {
-          title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? "main"),
-          status: m !== void 0 ? mapStatus(m) : "planned",
-          active: f === activeFile,
-          fresh: pageData.get(f)?.fresh ?? false,
-          neutral: m !== void 0 && isNeutralKind(m)
-        };
-      });
-      const segments = pageTabRow(tabs, cols, cfg.unicode);
+      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll);
       lastTabSegments = segments;
       tabLine = segments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
     } else {
@@ -1756,7 +1789,7 @@ function main() {
     }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
     const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
-    const footerText = fitWidth(` ${hint}${panned}`, Math.max(1, cols - 1));
+    const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
     let frame = HOME;
     if (tabLine !== void 0) frame += tabLine + ERASE_LINE_END + "\n";
@@ -1849,10 +1882,14 @@ function main() {
             dirty = true;
             break;
           case "zoom": {
+            if (event.at !== void 0 && event.at.y === 1 && tabRows() > 0 && !inSubmap()) {
+              tabScroll = Math.max(0, Math.min(tabScroll + (event.delta === 1 ? -1 : 1), topFiles().length - 1));
+              dirty = true;
+              break;
+            }
             const next = clampZoom(zoom + event.delta);
             if (next === zoom || map === void 0) break;
-            const cols = process.stdout.columns ?? 100;
-            const anchorId = hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + cols / 2, offsetY + viewHeight() / 2)?.id;
+            const anchorId = hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
             zoom = next;
             const sized = renderMapWindow(
@@ -1916,10 +1953,12 @@ function main() {
             if (press && !press.moved) {
               const tabHit = tabRows() > 0 && event.y === 1 ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi) : void 0;
               if (tabHit !== void 0) {
-                if (tabHit.index === -1) {
+                if (tabHit.action.kind === "back") {
                   climbBack();
+                } else if (tabHit.action.kind === "scroll") {
+                  tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
                 } else {
-                  const target = lastTabFiles[tabHit.index];
+                  const target = lastTabFiles[tabHit.action.index];
                   if (target !== void 0 && target !== activeFile) switchPage(target);
                 }
               } else {
@@ -2017,7 +2056,9 @@ export {
   parseArgs,
   splashArt,
   splashFrame,
+  tabScrollFor,
   topLevelFiles,
+  usableColumns,
   waveAt,
   waveHash,
   waveLevel,

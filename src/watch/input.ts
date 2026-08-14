@@ -18,8 +18,13 @@ export type InputEvent =
   | { readonly kind: 'clear' }
   /** Pan the VIEW by a delta (keyboard / shift+wheel). */
   | { readonly kind: 'pan'; readonly dx: number; readonly dy: number }
-  /** One step on the zoom ladder (wheel / +/- keys); +1 = closer. */
-  | { readonly kind: 'zoom'; readonly delta: 1 | -1 }
+  /**
+   * One step on the zoom ladder (wheel / +/- keys); +1 = closer. A wheel
+   * event carries the cell it happened over (`at`), so the watcher can
+   * route a wheel on the tab strip to strip browsing; keyboard zoom
+   * has no position.
+   */
+  | { readonly kind: 'zoom'; readonly delta: 1 | -1; readonly at?: { readonly x: number; readonly y: number } }
   /** Cycle pages: Tab forward, Shift+Tab back. */
   | { readonly kind: 'next-page' }
   | { readonly kind: 'prev-page' }
@@ -76,7 +81,7 @@ function mouseEvent(code: number, x: number, y: number, final: string): InputEve
     const down = (code & 1) !== 0; // 65/69 = wheel down, 64/68 = wheel up
     return code & SHIFT
       ? { kind: 'pan', dx: 0, dy: (down ? 1 : -1) * WHEEL_V_STEP } // shift+wheel scrolls
-      : { kind: 'zoom', delta: down ? -1 : 1 }; // plain wheel zooms; up = closer
+      : { kind: 'zoom', delta: down ? -1 : 1, at: { x, y } }; // plain wheel zooms; up = closer
   }
   const buttons = code & BUTTON_BITS;
   if (final === 'm') return buttons === 0 ? { kind: 'mouse-up', x, y } : undefined;

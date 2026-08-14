@@ -21390,7 +21390,7 @@ function removeLayer(map, id) {
 
 // src/render/render.ts
 var ZOOM_MIN = -4;
-var ZOOM_MAX = 1;
+var ZOOM_MAX = 2;
 var ZOOM_DEFAULT = 0;
 function clampZoom(n) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n)));
@@ -21668,10 +21668,14 @@ function neutralSkin(unicode) {
 var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
+var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
+var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
   switch (zoom) {
+    case 2:
+      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
       return { mode: "boxes", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
@@ -21684,9 +21688,6 @@ function zoomGeometry(zoom) {
       return { mode: "constellation", scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
-var DETAIL_INNER_MIN = 22;
-var DETAIL_INNER_MAX = 32;
-var DETAIL_NOTE_ROWS = 3;
 var LABEL_BUDGET_MIN = 4;
 function boxSpec(node, geo, unicode, neutral) {
   const glyph = node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0;
@@ -21696,14 +21697,15 @@ function boxSpec(node, geo, unicode, neutral) {
   if (geo.mode === "constellation") {
     return { w: 3, h: 1, label: "", pad: 0, borderless: true, extra: [] };
   }
-  if (geo.mode === "detail") {
-    const innerW = Math.min(Math.max(displayWidth(text2) + badgeW + 4, DETAIL_INNER_MIN), DETAIL_INNER_MAX);
+  if (geo.mode === "detail" && geo.detail !== void 0) {
+    const budget2 = geo.detail;
+    const innerW = Math.min(Math.max(displayWidth(text2) + badgeW + 4, budget2.innerMin), budget2.innerMax);
     const extra = [];
     if (node.evidence !== void 0) extra.push({ text: fitWidth(` ${node.evidence}`, innerW), style: "faint" });
     if (node.detail !== void 0) {
       const wrapped = wrapWidth(node.detail, innerW - 2);
-      for (let i = 0; i < Math.min(wrapped.length, DETAIL_NOTE_ROWS); i++) {
-        const cut = i === DETAIL_NOTE_ROWS - 1 && wrapped.length > DETAIL_NOTE_ROWS;
+      for (let i = 0; i < Math.min(wrapped.length, budget2.noteRows); i++) {
+        const cut = i === budget2.noteRows - 1 && wrapped.length > budget2.noteRows;
         extra.push({ text: ` ${cut ? fitWidth(wrapped[i] + "\u2026", innerW - 2) : wrapped[i]}`, style: "none" });
       }
     }

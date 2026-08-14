@@ -283,13 +283,22 @@ describe('renderMap', () => {
   });
 
   it('clamps zoom steps and names every rung of the ladder', () => {
-    expect(clampZoom(5)).toBe(1);
+    expect(clampZoom(5)).toBe(2);
     expect(clampZoom(-9)).toBe(-4);
     expect(clampZoom(0.4)).toBe(0);
-    for (const zoom of [-4, -3, -2, -1, 0, 1] as const) expect(zoomLabel(zoom)).not.toBe('');
+    for (const zoom of [-4, -3, -2, -1, 0, 1, 2] as const) expect(zoomLabel(zoom)).not.toBe('');
     expect(zoomLabel(0)).toBe('100%');
     expect(zoomLabel(-4)).toBe('overview');
     expect(zoomLabel(1)).toBe('detail');
+    expect(zoomLabel(2)).toBe('detail+');
+  });
+
+  it('detail+ grows the boxes into wider reading cards than detail', () => {
+    const boxWidth = (zoom: ZoomStep): number =>
+      Math.max(
+        ...renderMapWindow(sampleMap(), { ...MONO, zoom }, { x: 0, y: 0, width: 0, height: 0 }).hits.map((h) => h.w),
+      );
+    expect(boxWidth(2)).toBeGreaterThan(boxWidth(1));
   });
 
   it('threads skip-level edges between boxes instead of detouring to the margin', () => {
