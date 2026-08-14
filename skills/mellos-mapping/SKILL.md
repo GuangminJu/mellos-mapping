@@ -56,14 +56,19 @@ usually mean the server was never registered: have the user run
    it the pane shows the most recently written page, not necessarily the one
    under discussion. If a pane is already open, rerunning the launcher with
    `--page` retargets it instead of opening another — do that whenever the
-   page you are working on changes. Elsewhere run
+   page you are working on changes. Declaring on a named page makes YOU
+   responsible for bringing the audience there: open or retarget the pane
+   yourself rather than telling the user which tab to click. Elsewhere run
    `node <plugin root>/dist/watch.mjs --page <slug>` from the project
    directory in a second terminal or split (this skill file lives under
    `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline
    anywhere.
-3. **Work bottom-up, one spinner at a time.** Set a node `in-progress` before
-   implementing it. Prefer finishing its lower dependencies first; if you
-   deliberately deviate, say why in conversation.
+3. **Work bottom-up.** Set a node `in-progress` before implementing it, and
+   prefer finishing its lower dependencies first. Independent same-band
+   siblings need no artificial queue — building them together (several
+   spinners at once) is honest reporting, not a violation. If you
+   deliberately build above an unfinished dependency, say why in
+   conversation.
 4. **`done` requires evidence.** Mark `done` only when verification actually
    passed, with what passed in `evidence` (e.g. `vitest: 23 passed`). No
    evidence, no done.
@@ -83,10 +88,14 @@ usually mean the server was never registered: have the user run
 
 - **Nodes are units of buildable, verifiable work** (a module, a contract, a
   renderer) — not tasks like "write tests" and not files.
-- **Declare groups beyond ~6 nodes** (`groups` in `mmap_declare`, `group` on
-  members): labeled subsystems within one band. The zoomed-out view renders
-  groups; without them it degrades into anonymous glyphs. Group status is
-  derived from members — never invent it.
+- **Declare groups when one band grows crowded** (`groups` in
+  `mmap_declare`, `group` on members): labeled subsystems within that band,
+  worth declaring once a single band holds roughly five or more nodes — the
+  far zoom renders groups, and a crowded band without them degrades into
+  anonymous glyphs. A group must be a strict subset of its band: a group
+  holding the whole band merely renames it. A map spread thin across many
+  bands needs no groups at all. Group status is derived from members —
+  never invent it.
 - **Every node carries `detail`**: one to three sentences on responsibility,
   contract, and the key decision. Update it when the design shifts — a stale
   detail is a small lie on the map.

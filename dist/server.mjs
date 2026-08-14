@@ -22556,7 +22556,7 @@ function buildServer(stateFile) {
     "mmap_declare",
     {
       title: "Declare map structure",
-      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within a band \u2014 the zoomed-out view renders groups, so declare them for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
+      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
       inputSchema: {
         page: PAGE,
         title: external_exports.string().max(120).optional().describe("map title, e.g. the feature being built"),
