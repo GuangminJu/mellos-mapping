@@ -4,4 +4,7 @@ node_modules/
 # note: dist/ is intentionally COMMITTED.
 # Claude Code installs plugins by cloning this repo without running any
 # build step, so the bundled MCP server and watcher must ship in-tree.
+# lib/ is NOT: only npm/library consumers need it, and they get it from a
+# pack (files includes lib) or a local `npm run build`.
+lib/
 *.tgz

@@ -21388,13 +21388,66 @@ function removeLayer(map, id) {
   return ok({ ...map, layers: map.layers.filter((l) => l.id !== id) });
 }
 
-// src/render/render.ts
+// src/semantics/semantics.ts
 var ZOOM_MIN = -4;
 var ZOOM_MAX = 2;
 var ZOOM_DEFAULT = 0;
 function clampZoom(n) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n)));
 }
+function zoomMode(zoom) {
+  if (zoom >= 1) return "detail";
+  if (zoom <= -4) return "overview";
+  return "boxes";
+}
+function isNeutralKind(map) {
+  return map.kind !== void 0 && map.kind !== "dev";
+}
+function aggregateMap(map) {
+  if (map.groups.length === 0) return void 0;
+  const representative = /* @__PURE__ */ new Map();
+  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
+  const nodes = map.groups.map((g) => {
+    const members = map.nodes.filter((n) => n.group === g.id);
+    const done = members.filter((n) => n.status === "done").length;
+    return {
+      id: g.id,
+      // neutral kinds document structure, not progress — no member counts
+      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
+      layer: g.layer,
+      status: groupStatus(map, g.id)
+    };
+  });
+  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
+  const seen = /* @__PURE__ */ new Set();
+  const edges = [];
+  for (const e of map.edges) {
+    const from = representative.get(e.from);
+    const to = representative.get(e.to);
+    if (from === to || seen.has(`${from}->${to}`)) continue;
+    seen.add(`${from}->${to}`);
+    edges.push({ from, to });
+  }
+  return {
+    ...map.title !== void 0 ? { title: map.title } : {},
+    ...map.kind !== void 0 ? { kind: map.kind } : {},
+    layers: map.layers,
+    groups: [],
+    lanes: map.lanes,
+    nodes,
+    edges
+  };
+}
+function flipForSequence(map) {
+  if (map.kind !== "sequence") return map;
+  return {
+    ...map,
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
+  };
+}
+
+// src/render/render.ts
 var WIDE_RANGES = [
   [4352, 4447],
   // Hangul Jamo
@@ -21659,9 +21712,6 @@ function kindGlyph(kind, unicode) {
   const pair = NODE_KIND_GLYPHS[kind];
   return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
 }
-function isNeutralKind(map) {
-  return map.kind !== void 0 && map.kind !== "dev";
-}
 function neutralSkin(unicode) {
   return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
 }
@@ -21671,21 +21721,23 @@ var LEFT_MARGIN = 2;
 var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
 var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
+  const m = zoomMode(zoom);
+  const mode = m === "overview" ? "constellation" : m;
   switch (zoom) {
     case 2:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
-      return { mode: "boxes", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
-      return { mode: "boxes", scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -2:
-      return { mode: "boxes", scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
     case -3:
-      return { mode: "boxes", scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
     case -4:
-      return { mode: "constellation", scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
 var LABEL_BUDGET_MIN = 4;
@@ -21733,41 +21785,6 @@ function renderMap(map, opts) {
   const built = buildCanvas(map, opts);
   return built.canvas.emit(opts);
 }
-function aggregateMap(map) {
-  if (map.groups.length === 0) return void 0;
-  const representative = /* @__PURE__ */ new Map();
-  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
-  const nodes = map.groups.map((g) => {
-    const members = map.nodes.filter((n) => n.group === g.id);
-    const done = members.filter((n) => n.status === "done").length;
-    return {
-      id: g.id,
-      // neutral kinds document structure, not progress — no member counts
-      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
-      layer: g.layer,
-      status: groupStatus(map, g.id)
-    };
-  });
-  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
-  const seen = /* @__PURE__ */ new Set();
-  const edges = [];
-  for (const e of map.edges) {
-    const from = representative.get(e.from);
-    const to = representative.get(e.to);
-    if (from === to || seen.has(`${from}->${to}`)) continue;
-    seen.add(`${from}->${to}`);
-    edges.push({ from, to });
-  }
-  return {
-    ...map.title !== void 0 ? { title: map.title } : {},
-    ...map.kind !== void 0 ? { kind: map.kind } : {},
-    layers: map.layers,
-    groups: [],
-    lanes: map.lanes,
-    nodes,
-    edges
-  };
-}
 var AGGREGATE_GEO = {
   mode: "boxes",
   scale: 1,
@@ -21778,14 +21795,6 @@ var AGGREGATE_GEO = {
   barGap: 1,
   bandCounts: false
 };
-function flipForSequence(map) {
-  if (map.kind !== "sequence") return map;
-  return {
-    ...map,
-    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
-    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
-  };
-}
 function buildCanvas(map, opts) {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
@@ -22135,63 +22144,9 @@ function drawBox(canvas, box, opts, neutral, focused = false) {
 // src/store/store.ts
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+
+// src/store/format.ts
 var STATE_FILE_VERSION = 1;
-var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
-var PAGES_DIR_NAME = "mellos-mapping.pages";
-function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
-}
-var CONFIG_FILE_NAME = "mellos-mapping.config.json";
-var CONFIG_FILE_VERSION = 1;
-function configFilePath(defaultFile) {
-  return join(dirname(defaultFile), CONFIG_FILE_NAME);
-}
-var MAPPING_POLICIES = ["always", "complex", "on-request"];
-function makeMappingPolicy(raw) {
-  return MAPPING_POLICIES.includes(raw) ? ok(raw) : err({ kind: "invalid-policy", raw, allowed: MAPPING_POLICIES });
-}
-function describeMappingPolicy(policy) {
-  switch (policy) {
-    case "always":
-      return "map every structured task \u2014 workflows, designs, architecture, technical dependencies";
-    case "complex":
-      return "map only medium or complex tasks \u2014 several modules, a new subsystem, roughly an hour or more";
-    case "on-request":
-      return "map only when the user explicitly asks";
-  }
-}
-function loadMappingPolicy(defaultFile) {
-  const path = configFilePath(defaultFile);
-  let text2;
-  try {
-    text2 = readFileSync(path, "utf8");
-  } catch (e) {
-    if (e.code === "ENOENT") return ok(void 0);
-    throw e;
-  }
-  let raw;
-  try {
-    raw = JSON.parse(text2);
-  } catch (e) {
-    return err({ kind: "malformed-json", path, detail: e.message });
-  }
-  if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
-  if (raw["version"] !== CONFIG_FILE_VERSION) {
-    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${CONFIG_FILE_VERSION}` });
-  }
-  const rawPolicy = raw["policy"];
-  if (rawPolicy === void 0) return ok(void 0);
-  if (typeof rawPolicy !== "string") return err({ kind: "bad-shape", path, detail: "policy is not a string" });
-  const policy = makeMappingPolicy(rawPolicy);
-  return policy.ok ? ok(policy.value) : err({ kind: "bad-shape", path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(" | ")}` });
-}
-function saveMappingPolicy(defaultFile, policy) {
-  const path = configFilePath(defaultFile);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n", "utf8");
-  renameSync(tmp, path);
-}
 function describeStoreError(e) {
   switch (e.kind) {
     case "not-found":
@@ -22345,6 +22300,13 @@ function serializeMap(map) {
     edges: map.edges
   };
   return JSON.stringify(body, null, 2) + "\n";
+}
+
+// src/store/store.ts
+var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var PAGES_DIR_NAME = "mellos-mapping.pages";
+function pageFilePath(defaultFile, page) {
+  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
 }
 function loadMapFile(path) {
   let text2;
@@ -22566,7 +22528,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.19.0";
+var SERVER_VERSION = "0.18.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var PAGE = ID.optional().describe(
   "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
@@ -22602,13 +22564,6 @@ function buildServer(stateFile) {
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
     saveMapFile(file, applied.value);
     return text(summarize(applied.value) + (page !== void 0 ? ` [page: ${page}]` : ""));
-  };
-  const setupNudge = () => {
-    const policy = loadMappingPolicy(stateFile);
-    if (!policy.ok) return `
-note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_setup).`;
-    if (policy.value !== void 0) return "";
-    return "\nnote: mapping policy not set for this project. Ask the user when maps should open \u2014 " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then record the answer with mmap_setup.";
   };
   server.registerTool(
     "mmap_declare",
@@ -22657,12 +22612,7 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
         edges: external_exports.array(EDGE.extend({ label: external_exports.string().max(80).optional().describe("what flows along the edge") })).optional()
       }
     },
-    (input) => {
-      const result = mutate(input.page, (map) => applyDeclare(map, input));
-      if (result.isError === true) return result;
-      const nudge = setupNudge();
-      return nudge === "" ? result : text((result.content[0]?.text ?? "") + nudge);
-    }
+    (input) => mutate(input.page, (map) => applyDeclare(map, input))
   );
   server.registerTool(
     "mmap_update",
@@ -22703,31 +22653,6 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
       }
     },
     (input) => mutate(input.page, (map) => applyRemove(map, input))
-  );
-  server.registerTool(
-    "mmap_setup",
-    {
-      title: "Configure when maps open",
-      description: `Get or set this project's mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it. If it reports "not set", ask the USER to choose (never pick for them): always = ` + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + ". Then call again with their choice to persist it. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.",
-      inputSchema: {
-        policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy")
-      }
-    },
-    (input) => {
-      if (input.policy !== void 0) {
-        const policy = input.policy;
-        saveMappingPolicy(stateFile, policy);
-        return text(`mapping policy set: ${policy} \u2014 ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
-      }
-      const loaded = loadMappingPolicy(stateFile);
-      if (!loaded.ok) return text(describeStoreError(loaded.error), true);
-      if (loaded.value === void 0) {
-        return text(
-          "mapping policy not set. Ask the user to choose one of: " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then call mmap_setup with their choice. Until then act as complex."
-        );
-      }
-      return text(`mapping policy: ${loaded.value} \u2014 ${describeMappingPolicy(loaded.value)}`);
-    }
   );
   server.registerTool(
     "mmap_view",
