@@ -10,7 +10,7 @@
  */
 
 import { groupStatus } from '../domain/ops.js';
-import type { DepEdge, MapNode, MellosMap, NodeId } from '../domain/types.js';
+import type { DepEdge, MapGroup, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
 
 // ---------------------------------------------------------------------------
 // zoom ladder
@@ -121,6 +121,179 @@ export function aggregateMap(map: MellosMap): MellosMap | undefined {
     nodes,
     edges,
   };
+}
+
+// ---------------------------------------------------------------------------
+// focus semantics — what a detail panel says about a node or group
+// ---------------------------------------------------------------------------
+
+/** One neighbour across a dependency edge, with what flows along it. */
+export interface NeighborRef {
+  readonly id: string;
+  readonly label: string;
+  readonly status: NodeStatus;
+  readonly edgeLabel?: string;
+}
+
+/** Everything a detail panel derives for a focused NODE. */
+export interface NodeFocus {
+  readonly kind: 'node';
+  readonly node: MapNode;
+  readonly layerName: string;
+  readonly laneLabel?: string;
+  /** Lower neighbours this node stands on (on sequence pages: the earlier events). */
+  readonly uses: readonly NeighborRef[];
+  /** Upper neighbours standing on this node (on sequence pages: the later events). */
+  readonly usedBy: readonly NeighborRef[];
+}
+
+/** Everything a detail panel derives for a focused GROUP (the far zoom's boxes). */
+export interface GroupFocus {
+  readonly kind: 'group';
+  readonly group: MapGroup;
+  readonly status: NodeStatus;
+  readonly layerName: string;
+  readonly members: readonly MapNode[];
+  /** Outside-the-group lower neighbours, each shown as its own group when it has one. */
+  readonly uses: readonly NeighborRef[];
+  /** Outside-the-group upper neighbours, each shown as its own group when it has one. */
+  readonly usedBy: readonly NeighborRef[];
+}
+
+/**
+ * Derive what a detail panel says about one focused id — a node, or a group
+ * when the far zoom's aggregated boxes are what the pointer is over. Pure
+ * data: every renderer picks its own glyphs, colors, and words (a sequence
+ * page reads uses/usedBy as after/before; that is the caller's vocabulary).
+ * @param map - the map the focus lives in.
+ * @param focusId - node or group id.
+ * @returns the focus view, or undefined when the id names neither.
+ */
+export function focusInfo(map: MellosMap, focusId: string): NodeFocus | GroupFocus | undefined {
+  const layerNameOf = (layerId: string): string =>
+    map.layers.find((l) => (l.id as string) === layerId)?.name ?? layerId;
+
+  const group = map.groups.find((g) => (g.id as string) === focusId);
+  if (group) {
+    const members = map.nodes.filter((n) => n.group === group.id);
+    const memberIds = new Set(members.map((n) => n.id as string));
+    // A neighbour is shown as its own group when it has one, else as itself.
+    const rep = (id: string): NeighborRef => {
+      const n = map.nodes.find((x) => (x.id as string) === id)!;
+      const owner = n.group !== undefined ? map.groups.find((g) => g.id === n.group) : undefined;
+      return owner !== undefined
+        ? { id: owner.id as string, label: owner.label, status: groupStatus(map, owner.id) }
+        : { id: n.id as string, label: n.label, status: n.status };
+    };
+    const dedupe = (refs: NeighborRef[]): NeighborRef[] => {
+      const seen = new Set<string>();
+      const out: NeighborRef[] = [];
+      for (const r of refs) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    };
+    return {
+      kind: 'group',
+      group,
+      status: groupStatus(map, group.id),
+      layerName: layerNameOf(group.layer as string),
+      members,
+      uses: dedupe(
+        map.edges
+          .filter((e) => memberIds.has(e.from as string) && !memberIds.has(e.to as string))
+          .map((e) => rep(e.to as string)),
+      ),
+      usedBy: dedupe(
+        map.edges
+          .filter((e) => memberIds.has(e.to as string) && !memberIds.has(e.from as string))
+          .map((e) => rep(e.from as string)),
+      ),
+    };
+  }
+
+  const node = map.nodes.find((n) => (n.id as string) === focusId);
+  if (!node) return undefined;
+  const ref = (id: string, edgeLabel: string | undefined): NeighborRef => {
+    const n = map.nodes.find((x) => (x.id as string) === id);
+    return {
+      id,
+      label: n?.label ?? id,
+      status: n?.status ?? 'planned',
+      ...(edgeLabel !== undefined ? { edgeLabel } : {}),
+    };
+  };
+  const laneLabel = node.lane !== undefined ? map.lanes.find((l) => l.id === node.lane)?.label : undefined;
+  return {
+    kind: 'node',
+    node,
+    layerName: layerNameOf(node.layer as string),
+    ...(laneLabel !== undefined ? { laneLabel } : {}),
+    uses: map.edges.filter((e) => e.from === node.id).map((e) => ref(e.to as string, e.label)),
+    usedBy: map.edges.filter((e) => e.to === node.id).map((e) => ref(e.from as string, e.label)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// page-set semantics — which pages are siblings, and where a dive came from
+// ---------------------------------------------------------------------------
+
+/**
+ * Page slugs some node of any map dives into. A page referenced as a submap
+ * is interior detail — it is reached by diving through its linking node,
+ * never by sitting beside its parent as a sibling tab.
+ * @param maps - every known page's map (undefined entries are skipped).
+ * @returns the referenced submap slugs.
+ */
+export function submapRefs(maps: Iterable<MellosMap | undefined>): Set<string> {
+  const refs = new Set<string>();
+  for (const m of maps) {
+    for (const n of m?.nodes ?? []) if (n.submap !== undefined) refs.add(n.submap as string);
+  }
+  return refs;
+}
+
+/**
+ * Where a sub-map page was dived into from: the entry whose map links the
+ * page, plus the linking node's label. Derived by scan, so a breadcrumb
+ * survives any client restart with an empty dive stack.
+ * @param entries - known pages as (key, map) pairs; keys are caller-owned.
+ * @param pageId - the sub-map page's slug.
+ * @returns the linking entry's key and node label, or undefined for a top-level page.
+ */
+export function diveParent<K>(
+  entries: Iterable<readonly [K, MellosMap | undefined]>,
+  pageId: string,
+): { parent: K; label: string } | undefined {
+  for (const [key, m] of entries) {
+    const node = m?.nodes.find((n) => (n.submap as string | undefined) === pageId);
+    if (node !== undefined) return { parent: key, label: node.label };
+  }
+  return undefined;
+}
+
+/**
+ * The page a client shows when nobody asked for one: the most recently
+ * WRITTEN page — the ledger last touched is almost always the effort under
+ * way. Keys without a readable timestamp lose; an empty set answers the
+ * first key (caller-ordered: default page first, then slug order).
+ * @param keys - candidate page keys in the caller's fallback order.
+ * @param mtimeOf - last-written timestamp of a key, undefined when unknown.
+ * @returns the winning key, or undefined for an empty candidate set.
+ */
+export function mostRecentKey<K>(keys: readonly K[], mtimeOf: (key: K) => number | undefined): K | undefined {
+  let best: K | undefined;
+  let bestMtime = -Infinity;
+  for (const key of keys) {
+    const mtime = mtimeOf(key);
+    if (mtime !== undefined && mtime > bestMtime) {
+      best = key;
+      bestMtime = mtime;
+    }
+  }
+  return best ?? keys[0];
 }
 
 /**

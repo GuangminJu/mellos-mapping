@@ -267,6 +267,88 @@ function aggregateMap(map) {
     edges
   };
 }
+function focusInfo(map, focusId) {
+  const layerNameOf = (layerId) => map.layers.find((l) => l.id === layerId)?.name ?? layerId;
+  const group = map.groups.find((g) => g.id === focusId);
+  if (group) {
+    const members = map.nodes.filter((n) => n.group === group.id);
+    const memberIds = new Set(members.map((n) => n.id));
+    const rep = (id) => {
+      const n = map.nodes.find((x) => x.id === id);
+      const owner = n.group !== void 0 ? map.groups.find((g) => g.id === n.group) : void 0;
+      return owner !== void 0 ? { id: owner.id, label: owner.label, status: groupStatus(map, owner.id) } : { id: n.id, label: n.label, status: n.status };
+    };
+    const dedupe = (refs) => {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of refs) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    };
+    return {
+      kind: "group",
+      group,
+      status: groupStatus(map, group.id),
+      layerName: layerNameOf(group.layer),
+      members,
+      uses: dedupe(
+        map.edges.filter((e) => memberIds.has(e.from) && !memberIds.has(e.to)).map((e) => rep(e.to))
+      ),
+      usedBy: dedupe(
+        map.edges.filter((e) => memberIds.has(e.to) && !memberIds.has(e.from)).map((e) => rep(e.from))
+      )
+    };
+  }
+  const node = map.nodes.find((n) => n.id === focusId);
+  if (!node) return void 0;
+  const ref = (id, edgeLabel) => {
+    const n = map.nodes.find((x) => x.id === id);
+    return {
+      id,
+      label: n?.label ?? id,
+      status: n?.status ?? "planned",
+      ...edgeLabel !== void 0 ? { edgeLabel } : {}
+    };
+  };
+  const laneLabel = node.lane !== void 0 ? map.lanes.find((l) => l.id === node.lane)?.label : void 0;
+  return {
+    kind: "node",
+    node,
+    layerName: layerNameOf(node.layer),
+    ...laneLabel !== void 0 ? { laneLabel } : {},
+    uses: map.edges.filter((e) => e.from === node.id).map((e) => ref(e.to, e.label)),
+    usedBy: map.edges.filter((e) => e.to === node.id).map((e) => ref(e.from, e.label))
+  };
+}
+function submapRefs(maps) {
+  const refs = /* @__PURE__ */ new Set();
+  for (const m of maps) {
+    for (const n of m?.nodes ?? []) if (n.submap !== void 0) refs.add(n.submap);
+  }
+  return refs;
+}
+function diveParent(entries, pageId) {
+  for (const [key, m] of entries) {
+    const node = m?.nodes.find((n) => n.submap === pageId);
+    if (node !== void 0) return { parent: key, label: node.label };
+  }
+  return void 0;
+}
+function mostRecentKey(keys, mtimeOf) {
+  let best;
+  let bestMtime = -Infinity;
+  for (const key of keys) {
+    const mtime = mtimeOf(key);
+    if (mtime !== void 0 && mtime > bestMtime) {
+      best = key;
+      bestMtime = mtime;
+    }
+  }
+  return best ?? keys[0];
+}
 function flipForSequence(map) {
   if (map.kind !== "sequence") return map;
   return {
@@ -1333,16 +1415,7 @@ function dividerRow(width, unicode, follow) {
   return bar;
 }
 function mostRecentPageFile(files, mtimeOf) {
-  let best;
-  let bestMtime = -Infinity;
-  for (const file of files) {
-    const mtime = mtimeOf(file);
-    if (mtime !== void 0 && mtime > bestMtime) {
-      best = file;
-      bestMtime = mtime;
-    }
-  }
-  return best ?? files[0];
+  return mostRecentKey(files, mtimeOf);
 }
 var HIDE_CURSOR = "\x1B[?25l";
 var SHOW_CURSOR = "\x1B[?25h";
@@ -1430,10 +1503,7 @@ function tabScrollFor(tabs, width, unicode, scroll, index) {
   return s;
 }
 function topLevelFiles(defaultFile, files, mapOf) {
-  const refs = /* @__PURE__ */ new Set();
-  for (const m of mapOf.values()) {
-    for (const n of m?.nodes ?? []) if (n.submap !== void 0) refs.add(n.submap);
-  }
+  const refs = submapRefs(mapOf.values());
   return files.filter((f) => {
     const id = pageIdOfFile(defaultFile, f);
     return id === void 0 || !refs.has(id);
@@ -1442,12 +1512,8 @@ function topLevelFiles(defaultFile, files, mapOf) {
 function diveOrigin(defaultFile, file, files, mapOf) {
   const id = pageIdOfFile(defaultFile, file);
   if (id === void 0) return void 0;
-  for (const f of files) {
-    if (f === file) continue;
-    const node = mapOf.get(f)?.nodes.find((n) => n.submap === id);
-    if (node !== void 0) return { parent: f, label: node.label };
-  }
-  return void 0;
+  const entries = files.filter((f) => f !== file).map((f) => [f, mapOf.get(f)]);
+  return diveParent(entries, id);
 }
 function nearestHit(hits, cx, cy) {
   let best;
@@ -1464,28 +1530,14 @@ function nearestHit(hits, cx, cy) {
 function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS) {
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
-  const group = map.groups.find((gr) => gr.id === focusId);
-  if (group) {
-    const members = map.nodes.filter((n) => n.group === group.id);
-    const memberIds = new Set(members.map((n) => n.id));
-    const status = groupStatus(map, group.id);
-    const layerName2 = map.layers.find((l) => l.id === group.layer)?.name ?? group.layer;
+  const focus = focusInfo(map, focusId);
+  if (focus === void 0) return void 0;
+  const refText = (r) => `${g(r.status)} ${r.label}${r.edgeLabel !== void 0 ? ` (${r.edgeLabel})` : ""}`;
+  if (focus.kind === "group") {
+    const { group, status, layerName: layerName2, members } = focus;
     const [right2, left2] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
-    const repLabel = (id) => {
-      const n = map.nodes.find((x) => x.id === id);
-      const owner = n.group !== void 0 ? map.groups.find((gr) => gr.id === n.group) : void 0;
-      return owner !== void 0 ? `${g(groupStatus(map, owner.id))} ${owner.label}` : `${g(n.status)} ${n.label}`;
-    };
-    const uses2 = [
-      ...new Set(
-        map.edges.filter((e) => memberIds.has(e.from) && !memberIds.has(e.to)).map((e) => repLabel(e.to))
-      )
-    ];
-    const usedBy2 = [
-      ...new Set(
-        map.edges.filter((e) => memberIds.has(e.to) && !memberIds.has(e.from)).map((e) => repLabel(e.from))
-      )
-    ];
+    const uses2 = focus.uses.map(refText);
+    const usedBy2 = focus.usedBy.map(refText);
     const lines2 = [
       {
         text: fitWidth(
@@ -1504,21 +1556,13 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
     while (lines2.length < rows) lines2.push({ text: "", sgr: "" });
     return lines2.slice(0, rows);
   }
-  const node = map.nodes.find((n) => n.id === focusId);
-  if (!node) return void 0;
+  const { node, layerName, laneLabel } = focus;
   const neutral = isNeutralKind(map);
-  const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? node.layer;
   const [right, left] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
-  const withGlyph = (id) => {
-    const n = map.nodes.find((x) => x.id === id);
-    return n ? `${g(n.status)} ${n.label}` : id;
-  };
-  const withEdgeLabel = (base, label) => label !== void 0 ? `${base} (${label})` : base;
-  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withEdgeLabel(withGlyph(e.to), e.label));
-  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withEdgeLabel(withGlyph(e.from), e.label));
-  const pin = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
+  const uses = focus.uses.map(refText);
+  const usedBy = focus.usedBy.map(refText);
+  const pin = pinMark;
   const headGlyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0) ?? (unicode ? "\xB7" : ".") : g(node.status);
-  const laneLabel = node.lane !== void 0 ? map.lanes.find((l) => l.id === node.lane)?.label : void 0;
   const headParts = [
     `${headGlyph} ${node.label} [${node.id}]`,
     layerName,
