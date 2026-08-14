@@ -1259,6 +1259,7 @@ function parseInput(chunk) {
     else if (ch === "-") events.push({ kind: "zoom", delta: -1 });
     else if (ch === "	") events.push({ kind: "next-page" });
     else if (ch === "\x7F" || ch === "\b") events.push({ kind: "back" });
+    else if (ch === "f" || ch === "F") events.push({ kind: "follow-toggle" });
     else if (ch >= "1" && ch <= "9") events.push({ kind: "page", index: ch.charCodeAt(0) - "1".charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: "pan", ...KEY_PAN[ch] });
     i += 1;
@@ -1274,6 +1275,7 @@ function parseArgs(argv, cwd) {
   let color = true;
   let mouse = true;
   let page;
+  let follow = true;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case "--file":
@@ -1296,11 +1298,26 @@ function parseArgs(argv, cwd) {
       case "--no-mouse":
         mouse = false;
         break;
+      case "--no-follow":
+        follow = false;
+        break;
       default:
         break;
     }
   }
-  return { file, intervalMs, unicode, color, mouse, page };
+  return { file, intervalMs, unicode, color, mouse, page, follow };
+}
+function dividerRow(width, unicode, follow) {
+  const grip = unicode ? " \u22EF " : " ~ ";
+  let bar = (unicode ? "\u2500" : "-").repeat(width);
+  const gripAt = Math.max(0, Math.floor((width - grip.length) / 2));
+  if (width > grip.length + 2) bar = bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length);
+  if (follow) {
+    const tag = unicode ? " \u21E2 follow " : " > follow ";
+    const at = width - tag.length - 1;
+    if (at > gripAt + grip.length) bar = bar.slice(0, at) + tag + bar.slice(at + tag.length);
+  }
+  return bar;
 }
 function mostRecentPageFile(files, mtimeOf) {
   let best;
@@ -1678,6 +1695,7 @@ function main() {
   let activeFile;
   let firstScan = true;
   let pendingFocusFile = cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page);
+  let follow = cfg.follow;
   let lastTabSegments = [];
   let tabScroll = 0;
   let offsetX = 0;
@@ -1744,6 +1762,10 @@ function main() {
   };
   const handSwitch = (file) => {
     pendingFocusFile = void 0;
+    if (follow) {
+      follow = false;
+      flash = { text: "auto-follow off \u2014 press f to re-enable", until: Date.now() + 3e3 };
+    }
     switchPage(file);
   };
   const hitTest = (termX, termY) => {
@@ -1805,10 +1827,7 @@ function main() {
     } else {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
-    const grip = cfg.unicode ? " \u22EF " : " ~ ";
-    const bar = (cfg.unicode ? "\u2500" : "-").repeat(viewW);
-    const gripAt = Math.max(0, Math.floor((viewW - grip.length) / 2));
-    const separator = viewW > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
+    const separator = dividerRow(viewW, cfg.unicode, follow);
     const panelRows = [
       cfg.color ? `\x1B[90m${separator}${RESET}` : separator,
       ...panel.map(
@@ -1875,6 +1894,7 @@ function main() {
         pageViews.delete(known);
       }
     }
+    const changedFiles = [];
     for (const file of pageFiles) {
       let mtimeMs;
       try {
@@ -1886,6 +1906,7 @@ function main() {
       if (mtimeMs === entry?.mtimeMs) continue;
       const loaded = loadMapFile(file);
       if (loaded.ok) {
+        if (!firstScan) changedFiles.push(file);
         const becameFresh = !firstScan && file !== activeFile;
         pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
         if (file === activeFile) {
@@ -1905,9 +1926,15 @@ function main() {
     if (request !== void 0 && !(firstScan && pendingFocusFile !== void 0)) {
       pendingFocusFile = pageFilePath(cfg.file, request.page);
     }
+    let requestApplied = false;
     if (pendingFocusFile !== void 0 && pageFiles.includes(pendingFocusFile)) {
       if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
       pendingFocusFile = void 0;
+      requestApplied = true;
+    }
+    if (follow && !requestApplied && changedFiles.length > 0 && dragAnchor === void 0) {
+      const target = mostRecentPageFile(changedFiles, (f) => pageData.get(f)?.mtimeMs);
+      if (target !== activeFile) switchPage(target);
     }
     firstScan = false;
     if (activeFile === void 0 || !pageFiles.includes(activeFile)) {
@@ -2076,6 +2103,11 @@ function main() {
           case "back":
             if (climbBack()) dirty = true;
             break;
+          case "follow-toggle":
+            follow = !follow;
+            flash = { text: follow ? "auto-follow on" : "auto-follow off", until: Date.now() + 2500 };
+            dirty = true;
+            break;
         }
       }
       if (dirty) paint();
@@ -2110,6 +2142,7 @@ export {
   anchorOffsets,
   clampPanelRows,
   diveOrigin,
+  dividerRow,
   fitWidth,
   launchedAsEntry,
   liveRipples,

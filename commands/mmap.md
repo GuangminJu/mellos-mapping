@@ -37,12 +37,14 @@ Follow the platform-appropriate route:
    "mellos-mapping" — never a random window — and its output says which
    mode it used and why; relay that to the user.
 
-   Flags: `--page <slug>` names the page to show. When a watcher for the
-   project is ALREADY running, the launcher does not open another pane — it
-   retargets the existing one (output says `refocused=<slug>`, picked up
-   within a poll tick). So rerunning the launcher with a new `--page` is
-   also how you steer an open pane when the effort changes mid-session; do
-   that when you start work on a different page. `--window` skips the split
+   Flags: `--page <slug>` names the page to show first. Once open, the pane
+   AUTO-FOLLOWS the page being written (the map the agent is operating on),
+   so it tracks the work by itself; the user can toggle that with the `f`
+   key, and `--no-follow` starts it off. When a watcher for the project is
+   ALREADY running, the launcher does not open another pane — it retargets
+   the existing one (output says `refocused=<slug>`, picked up within a
+   poll tick); rerun with `--page` when the user asks to see a specific
+   page. `--window` skips the split
    and opens the map in the dedicated window on purpose — use it when the
    user prefers the map separate from the chat (second monitor, small
    screens). `--ascii` for fonts without box-drawing characters. `--force`

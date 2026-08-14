@@ -15,8 +15,12 @@
  *   left-drag      pan when the map is larger than the pane
  *   shift+wheel, hjkl / arrows, 0   scroll / nudge / reset pan+zoom
  *   Tab / Shift+Tab / 1-9 / click a tab   switch pages (parallel maps);
- *                  each page keeps its own pan/zoom/pin, background page
- *                  changes light their tab up instead of stealing the view
+ *                  each page keeps its own pan/zoom/pin
+ *   f              toggle auto-follow: on (default) the pane switches to the
+ *                  page last WRITTEN — the map the agent is operating on
+ *                  right now. A manual page switch turns follow off (the
+ *                  footer says so); with follow off, background page changes
+ *                  light their tab up instead of stealing the view
  *   wheel on the tab row / click ‹ ›   browse an overflowing tab strip
  *                  without switching pages
  *   q              quit
@@ -32,7 +36,7 @@
  * the last good picture stays up and the next poll retries.
  *
  * Usage: node watch.mjs [--file <path>] [--interval <ms>] [--ascii]
- *                       [--no-color] [--no-mouse] [--page <slug>]
+ *                       [--no-color] [--no-mouse] [--page <slug>] [--no-follow]
  */
 
 import { realpathSync, statSync } from 'node:fs';
@@ -78,6 +82,8 @@ interface WatchConfig {
   readonly mouse: boolean;
   /** Page to open on (undefined = pick a default); may not exist yet. */
   readonly page: PageId | undefined;
+  /** Start with auto-follow on (the pane switches to the page last written). */
+  readonly follow: boolean;
 }
 
 export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
@@ -87,6 +93,7 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
   let color = true;
   let mouse = true;
   let page: PageId | undefined;
+  let follow = true;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--file':
@@ -109,11 +116,34 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
       case '--no-mouse':
         mouse = false;
         break;
+      case '--no-follow':
+        follow = false;
+        break;
       default:
         break; // unknown flags are ignored; the pane must come up regardless
     }
   }
-  return { file, intervalMs, unicode, color, mouse, page };
+  return { file, intervalMs, unicode, color, mouse, page, follow };
+}
+
+/**
+ * The map/panel separator row: a full-width bar with the drag grip in the
+ * middle and — while auto-follow is on — a right-aligned follow tag, so the
+ * pane always shows whether it will jump to the next written page. Every
+ * glyph involved is single-column, so slicing by characters is slicing by
+ * columns. Colors belong to the caller.
+ */
+export function dividerRow(width: number, unicode: boolean, follow: boolean): string {
+  const grip = unicode ? ' ⋯ ' : ' ~ ';
+  let bar = (unicode ? '─' : '-').repeat(width);
+  const gripAt = Math.max(0, Math.floor((width - grip.length) / 2));
+  if (width > grip.length + 2) bar = bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length);
+  if (follow) {
+    const tag = unicode ? ' ⇢ follow ' : ' > follow ';
+    const at = width - tag.length - 1;
+    if (at > gripAt + grip.length) bar = bar.slice(0, at) + tag + bar.slice(at + tag.length);
+  }
+  return bar;
 }
 
 /**
@@ -786,6 +816,8 @@ function main(): void {
   let firstScan = true;
   /** A requested page whose file may not exist yet — shown the moment it appears. */
   let pendingFocusFile: string | undefined = cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page);
+  /** Auto-follow: the pane switches to the page last written. 'f' toggles. */
+  let follow = cfg.follow;
   let lastTabSegments: readonly TabSegment[] = [];
   /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
   let tabScroll = 0;
@@ -868,9 +900,17 @@ function main(): void {
     if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
   };
 
-  /** A page switch the USER made — it also withdraws any pending focus request. */
+  /**
+   * A page switch the USER made — it withdraws any pending focus request and
+   * turns auto-follow off: a pane that yanks the view back while its user is
+   * deliberately looking elsewhere would make follow its own enemy.
+   */
   const handSwitch = (file: string): void => {
     pendingFocusFile = undefined;
+    if (follow) {
+      follow = false;
+      flash = { text: 'auto-follow off — press f to re-enable', until: Date.now() + 3000 };
+    }
     switchPage(file);
   };
 
@@ -947,11 +987,8 @@ function main(): void {
     } else {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
-    // the separator doubles as the drag handle — mark its grip in the middle
-    const grip = cfg.unicode ? ' ⋯ ' : ' ~ ';
-    const bar = (cfg.unicode ? '─' : '-').repeat(viewW);
-    const gripAt = Math.max(0, Math.floor((viewW - grip.length) / 2));
-    const separator = viewW > grip.length + 2 ? bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length) : bar;
+    // the separator doubles as the drag handle and carries the follow tag
+    const separator = dividerRow(viewW, cfg.unicode, follow);
     const panelRows = [
       cfg.color ? `\x1b[90m${separator}${RESET}` : separator,
       ...panel.map((l) =>
@@ -1051,6 +1088,7 @@ function main(): void {
       }
     }
 
+    const changedFiles: string[] = []; // pages successfully (re)loaded this tick, startup scan excluded
     for (const file of pageFiles) {
       let mtimeMs: number | undefined;
       try {
@@ -1062,6 +1100,7 @@ function main(): void {
       if (mtimeMs === entry?.mtimeMs) continue;
       const loaded = loadMapFile(file);
       if (loaded.ok) {
+        if (!firstScan) changedFiles.push(file);
         // background pages light their tab up; the startup scan is not news
         const becameFresh = !firstScan && file !== activeFile;
         pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
@@ -1088,9 +1127,20 @@ function main(): void {
     if (request !== undefined && !(firstScan && pendingFocusFile !== undefined)) {
       pendingFocusFile = pageFilePath(cfg.file, request.page);
     }
+    let requestApplied = false;
     if (pendingFocusFile !== undefined && pageFiles.includes(pendingFocusFile)) {
       if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
       pendingFocusFile = undefined;
+      requestApplied = true;
+    }
+
+    // Auto-follow: the pane switches to the page last WRITTEN — the map being
+    // operated on right now. An explicit focus request outranks it this tick;
+    // a drag in progress skips it (the user is engaged with THIS page, and a
+    // missed switch is re-triggered by the writer's next save anyway).
+    if (follow && !requestApplied && changedFiles.length > 0 && dragAnchor === undefined) {
+      const target = mostRecentPageFile(changedFiles, (f) => pageData.get(f)?.mtimeMs)!;
+      if (target !== activeFile) switchPage(target);
     }
     firstScan = false;
 
@@ -1277,6 +1327,11 @@ function main(): void {
           }
           case 'back':
             if (climbBack()) dirty = true;
+            break;
+          case 'follow-toggle':
+            follow = !follow;
+            flash = { text: follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + 2500 };
+            dirty = true;
             break;
         }
       }

@@ -25,6 +25,7 @@ import {
   anchorOffsets,
   clampPanelRows,
   diveOrigin,
+  dividerRow,
   fitWidth,
   mapPanel,
   mostRecentPageFile,
@@ -498,5 +499,36 @@ describe('page selection', () => {
     expect(
       mostRecentPageFile(['default.json', 'alpha.json'], (f) => (f === 'alpha.json' ? 5 : undefined)),
     ).toBe('alpha.json');
+  });
+});
+
+describe('auto-follow', () => {
+  it('parseArgs defaults follow on; --no-follow starts it off', () => {
+    expect(parseArgs([], '/w').follow).toBe(true);
+    expect(parseArgs(['--no-follow'], '/w').follow).toBe(false);
+  });
+
+  it('dividerRow keeps the grip centered and right-aligns the follow tag', () => {
+    const on = dividerRow(40, true, true);
+    expect(on).toHaveLength(40);
+    expect(on).toContain(' ⋯ ');
+    expect(on.slice(-11, -1)).toBe(' ⇢ follow ');
+    const off = dividerRow(40, true, false);
+    expect(off).toHaveLength(40);
+    expect(off).not.toContain('follow');
+  });
+
+  it('dividerRow drops the tag when it would collide with the grip', () => {
+    const narrow = dividerRow(14, true, true);
+    expect(narrow).toHaveLength(14);
+    expect(narrow).not.toContain('follow');
+    expect(dividerRow(4, true, true)).toBe('────'); // too narrow even for the grip
+  });
+
+  it('dividerRow has a pure-ASCII face', () => {
+    const ascii = dividerRow(40, false, true);
+    expect(ascii).toHaveLength(40);
+    expect(ascii).toContain(' ~ ');
+    expect(ascii.slice(-11, -1)).toBe(' > follow ');
   });
 });
