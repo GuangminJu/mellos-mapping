@@ -64,6 +64,11 @@ describe('SGR mouse', () => {
     expect(parseInput('\x08').events).toEqual([{ kind: 'back' }]);
   });
 
+  it('maps f to the auto-follow toggle', () => {
+    expect(parseInput('f').events).toEqual([{ kind: 'follow-toggle' }]);
+    expect(parseInput('F').events).toEqual([{ kind: 'follow-toggle' }]);
+  });
+
   it('maps Tab / Shift+Tab to page cycling and digits 1-9 to page jumps', () => {
     expect(parseInput('\t').events).toEqual([{ kind: 'next-page' }]);
     expect(parseInput('\x1b[Z').events).toEqual([{ kind: 'prev-page' }]);

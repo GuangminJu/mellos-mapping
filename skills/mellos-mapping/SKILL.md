@@ -54,11 +54,15 @@ usually mean the server was never registered: have the user run
    use the dedicated window (some users want the map separate from the
    chat). Always pass `--page` with the page your effort lives on: without
    it the pane shows the most recently written page, not necessarily the one
-   under discussion. If a pane is already open, rerunning the launcher with
-   `--page` retargets it instead of opening another — do that whenever the
-   page you are working on changes. Declaring on a named page makes YOU
-   responsible for bringing the audience there: open or retarget the pane
-   yourself rather than telling the user which tab to click. Elsewhere run
+   under discussion. Once a pane is open, auto-follow (on by default) keeps
+   it on whatever page you write, so your declares and updates bring the
+   audience along by themselves; the user can turn that off with `f`, and a
+   pane with follow off is their deliberate choice — don't fight it.
+   Rerunning the launcher with `--page` retargets an open pane instead of
+   opening another; do that only when the user asks to see a specific page.
+   Declaring on a named page still makes YOU responsible for the audience at
+   OPEN time: open the pane with `--page` yourself rather than telling the
+   user which tab to click. Elsewhere run
    `node <plugin root>/dist/watch.mjs --page <slug>` from the project
    directory in a second terminal or split (this skill file lives under
    `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline

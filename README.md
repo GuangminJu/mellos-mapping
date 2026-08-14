@@ -130,9 +130,12 @@ To watch the live pane beside a Codex session on Windows, run
 terminal window hosting the session (or falls back to a dedicated
 "mellos-mapping" window; `--window` picks that on purpose). Add
 `--page <slug>` to open on a particular page — and with a pane already open,
-rerunning with `--page` retargets it instead of opening another. Elsewhere
-run `node <plugin root>/dist/watch.mjs` (same `--page` flag) from the
-project directory in a second terminal (or any terminal split).
+rerunning with `--page` retargets it instead of opening another. The pane
+auto-follows the page being written — the map the agent is operating on
+right now; press `f` to toggle that (a manual page switch also turns it
+off), or start with `--no-follow`. Elsewhere run
+`node <plugin root>/dist/watch.mjs` (same `--page` / `--no-follow` flags)
+from the project directory in a second terminal (or any terminal split).
 
 ## Any MCP client
 
