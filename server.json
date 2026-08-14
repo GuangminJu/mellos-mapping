@@ -6,12 +6,12 @@
     "url": "https://github.com/GuangminJu/mellos-mapping",
     "source": "github"
   },
-  "version": "0.14.0",
+  "version": "0.15.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "mellos-mapping",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "transport": {
         "type": "stdio"
       }
