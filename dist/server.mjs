@@ -22515,7 +22515,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.16.0";
+var SERVER_VERSION = "0.17.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var PAGE = ID.optional().describe(
   "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
@@ -22556,7 +22556,7 @@ function buildServer(stateFile) {
     "mmap_declare",
     {
       title: "Declare map structure",
-      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within a band \u2014 the zoomed-out view renders groups, so declare them for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
+      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
       inputSchema: {
         page: PAGE,
         title: external_exports.string().max(120).optional().describe("map title, e.g. the feature being built"),

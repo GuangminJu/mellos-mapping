@@ -38,7 +38,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.16.0';
+export const SERVER_VERSION = '0.17.0';
 
 const ID = z
   .string()
@@ -121,8 +121,9 @@ export function buildServer(stateFile: string): McpServer {
       title: 'Declare map structure',
       description:
         'Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups ' +
-        '(labeled subsystems within a band — the zoomed-out view renders groups, so declare them ' +
-        'for any map beyond a handful of nodes), add nodes, add dependency edges. Declare the ' +
+        '(labeled subsystems within ONE band — declare them when a single band grows crowded, ' +
+        'roughly five or more nodes in that band; a group must be a strict subset of its band, ' +
+        'and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the ' +
         'whole ghost design up front, then grow it as understanding deepens. Edges must point ' +
         'strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.',
       inputSchema: {
