@@ -48,39 +48,12 @@
  * box spec (size, border, content) and the whitespace geometry change.
  */
 
-import { groupStatus } from '../domain/ops.js';
-import type { DepEdge, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
+import type { MapNode, MellosMap, NodeStatus } from '../domain/types.js';
+import { type ZoomStep, ZOOM_DEFAULT, aggregateMap, flipForSequence, isNeutralKind, zoomMode } from '../semantics/semantics.js';
 
-/** One wheel tick on the zoom ladder; see module header. */
-export type ZoomStep = -4 | -3 | -2 | -1 | 0 | 1 | 2;
-
-export const ZOOM_MIN: ZoomStep = -4;
-export const ZOOM_MAX: ZoomStep = 2;
-export const ZOOM_DEFAULT: ZoomStep = 0;
-
-export function clampZoom(n: number): ZoomStep {
-  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n))) as ZoomStep;
-}
-
-/** What the footer shows: a percentage while scaling, a mode name at the ends. */
-export function zoomLabel(zoom: ZoomStep): string {
-  switch (zoom) {
-    case 2:
-      return 'detail+';
-    case 1:
-      return 'detail';
-    case 0:
-      return '100%';
-    case -1:
-      return '85%';
-    case -2:
-      return '70%';
-    case -3:
-      return '55%';
-    case -4:
-      return 'overview';
-  }
-}
+// The view-semantics vocabulary (zoom ladder, neutral-kind rule) is defined in
+// ../semantics and re-exported here so terminal consumers keep one import site.
+export { type ZoomStep, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, clampZoom, isNeutralKind, zoomLabel } from '../semantics/semantics.js';
 
 export interface RenderOptions {
   /** Emit ANSI color codes. */
@@ -456,11 +429,6 @@ export function kindGlyph(kind: string, unicode: boolean): string | undefined {
   return pair === undefined ? undefined : unicode ? pair[0] : pair[1];
 }
 
-/** Documentation kinds render neutrally: no status skins, no progress counts. */
-export function isNeutralKind(map: MellosMap): boolean {
-  return map.kind !== undefined && map.kind !== 'dev';
-}
-
 /** Plain solid box for documentation diagrams — presence, not progress. */
 function neutralSkin(unicode: boolean): BoxSkin {
   return unicode
@@ -510,21 +478,25 @@ interface ZoomGeometry {
 }
 
 function zoomGeometry(zoom: ZoomStep): ZoomGeometry {
+  // WHICH steps switch mode is semantics (zoomMode); this table owns only the
+  // whitespace and label budgets each step buys in terminal cells.
+  const m = zoomMode(zoom);
+  const mode = m === 'overview' ? 'constellation' : m;
   switch (zoom) {
     case 2:
-      return { mode: 'detail', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: 'detail', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
-      return { mode: 'boxes', scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
-      return { mode: 'boxes', scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -2:
-      return { mode: 'boxes', scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
     case -3:
-      return { mode: 'boxes', scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
     case -4:
-      return { mode: 'constellation', scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
 
@@ -647,54 +619,6 @@ export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: V
   };
 }
 
-/**
- * The derived coarse picture the far zoom renders when the map declares
- * groups: each group becomes ONE labeled node (status derived from members,
- * label carrying done/total), ungrouped nodes stay themselves, and edges
- * collapse onto representatives (intra-group wiring disappears into the
- * box). Derived for rendering only — never persisted. A map without groups
- * returns undefined and falls back to the anonymous glyph constellation.
- */
-function aggregateMap(map: MellosMap): MellosMap | undefined {
-  if (map.groups.length === 0) return undefined;
-  // Group ids join the node-id slug space inside this derived value; the
-  // brands only guard PERSISTED maps, and this one never leaves the renderer.
-  const representative = new Map<string, string>();
-  for (const n of map.nodes) representative.set(n.id as string, (n.group ?? n.id) as string);
-
-  const nodes: MapNode[] = map.groups.map((g) => {
-    const members = map.nodes.filter((n) => n.group === g.id);
-    const done = members.filter((n) => n.status === 'done').length;
-    return {
-      id: g.id as unknown as NodeId,
-      // neutral kinds document structure, not progress — no member counts
-      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
-      layer: g.layer,
-      status: groupStatus(map, g.id),
-    };
-  });
-  for (const n of map.nodes) if (n.group === undefined) nodes.push(n);
-
-  const seen = new Set<string>();
-  const edges: DepEdge[] = [];
-  for (const e of map.edges) {
-    const from = representative.get(e.from as string)!;
-    const to = representative.get(e.to as string)!;
-    if (from === to || seen.has(`${from}->${to}`)) continue;
-    seen.add(`${from}->${to}`);
-    edges.push({ from: from as NodeId, to: to as NodeId });
-  }
-  return {
-    ...(map.title !== undefined ? { title: map.title } : {}),
-    ...(map.kind !== undefined ? { kind: map.kind } : {}),
-    layers: map.layers,
-    groups: [],
-    lanes: map.lanes,
-    nodes,
-    edges,
-  };
-}
-
 /** Geometry for the aggregated far zoom: tight chrome, but FULL labels — the point is names. */
 const AGGREGATE_GEO: ZoomGeometry = {
   mode: 'boxes',
@@ -706,24 +630,6 @@ const AGGREGATE_GEO: ZoomGeometry = {
   barGap: 1,
   bandCounts: false,
 };
-
-/**
- * Sequence pages read like the classic diagram: time flows DOWNWARD, the
- * earliest step right under the participant headers. The stored map keeps
- * rank 0 = earliest with edges pointing later -> earlier ("later stands on
- * earlier"); this derived value inverts the ranks and reverses the edges so
- * the unchanged top-down machinery draws top-down time — each wire now runs
- * from the sender's moment down into the receiver's. Derived for rendering
- * only, never persisted (same contract as aggregateMap).
- */
-function flipForSequence(map: MellosMap): MellosMap {
-  if (map.kind !== 'sequence') return map;
-  return {
-    ...map,
-    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
-    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...(e.label !== undefined ? { label: e.label } : {}) })),
-  };
-}
 
 function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
   const oriented = flipForSequence(map);
