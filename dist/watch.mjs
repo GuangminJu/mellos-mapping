@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 
 // src/watch/watch.ts
 import { realpathSync, statSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { dirname as dirname2, join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // src/domain/types.ts
@@ -1535,19 +1535,8 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
   }
   return lines.slice(0, rows);
 }
-var SPLASH_FONT = {
-  M: ["#   #", "## ##", "# # #", "#   #", "#   #"],
-  E: ["####", "#", "###", "#", "####"],
-  L: ["#", "#", "#", "#", "####"],
-  O: [" ###", "#   #", "#   #", "#   #", " ###"],
-  S: [" ####", "#", " ###", "    #", "####"],
-  A: [" ###", "#   #", "#####", "#   #", "#   #"],
-  P: ["####", "#   #", "####", "#", "#"],
-  I: ["###", " #", " #", " #", "###"],
-  N: ["#   #", "##  #", "# # #", "#  ##", "#   #"],
-  G: [" ####", "#", "#  ##", "#   #", " ###"]
-};
-var SPLASH_ROWS = 5;
+var WATER_ROWS = 7;
+var WATER_COLS_MAX = 60;
 var SPLASH_SHADES = {
   unicode: ["\u2591", "\u2591", "\u2592", "\u2592", "\u2593", "\u2593", "\u2588", "\u2588"],
   ascii: [".", ".", ":", ":", "=", "=", "#", "#"]
@@ -1557,23 +1546,24 @@ var SPINNER_FRAMES = {
   unicode: ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"],
   ascii: ["|", "/", "-", "\\"]
 };
-function wordArt(word) {
-  const glyphs = [...word.toUpperCase()].map((ch) => SPLASH_FONT[ch]).filter((g) => g !== void 0);
-  const widths = glyphs.map((g) => Math.max(...g.map((r) => r.length)));
-  const rows = [];
-  for (let r = 0; r < SPLASH_ROWS; r++) {
-    rows.push(glyphs.map((g, i) => (g[r] ?? "").padEnd(widths[i], " ")).join(" "));
-  }
-  return rows;
+function elapsedLabel(ms) {
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const two = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${two(m % 60)}:${two(s % 60)}` : `${m}:${two(s % 60)}`;
 }
-function splashArt() {
-  const words = [wordArt("MELLOS"), wordArt("MAPPING")];
-  const width = Math.max(...words.flat().map((r) => r.length));
-  const centered = words.map((rows) => {
-    const own = Math.max(...rows.map((r) => r.length));
-    return rows.map((r) => " ".repeat(Math.floor((width - own) / 2)) + r);
-  });
-  return [...centered[0], "", ...centered[1]];
+function waitingInfo(s, width) {
+  const w = Math.max(1, width);
+  const clock = s.elapsedMs !== void 0 ? ` \xB7 waiting ${elapsedLabel(s.elapsedMs)}` : "";
+  const lines = [
+    `watching  ${s.defaultFile}`,
+    `      and ${join2(s.pagesDir, "*.json")}`,
+    `polling every ${s.intervalMs} ms${clock}`
+  ];
+  for (const b of s.broken) lines.push(`! ${b}`);
+  lines.push("the map appears at the first mmap_declare");
+  return lines.map((l) => fitWidth(l, w));
 }
 var WAVE_INTERVAL = 18;
 var WAVE_LIFETIME = 64;
@@ -1624,39 +1614,41 @@ function waveAt(ripples, x, y) {
 function waveLevel(value) {
   return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
 }
-function splashFrame(notice, frame, width, height, unicode, color) {
-  const art = splashArt();
-  const artWidth = Math.max(...art.map((r) => r.length));
-  if (width < artWidth + 2 || height < art.length + 2) return void 0;
+function splashFrame(notice, info, frame, width, height, unicode, color) {
+  const fieldW = Math.min(width - 4, WATER_COLS_MAX);
+  if (fieldW < 24 || height < WATER_ROWS + info.length + 3) return void 0;
   const mode = unicode ? "unicode" : "ascii";
   const shades = SPLASH_SHADES[mode];
-  const solid = shades[shades.length - 1];
-  const indent = " ".repeat(Math.floor((width - artWidth) / 2));
-  const ripples = liveRipples(frame, artWidth, art.length);
-  const inkOf = (x, y) => {
-    const level = waveLevel(waveAt(ripples, x, y));
-    return color ? `38;5;${WAVE_RAMP[WAVE_LEVELS + level]}` : shades[Math.abs(level)];
-  };
-  const paintRow = (row, y) => {
-    const cells = [...row].map((ch, x) => ch === "#" ? inkOf(x, y) : void 0);
+  const indent = " ".repeat(Math.max(0, Math.floor((width - fieldW) / 2)));
+  const ripples = liveRipples(frame, fieldW, WATER_ROWS);
+  const paintRow = (y) => {
+    const levels = Array.from({ length: fieldW }, (_, x) => waveLevel(waveAt(ripples, x, y)));
     let out = "";
-    for (let i = 0; i < cells.length; ) {
-      const cell = cells[i];
+    for (let i = 0; i < fieldW; ) {
+      const level = levels[i];
       let j = i;
-      while (j < cells.length && cells[j] === cell) j++;
-      if (cell === void 0) out += " ".repeat(j - i);
-      else out += color ? `\x1B[${cell}m${solid.repeat(j - i)}${RESET}` : cell.repeat(j - i);
+      while (j < fieldW && levels[j] === level) j++;
+      if (level === 0) out += " ".repeat(j - i);
+      else {
+        const ink = shades[Math.abs(level)].repeat(j - i);
+        out += color ? `\x1B[38;5;${WAVE_RAMP[WAVE_LEVELS + level]}m${ink}${RESET}` : ink;
+      }
       i = j;
     }
     return out;
   };
+  const dim = (s) => color ? `\x1B[90m${s}${RESET}` : s;
   const spinner = SPINNER_FRAMES[mode];
   const status = fitWidth(`${spinner[frame % spinner.length]} ${notice}`, Math.max(1, width - 2));
   const statusIndent = " ".repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
+  const infoWidth = Math.max(0, ...info.map((l) => displayWidth(l)));
+  const infoIndent = " ".repeat(Math.max(0, Math.floor((width - infoWidth) / 2)));
   const block = [
-    ...art.map((row, y) => row.trim() === "" ? "" : indent + paintRow(row, y)),
+    ...Array.from({ length: WATER_ROWS }, (_, y) => indent + paintRow(y)),
     "",
-    statusIndent + (color ? `\x1B[90m${status}${RESET}` : status)
+    statusIndent + dim(status),
+    "",
+    ...info.map((l) => infoIndent + dim(l))
   ];
   return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ""), ...block];
 }
@@ -1685,8 +1677,10 @@ function main() {
   let lastFrame = "";
   let spinnerFrame = 0;
   let splashTick = 0;
+  const startedAt = Date.now();
+  const standbyNotice = "waiting for the first mmap_declare ...";
   let map;
-  let notice = `waiting for ${cfg.file} ...`;
+  let notice = standbyNotice;
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
   let pageFiles = [cfg.file];
@@ -1755,7 +1749,7 @@ function main() {
     const entry = pageData.get(file);
     if (entry !== void 0 && entry.fresh) pageData.set(file, { ...entry, fresh: false });
     map = entry?.map;
-    notice = map === void 0 ? `waiting for ${file} ...` : "";
+    notice = map !== void 0 ? "" : entry?.error ?? (file === cfg.file ? standbyNotice : `waiting for ${file} ...`);
     const top = topFiles();
     const tabIndex = top.indexOf(file);
     if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
@@ -1813,7 +1807,17 @@ function main() {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      body = (interactive ? splashFrame(notice, splashTick, viewW, viewH, cfg.unicode, cfg.color) : void 0) ?? [fitWidth(notice, viewW)];
+      const info = waitingInfo(
+        {
+          defaultFile: cfg.file,
+          pagesDir: join2(dirname2(cfg.file), PAGES_DIR_NAME),
+          intervalMs: cfg.intervalMs,
+          elapsedMs: interactive ? Date.now() - startedAt : void 0,
+          broken: [...pageData.values()].flatMap((e) => e.map === void 0 && e.error !== void 0 ? [e.error] : [])
+        },
+        Math.max(1, viewW - 2)
+      );
+      body = (interactive ? splashFrame(notice, info, splashTick, viewW, viewH, cfg.unicode, cfg.color) : void 0) ?? [fitWidth(notice, viewW), "", ...info.map((l) => fitWidth(` ${l}`, viewW))];
     }
     if (notice !== "" && map !== void 0) {
       body[body.length - 1] = fitWidth(`  ${notice}`, viewW);
@@ -1917,8 +1921,15 @@ function main() {
           flash = { text: `${cfg.unicode ? "\u229E " : ""}${title} updated`, until: Date.now() + 4e3 };
         }
       } else if (loaded.error.kind === "malformed-json") {
+        pageData.set(file, {
+          map: entry?.map,
+          mtimeMs: entry?.mtimeMs ?? -1,
+          fresh: entry?.fresh ?? false,
+          error: describeStoreError(loaded.error)
+        });
+        if (file === activeFile && entry?.map === void 0) notice = describeStoreError(loaded.error);
       } else {
-        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false });
+        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describeStoreError(loaded.error) });
         if (file === activeFile) notice = describeStoreError(loaded.error);
       }
     }
@@ -2143,6 +2154,7 @@ export {
   clampPanelRows,
   diveOrigin,
   dividerRow,
+  elapsedLabel,
   fitWidth,
   launchedAsEntry,
   liveRipples,
@@ -2153,14 +2165,13 @@ export {
   pageTabRow,
   panelRowsFromDividerY,
   parseArgs,
-  splashArt,
   splashFrame,
   tabScrollFor,
   topLevelFiles,
   usableColumns,
+  waitingInfo,
   waveAt,
   waveHash,
   waveLevel,
-  wordArt,
   wrapWidth
 };

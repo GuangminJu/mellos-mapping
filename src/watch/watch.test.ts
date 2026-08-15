@@ -37,16 +37,16 @@ import {
   type Ripple,
   WAVE_LEVELS,
   WAVE_NUMBER,
+  elapsedLabel,
   liveRipples,
-  splashArt,
   splashFrame,
   tabScrollFor,
+  waitingInfo,
   topLevelFiles,
   usableColumns,
   waveAt,
   waveHash,
   waveLevel,
-  wordArt,
   wrapWidth,
 } from './watch.js';
 
@@ -355,20 +355,44 @@ describe('zoom anchoring', () => {
 describe('standby splash', () => {
   const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
 
-  it('sets every word row to the same width in the block font', () => {
-    const rows = wordArt('MELLOS');
-    expect(rows).toHaveLength(5);
-    expect(new Set(rows.map((r) => r.length)).size).toBe(1);
-    expect(rows.join('')).toContain('#');
+  it('formats elapsed time as m:ss below an hour, h:mm:ss beyond', () => {
+    expect(elapsedLabel(5_000)).toBe('0:05');
+    expect(elapsedLabel(192_000)).toBe('3:12');
+    expect(elapsedLabel(3_723_000)).toBe('1:02:03');
+    expect(elapsedLabel(-50)).toBe('0:00');
   });
 
-  it('stacks both words centered on each other, blank line between', () => {
-    const art = splashArt();
-    expect(art).toHaveLength(11);
-    expect(art[5]).toBe('');
-    // MAPPING is the wider word, so it sets the block width and starts flush
-    expect(art[6]!.startsWith(' ')).toBe(false);
-    expect(art[0]!.startsWith(' ')).toBe(true);
+  it('waitingInfo names both watched paths, the poll rate, and the exit condition', () => {
+    const info = waitingInfo(
+      {
+        defaultFile: 'D:\\p\\.claude\\mellos-mapping.json',
+        pagesDir: 'D:\\p\\.claude\\mellos-mapping.pages',
+        intervalMs: 250,
+        elapsedMs: 192_000,
+        broken: [],
+      },
+      120,
+    );
+    expect(info[0]).toBe('watching  D:\\p\\.claude\\mellos-mapping.json');
+    expect(info[1]).toContain('mellos-mapping.pages');
+    expect(info[1]).toContain('*.json');
+    expect(info[2]).toBe('polling every 250 ms · waiting 3:12');
+    expect(info.at(-1)).toBe('the map appears at the first mmap_declare');
+  });
+
+  it('waitingInfo drops the clock when elapsedMs is omitted, so a piped run never re-streams', () => {
+    const info = waitingInfo({ defaultFile: 'm.json', pagesDir: 'pages', intervalMs: 250, broken: [] }, 80);
+    expect(info[2]).toBe('polling every 250 ms');
+    expect(info.join('\n')).not.toContain('waiting');
+  });
+
+  it('waitingInfo surfaces files that exist but refuse to load, clipped to width', () => {
+    const info = waitingInfo(
+      { defaultFile: 'm.json', pagesDir: 'pages', intervalMs: 250, elapsedMs: 0, broken: ['map file m.json is not valid JSON: unexpected token'] },
+      24,
+    );
+    expect(info.some((l) => l.startsWith('! map file m.json'))).toBe(true);
+    for (const l of info) expect(l.length).toBeLessThanOrEqual(24);
   });
 
   it('rolls the same corners and jitters on every run', () => {
@@ -414,58 +438,50 @@ describe('standby splash', () => {
     expect(waveLevel(-0.5)).toBe(-2);
   });
 
-  it('gives up on a pane too small for the art', () => {
-    expect(splashFrame('waiting', 0, 20, 40, true, true)).toBeUndefined();
-    expect(splashFrame('waiting', 0, 80, 6, true, true)).toBeUndefined();
+  const INFO = ['watching  m.json', 'polling every 250 ms'];
+
+  it('gives up on a pane too small for water plus diagnostics', () => {
+    expect(splashFrame('waiting', INFO, 0, 20, 40, true, true)).toBeUndefined();
+    expect(splashFrame('waiting', INFO, 0, 80, 8, true, true)).toBeUndefined();
   });
 
-  it('centers the art and the notice inside the viewport', () => {
-    const frame = splashFrame('waiting for map.json', 0, 60, 30, true, false)!;
+  it('centers the notice and the diagnostics under the water', () => {
+    const frame = splashFrame('waiting for the first mmap_declare ...', INFO, 0, 60, 30, true, false)!;
     expect(frame.length).toBeLessThanOrEqual(30);
-    const notice = frame.at(-1)!;
-    expect(notice).toContain('waiting for map.json');
-    expect(notice.startsWith(' ')).toBe(true);
-    const inked = frame.filter((r) => /[░▒▓█]/.test(r));
-    expect(inked).toHaveLength(10); // 5 rows per word, blank divider excluded
+    const text = frame.join('\n');
+    expect(text).toContain('waiting for the first mmap_declare');
+    expect(text).toContain('watching  m.json');
+    expect(text).toContain('polling every 250 ms');
+    const noticeRow = frame.find((r) => r.includes('waiting for'))!;
+    expect(noticeRow.startsWith(' ')).toBe(true);
   });
 
   it('animates without color by shading the ink instead', () => {
-    const a = splashFrame('waiting', 40, 60, 30, false, false)!.join('\n');
-    const b = splashFrame('waiting', 90, 60, 30, false, false)!.join('\n');
+    const a = splashFrame('waiting', INFO, 40, 60, 30, false, false)!.join('\n');
+    const b = splashFrame('waiting', INFO, 90, 60, 30, false, false)!.join('\n');
     expect(a).not.toContain('\x1b[');
     expect(a).not.toBe(b);
-    expect(a).toMatch(/[#=:.]/);
+    expect(a + b).toMatch(/[#=:.]/);
   });
 
-  it('rides the 256-color ramps and keeps the ink solid when color is on', () => {
-    const art = (frame: number): string[] => splashFrame('waiting', frame, 60, 30, true, true)!.slice(0, -1);
-    const a = art(40).join('\n');
-    const b = art(90).join('\n');
-    expect(a).toContain('\x1b[38;5;');
-    expect(a).not.toBe(b);
-    // color mode never shades: stripped of ANSI the two art frames are identical
-    expect(strip(a)).toBe(strip(b));
-  });
-
-  it('paints only from the one ramp — no color can appear off-palette', () => {
+  it('colors from the one ramp only, still water blank, texture riding the waves', () => {
     const ramp = new Set([17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195]);
+    const a = splashFrame('waiting', INFO, 40, 60, 30, true, true)!.join('\n');
+    const b = splashFrame('waiting', INFO, 90, 60, 30, true, true)!.join('\n');
+    expect(a).toContain('\x1b[38;5;');
+    expect(strip(a)).not.toBe(strip(b)); // shade texture moves with the rings
     for (let f = 0; f < 200; f += 7) {
-      const codes = splashFrame('waiting', f, 60, 30, true, true)!.join('\n').matchAll(/38;5;(\d+)/g);
+      const codes = splashFrame('waiting', INFO, f, 60, 30, true, true)!.join('\n').matchAll(/38;5;(\d+)/g);
       for (const m of codes) expect(ramp.has(Number(m[1]))).toBe(true);
     }
   });
 
-  it('reads as a gradient, not confetti: touching ink cells stay close on the ramp', () => {
-    // Measured on the field itself — consecutive color runs in a painted row
-    // can sit cells apart, because letter strokes have gaps between them.
-    const art = splashArt();
-    const width = Math.max(...art.map((r) => r.length));
+  it('reads as a gradient, not confetti: neighbouring water cells stay close on the ramp', () => {
     let widest = 0;
     for (let f = 0; f < 400; f++) {
-      const rings = liveRipples(f, width, art.length);
-      for (const [y, row] of art.entries()) {
-        for (let x = 1; x < row.length; x++) {
-          if (row[x] !== '#' || row[x - 1] !== '#') continue;
+      const rings = liveRipples(f, 60, 7); // the water field's dimensions
+      for (let y = 0; y < 7; y++) {
+        for (let x = 1; x < 60; x++) {
           const step = Math.abs(waveLevel(waveAt(rings, x, y)) - waveLevel(waveAt(rings, x - 1, y)));
           widest = Math.max(widest, step);
         }
