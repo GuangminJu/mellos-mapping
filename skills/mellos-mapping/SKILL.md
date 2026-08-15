@@ -7,12 +7,14 @@ description: >-
   of work. Declare the design as ghost nodes first, then light nodes up
   bottom-to-top as they are built and verified. Also use when the user asks
   for a mellos map, /mmap, a dependency map, or wants to see development
-  progress as a picture.
+  progress as a picture. The project's mmap_setup policy decides how eager
+  mapping is — always / complex tasks only / on-request.
 ---
 
 # Mellos Mapping — the map discipline
 
-Four MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`)
+Five MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`,
+`mmap_setup`)
 maintain a **Mellos map**: a layered dependency map of the system under
 construction, persisted in `.claude/mellos-mapping.json` (default page) plus
 `.claude/mellos-mapping.pages/<slug>.json` (named pages) and rendered live in
@@ -26,9 +28,24 @@ spelled out here. Report honestly — an unflattering map is doing its job.
 
 ## When to open a map
 
-Open a map for work with real structure: several interacting modules, a new
-subsystem, layered refactoring. Skip it for trivial edits — a map of one node
-is noise. When unsure, ask.
+The PROJECT chooses how eager mapping is. Before the first map decision of a
+session, call `mmap_setup` (no arguments) to learn the policy:
+
+- `always` — map every structured task: workflows, designs, architecture,
+  technical dependencies. Small effort, small map — but a map.
+- `complex` — map only medium or complex tasks: several interacting modules,
+  a new subsystem, layered refactoring — roughly an hour of work or more.
+  Skip trivial edits; a map of one node is noise. When unsure, ask.
+- `on-request` — open a map only when the user explicitly asks.
+
+If the reply says the policy is not set, ask the USER to choose — present the
+three options, never pick for them — then persist the answer with
+`mmap_setup {policy}`. Ask once per project: the choice is saved in
+`.claude/mellos-mapping.config.json`, and `/mmap setup` reruns the question
+whenever the user wants to change it. Until they answer, act as `complex`.
+Two things always outrank the policy: an explicit user request for a map
+wins under any policy, and a map that is already open keeps getting honest
+updates whatever the policy says.
 
 Caught mid-implementation without a map on work that deserves one? Stop and
 declare it with honest statuses (written-but-unverified is `in-progress`, not

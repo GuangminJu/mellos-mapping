@@ -242,6 +242,19 @@ npx -y -p mellos-mapping mellos-mapping-watch
 | `mmap_update` | 记录进度：`planned → in-progress → done`（附证据）、`regressed`、分组/泳道归属、节点 kind |
 | `mmap_remove` | 修订：删除边、节点、分组、泳道、空层 |
 | `mmap_view` | 把当前地图渲染成文本，直接在对话里看（可选 `zoom` 参数） |
+| `mmap_setup` | 查/设本项目的建图策略——什么时候开地图 |
+
+### Setup：选择什么时候建图
+
+每个项目选一次建图的积极程度，用 `/mmap setup`（或 AI 第一次 declare 时，
+工具响应会引导它来问你）：
+
+- `always` —— 任何有结构的任务都建图：流程、设计、架构、技术依赖。
+- `complex` —— 只在中等或复杂任务时建图（未配置时的默认行为）。
+- `on-request` —— 只在你明确要求时建图。
+
+选择保存在 `.claude/mellos-mapping.config.json`，用于引导 AI；它从不阻止
+工具本身——无论什么策略，明确要求建图永远有效。
 
 工具强制的结构不变量：层按 rank 构成全序；每个节点恰好属于一层；边**严格
 向下**——因此图从构造上就是无环的；节点不能依赖同层兄弟（如果 A 需要

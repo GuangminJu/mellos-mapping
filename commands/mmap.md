@@ -1,10 +1,19 @@
 ---
 description: Open the live Mellos map in a terminal split pane beside this session
-argument-hint: "[--page <slug>] [--window] [--ascii]"
+argument-hint: "[setup] [--page <slug>] [--window] [--ascii]"
 allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 ---
 
-Open the live Mellos map watcher for this project in a separate terminal pane.
+If `$ARGUMENTS` contains `setup`, do NOT open the pane. Run the setup
+questionnaire instead: call `mmap_setup` (no arguments) to read the current
+policy, then ask the user which mode they want — `always` (map every
+structured task: workflows, designs, architecture, technical dependencies),
+`complex` (only medium or complex tasks), `on-request` (only when explicitly
+asked) — using AskUserQuestion where available, mentioning the current
+policy if one is set. Persist their choice with `mmap_setup {policy}` and
+confirm what was saved and where. Then stop.
+
+Otherwise: open the live Mellos map watcher for this project in a separate terminal pane.
 The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`. The store is
 MULTI-PAGE: the default page lives at `.claude/mellos-mapping.json` and named
 pages at `.claude/mellos-mapping.pages/<slug>.json` — the watcher takes the

@@ -265,6 +265,21 @@ When a hidden sub-map changes in the background, the footer says so.
 | `mmap_update` | Record progress: `planned → in-progress → done` (+evidence), `regressed`, group/lane membership, node kind |
 | `mmap_remove` | Revise: drop edges, nodes, groups, lanes, empty bands |
 | `mmap_view` | Render the current map as text inline (optional `zoom`) |
+| `mmap_setup` | Get/set the project's mapping policy — when maps open |
+
+### Setup: choose when maps open
+
+Each project chooses how eager mapping is, once, via `/mmap setup` (or the
+first time the assistant declares a map — the reply nudges it to ask you):
+
+- `always` — map every structured task: workflows, designs, architecture,
+  technical dependencies.
+- `complex` — map only medium or complex tasks (the default until configured).
+- `on-request` — map only when you explicitly ask.
+
+The choice is stored in `.claude/mellos-mapping.config.json` and guides the
+assistant; it never blocks the tools, and asking for a map explicitly always
+works under any policy.
 
 Structural invariants enforced by the tools: layers form a total order by
 rank; every node lives in exactly one layer; edges point **strictly
