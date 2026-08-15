@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.19.0",
+  "version": "0.20.0-dev.0",
   "mcpName": "io.github.GuangminJu/mellos-mapping",
   "description": "A live layered dependency map for bottom-up development — MCP server + terminal pane. Ghost the design first, then light nodes up from the bottom as they are built and verified.",
   "type": "module",
@@ -28,12 +28,30 @@
     "mellos-mapping-watch": "dist/watch.mjs"
   },
   "exports": {
-    "./domain/types": { "types": "./lib/domain/types.d.ts", "default": "./lib/domain/types.js" },
-    "./domain/ops": { "types": "./lib/domain/ops.d.ts", "default": "./lib/domain/ops.js" },
-    "./format": { "types": "./lib/store/format.d.ts", "default": "./lib/store/format.js" },
-    "./store": { "types": "./lib/store/store.d.ts", "default": "./lib/store/store.js" },
-    "./semantics": { "types": "./lib/semantics/semantics.d.ts", "default": "./lib/semantics/semantics.js" },
-    "./render": { "types": "./lib/render/render.d.ts", "default": "./lib/render/render.js" },
+    "./domain/types": {
+      "types": "./lib/domain/types.d.ts",
+      "default": "./lib/domain/types.js"
+    },
+    "./domain/ops": {
+      "types": "./lib/domain/ops.d.ts",
+      "default": "./lib/domain/ops.js"
+    },
+    "./format": {
+      "types": "./lib/store/format.d.ts",
+      "default": "./lib/store/format.js"
+    },
+    "./store": {
+      "types": "./lib/store/store.d.ts",
+      "default": "./lib/store/store.js"
+    },
+    "./semantics": {
+      "types": "./lib/semantics/semantics.d.ts",
+      "default": "./lib/semantics/semantics.js"
+    },
+    "./render": {
+      "types": "./lib/render/render.d.ts",
+      "default": "./lib/render/render.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
