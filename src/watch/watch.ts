@@ -40,7 +40,7 @@
  */
 
 import { realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { groupStatus, mapStatus } from '../domain/ops.js';
@@ -59,6 +59,7 @@ import {
   zoomLabel,
 } from '../render/render.js';
 import {
+  PAGES_DIR_NAME,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
   describeStoreError,
@@ -543,34 +544,25 @@ export function nodePanel(
 }
 
 /**
- * The standby splash — what the pane shows before any map exists.
+ * The standby state — open water and diagnostics.
  *
- * A 5-row block font, two stacked words, lit by ripples. Waves are born at
- * a randomized corner every WAVE_INTERVAL frames and expand as damped rings;
- * the ink of a cell is the SUM of every live ring over it, so overlapping
- * waves interfere for real — crests reinforce, a crest meeting a trough
- * cancels back to still water. Surface height drives one continuous
- * indigo→cyan→white ramp, and the gain is set so the top of that ramp is
- * out of reach for a lone ring: the near-white glare only happens where
- * waves actually pile up. Without color the same field shades the ink
- * instead, so a --no-color --ascii pane still ripples.
+ * Before any map exists the pane used to spell the plugin name in a block
+ * font; field feedback preferred information over decoration, so the letters
+ * are gone. The ripple engine (community PR#1) now paints bare water: rings
+ * born at a randomized corner every WAVE_INTERVAL frames expand as damped
+ * fronts, the ink of a cell is the SUM of every live ring over it — crests
+ * reinforce, a crest meeting a trough cancels — and STILL water stays blank,
+ * so only the moving interference pattern shows. Surface height drives one
+ * continuous indigo→cyan→white ramp; without color the same field shades the
+ * ink instead, so a --no-color --ascii pane still ripples. Below the water:
+ * the spinner line and the waiting diagnostics (what is being watched, for
+ * how long, and any file that exists but refuses to load).
  *
  * Everything here is a pure function of `frame` — no Math.random, so the
  * animation is reproducible and testable.
  */
-const SPLASH_FONT: Readonly<Record<string, readonly string[]>> = {
-  M: ['#   #', '## ##', '# # #', '#   #', '#   #'],
-  E: ['####', '#', '###', '#', '####'],
-  L: ['#', '#', '#', '#', '####'],
-  O: [' ###', '#   #', '#   #', '#   #', ' ###'],
-  S: [' ####', '#', ' ###', '    #', '####'],
-  A: [' ###', '#   #', '#####', '#   #', '#   #'],
-  P: ['####', '#   #', '####', '#', '#'],
-  I: ['###', ' #', ' #', ' #', '###'],
-  N: ['#   #', '##  #', '# # #', '#  ##', '#   #'],
-  G: [' ####', '#', '#  ##', '#   #', ' ###'],
-};
-const SPLASH_ROWS = 5;
+const WATER_ROWS = 7;
+const WATER_COLS_MAX = 60;
 
 /** Ink shades by |level| 0..WAVE_LEVELS for the no-color path. */
 const SPLASH_SHADES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
@@ -589,28 +581,45 @@ const SPINNER_FRAMES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> =
   ascii: ['|', '/', '-', '\\'],
 };
 
-/** One word in the block font: SPLASH_ROWS lines of '#' ink on spaces. */
-export function wordArt(word: string): string[] {
-  const glyphs = [...word.toUpperCase()]
-    .map((ch) => SPLASH_FONT[ch])
-    .filter((g): g is readonly string[] => g !== undefined);
-  const widths = glyphs.map((g) => Math.max(...g.map((r) => r.length)));
-  const rows: string[] = [];
-  for (let r = 0; r < SPLASH_ROWS; r++) {
-    rows.push(glyphs.map((g, i) => (g[r] ?? '').padEnd(widths[i]!, ' ')).join(' '));
-  }
-  return rows;
+/** m:ss below an hour, h:mm:ss beyond — how long the pane has been waiting. */
+export function elapsedLabel(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const two = (n: number): string => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${two(m % 60)}:${two(s % 60)}` : `${m}:${two(s % 60)}`;
 }
 
-/** Both words stacked and mutually centered, blank line between. */
-export function splashArt(): string[] {
-  const words = [wordArt('MELLOS'), wordArt('MAPPING')];
-  const width = Math.max(...words.flat().map((r) => r.length));
-  const centered = words.map((rows) => {
-    const own = Math.max(...rows.map((r) => r.length));
-    return rows.map((r) => ' '.repeat(Math.floor((width - own) / 2)) + r);
-  });
-  return [...centered[0]!, '', ...centered[1]!];
+/** Everything the waiting screen can truthfully report. */
+export interface WaitingStatus {
+  readonly defaultFile: string;
+  readonly pagesDir: string;
+  readonly intervalMs: number;
+  /**
+   * Time on the standby clock — omitted by non-TTY consumers: a ticking
+   * clock would turn a piped run into a frame-per-second stream.
+   */
+  readonly elapsedMs?: number | undefined;
+  /** Store errors of map files that exist but do not load (path included). */
+  readonly broken: readonly string[];
+}
+
+/**
+ * The waiting diagnostics: which paths are polled, at what rate, for how
+ * long, which files were found but refuse to load, and what ends the wait.
+ * Plain lines clipped to `width`; the caller owns placement and color.
+ */
+export function waitingInfo(s: WaitingStatus, width: number): string[] {
+  const w = Math.max(1, width);
+  const clock = s.elapsedMs !== undefined ? ` · waiting ${elapsedLabel(s.elapsedMs)}` : '';
+  const lines = [
+    `watching  ${s.defaultFile}`,
+    `      and ${join(s.pagesDir, '*.json')}`,
+    `polling every ${s.intervalMs} ms${clock}`,
+  ];
+  for (const b of s.broken) lines.push(`! ${b}`);
+  lines.push('the map appears at the first mmap_declare');
+  return lines.map((l) => fitWidth(l, w));
 }
 
 /**
@@ -703,55 +712,59 @@ export function waveLevel(value: number): number {
 }
 
 /**
- * The full standby frame, centered in a `width` x `height` viewport, ANSI
- * already applied. Returns undefined when the pane is too small for the art —
- * the caller then falls back to the plain one-line notice.
+ * The full standby frame — water, spinner line, diagnostics — centered in a
+ * `width` x `height` viewport, ANSI already applied. Returns undefined when
+ * the pane is too small for it all; the caller then falls back to plain
+ * text lines.
  */
 export function splashFrame(
   notice: string,
+  info: readonly string[],
   frame: number,
   width: number,
   height: number,
   unicode: boolean,
   color: boolean,
 ): string[] | undefined {
-  const art = splashArt();
-  const artWidth = Math.max(...art.map((r) => r.length));
-  if (width < artWidth + 2 || height < art.length + 2) return undefined;
+  const fieldW = Math.min(width - 4, WATER_COLS_MAX);
+  if (fieldW < 24 || height < WATER_ROWS + info.length + 3) return undefined;
 
   const mode = unicode ? 'unicode' : 'ascii';
   const shades = SPLASH_SHADES[mode];
-  const solid = shades[shades.length - 1]!;
-  const indent = ' '.repeat(Math.floor((width - artWidth) / 2));
-  const ripples = liveRipples(frame, artWidth, art.length);
+  const indent = ' '.repeat(Math.max(0, Math.floor((width - fieldW) / 2)));
+  const ripples = liveRipples(frame, fieldW, WATER_ROWS);
 
-  /** The paint of one ink cell: a 256-color code, or a shade char without color. */
-  const inkOf = (x: number, y: number): string => {
-    const level = waveLevel(waveAt(ripples, x, y));
-    return color ? `38;5;${WAVE_RAMP[WAVE_LEVELS + level]!}` : shades[Math.abs(level)]!;
-  };
-
-  const paintRow = (row: string, y: number): string => {
-    const cells = [...row].map((ch, x) => (ch === '#' ? inkOf(x, y) : undefined));
+  // Open water: still cells stay blank; only where rings pass does ink appear,
+  // shade by |level| so the crest-trough texture survives even in color mode.
+  const paintRow = (y: number): string => {
+    const levels = Array.from({ length: fieldW }, (_, x) => waveLevel(waveAt(ripples, x, y)));
     let out = '';
-    for (let i = 0; i < cells.length; ) {
-      const cell = cells[i];
+    for (let i = 0; i < fieldW; ) {
+      const level = levels[i]!;
       let j = i;
-      while (j < cells.length && cells[j] === cell) j++;
-      if (cell === undefined) out += ' '.repeat(j - i);
-      else out += color ? `\x1b[${cell}m${solid.repeat(j - i)}${RESET}` : cell.repeat(j - i);
+      while (j < fieldW && levels[j] === level) j++;
+      if (level === 0) out += ' '.repeat(j - i);
+      else {
+        const ink = shades[Math.abs(level)]!.repeat(j - i);
+        out += color ? `\x1b[38;5;${WAVE_RAMP[WAVE_LEVELS + level]!}m${ink}${RESET}` : ink;
+      }
       i = j;
     }
     return out;
   };
 
+  const dim = (s: string): string => (color ? `\x1b[90m${s}${RESET}` : s);
   const spinner = SPINNER_FRAMES[mode];
   const status = fitWidth(`${spinner[frame % spinner.length]!} ${notice}`, Math.max(1, width - 2));
   const statusIndent = ' '.repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
+  const infoWidth = Math.max(0, ...info.map((l) => displayWidth(l)));
+  const infoIndent = ' '.repeat(Math.max(0, Math.floor((width - infoWidth) / 2)));
   const block = [
-    ...art.map((row, y) => (row.trim() === '' ? '' : indent + paintRow(row, y))),
+    ...Array.from({ length: WATER_ROWS }, (_, y) => indent + paintRow(y)),
     '',
-    statusIndent + (color ? `\x1b[90m${status}${RESET}` : status),
+    statusIndent + dim(status),
+    '',
+    ...info.map((l) => infoIndent + dim(l)),
   ];
   return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ''), ...block];
 }
@@ -792,8 +805,10 @@ function main(): void {
   let lastFrame = '';
   let spinnerFrame = 0;
   let splashTick = 0;
+  const startedAt = Date.now();
+  const standbyNotice = 'waiting for the first mmap_declare ...';
   let map: MellosMap | undefined;
-  let notice = `waiting for ${cfg.file} ...`;
+  let notice = standbyNotice;
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
 
@@ -802,6 +817,8 @@ function main(): void {
     map: MellosMap | undefined;
     mtimeMs: number;
     fresh: boolean;
+    /** Store error of a file that exists but does not load — never hide it. */
+    error?: string;
   }
   interface PageView {
     offsetX: number;
@@ -893,7 +910,11 @@ function main(): void {
     const entry = pageData.get(file);
     if (entry !== undefined && entry.fresh) pageData.set(file, { ...entry, fresh: false });
     map = entry?.map;
-    notice = map === undefined ? `waiting for ${file} ...` : '';
+    // no map: a recorded store error outranks everything; a missing DEFAULT
+    // file is the virgin-project standby (the diagnostics block already names
+    // the watched paths); a missing PAGE file is transient until the next scan.
+    notice =
+      map !== undefined ? '' : (entry?.error ?? (file === cfg.file ? standbyNotice : `waiting for ${file} ...`));
     // the strip follows the switch — the active tab must never sit off-screen
     const top = topFiles();
     const tabIndex = top.indexOf(file);
@@ -965,11 +986,21 @@ function main(): void {
       lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
       if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
-      // No map yet: the standby splash, but only on a real TTY — a piped run
-      // must not stream an animation, so it keeps the one-line notice.
+      // No map yet: waiting diagnostics, with the water animation only on a
+      // real TTY — a piped run must not stream an animation.
+      const info = waitingInfo(
+        {
+          defaultFile: cfg.file,
+          pagesDir: join(dirname(cfg.file), PAGES_DIR_NAME),
+          intervalMs: cfg.intervalMs,
+          elapsedMs: interactive ? Date.now() - startedAt : undefined,
+          broken: [...pageData.values()].flatMap((e) => (e.map === undefined && e.error !== undefined ? [e.error] : [])),
+        },
+        Math.max(1, viewW - 2),
+      );
       body =
-        (interactive ? splashFrame(notice, splashTick, viewW, viewH, cfg.unicode, cfg.color) : undefined) ??
-        [fitWidth(notice, viewW)];
+        (interactive ? splashFrame(notice, info, splashTick, viewW, viewH, cfg.unicode, cfg.color) : undefined) ??
+        [fitWidth(notice, viewW), '', ...info.map((l) => fitWidth(` ${l}`, viewW))];
     }
     if (notice !== '' && map !== undefined) {
       body[body.length - 1] = fitWidth(`  ${notice}`, viewW);
@@ -1113,9 +1144,18 @@ function main(): void {
           flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + 4000 };
         }
       } else if (loaded.error.kind === 'malformed-json') {
-        // plausible torn read from a foreign writer — retry next tick, keep the picture
+        // Plausible torn read from a foreign writer — keep retrying (mtime is
+        // NOT recorded, so every tick reloads), but say what was seen: a file
+        // that stays junk must not hide behind "waiting" forever.
+        pageData.set(file, {
+          map: entry?.map,
+          mtimeMs: entry?.mtimeMs ?? -1,
+          fresh: entry?.fresh ?? false,
+          error: describeStoreError(loaded.error),
+        });
+        if (file === activeFile && entry?.map === undefined) notice = describeStoreError(loaded.error);
       } else {
-        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false });
+        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describeStoreError(loaded.error) });
         if (file === activeFile) notice = describeStoreError(loaded.error);
       }
     }
