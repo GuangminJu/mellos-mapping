@@ -1,14 +1,12 @@
 /**
- * Layer 1 — persistence for a MellosMap.
+ * Layer 1b — Node-side persistence for a MellosMap.
  *
  * The state file IS the event bus of the whole plugin: the MCP server writes
- * it, the terminal watcher polls it. This layer owns exactly two promises:
+ * it, the terminal watcher polls it. The file FORMAT (version, page-id
+ * grammar, parse/serialize with boundary validation) lives in ./format.ts,
+ * pure of I/O so browsers can consume it; this module owns everything that
+ * touches the filesystem, and one promise:
  *
- *   P1. Whatever is loaded satisfies the structural invariants of Layer 0.
- *       Parsing is done by REPLAYING the raw data through the domain
- *       operations, so a hand-edited or corrupted file can never smuggle an
- *       invariant violation into the process (validate at the boundary,
- *       trust internal code afterwards).
  *   P2. Writes are atomic: a reader polling the file either sees the previous
  *       complete map or the new complete map, never a torn write. Achieved by
  *       writing a sibling temp file and renaming it over the target.
@@ -16,56 +14,47 @@
  * Expected failures (missing file, malformed JSON, invariant violations) are
  * Result values. Only truly unexpected I/O faults (permissions, disk) are
  * allowed to propagate as exceptions.
+ *
+ * Node consumers import everything from here; the format surface is
+ * re-exported so persistence has one import site per runtime.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
-import {
-  EMPTY_MAP,
-  ID_RULE,
-  ID_RULE_TEXT,
-  type InvalidId,
-  type MapError,
-  type MellosMap,
-  type Result,
-  describeMapError,
-  err,
-  makeGroupId,
-  makeLaneId,
-  makeLayerId,
-  makeMapKind,
-  makeNodeId,
-  makeNodeKind,
-  makeNodeStatus,
-  makeSubmapRef,
-  ok,
-} from '../domain/types.js';
+import { type MellosMap, type Result, err, ok } from '../domain/types.js';
+import { type PageId, type StoreError, makePageId, parseMap, serializeMap } from './format.js';
 
-/** On-disk format version. Bump only with a documented migration. */
-export const STATE_FILE_VERSION = 1;
+export {
+  STATE_FILE_VERSION,
+  type PageId,
+  makePageId,
+  type StoreError,
+  describeStoreError,
+  parseMap,
+  serializeMap,
+} from './format.js';
 
-/** Project-relative location of the DEFAULT page's state file. */
-export const STATE_FILE_RELATIVE_PATH = join('.claude', 'mellos-mapping.json');
+/**
+ * Project-relative location of the DEFAULT page's state file. The store lives
+ * in the tool-owned `.mellos/` directory: the map belongs to mellos-mapping,
+ * not to whichever host (Claude Code, Codex, a harness) happens to drive the
+ * server, so no host brand appears in the path. Pre-0.19 stores under
+ * `.claude/` are moved once by {@link migrateLegacyStore}.
+ */
+export const STATE_FILE_RELATIVE_PATH = join('.mellos', 'map.json');
 
 // ---------------------------------------------------------------------------
 // pages — a project may keep several maps side by side (one effort = one page)
 // ---------------------------------------------------------------------------
 //
-// The default page IS the classic mellos-mapping.json, so existing maps stay
-// where they are. Named pages live in a sibling directory, one file each:
-// file-per-page keeps concurrent sessions isolated — two writers on two pages
-// can never clobber each other, because every save renames a whole file.
+// The default page IS the classic map.json. Named pages live in a sibling
+// directory, one file each: file-per-page keeps concurrent sessions isolated —
+// two writers on two pages can never clobber each other, because every save
+// renames a whole file.
 
 /** Directory (next to the default file) holding the named pages. */
-export const PAGES_DIR_NAME = 'mellos-mapping.pages';
-
-export type PageId = string & { readonly __brand: 'PageId' };
-
-export function makePageId(raw: string): Result<PageId, InvalidId> {
-  return ID_RULE.test(raw) ? ok(raw as PageId) : err({ kind: 'invalid-id', raw, rule: ID_RULE_TEXT });
-}
+export const PAGES_DIR_NAME = 'pages';
 
 /** Where a page's map file lives, given the default page's file path. */
 export function pageFilePath(defaultFile: string, page?: PageId): string {
@@ -107,7 +96,7 @@ export function listPageFiles(defaultFile: string): string[] {
 // status barely ever sees the file exist.
 
 /** Sibling of the default file carrying a one-shot "show this page" request. */
-export const FOCUS_FILE_NAME = 'mellos-mapping.focus';
+export const FOCUS_FILE_NAME = 'focus';
 
 export function focusFilePath(defaultFile: string): string {
   return join(dirname(defaultFile), FOCUS_FILE_NAME);
@@ -151,6 +140,7 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
   return id.ok ? { page: id.value } : undefined;
 }
 
+
 // ---------------------------------------------------------------------------
 // mapping policy — WHEN the assistant should open a map, chosen by the user
 // ---------------------------------------------------------------------------
@@ -160,7 +150,7 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
 // sibling file so hand-editing or corrupting it can never touch a map.
 
 /** Sibling of the default file holding the project's plugin configuration. */
-export const CONFIG_FILE_NAME = 'mellos-mapping.config.json';
+export const CONFIG_FILE_NAME = 'config.json';
 
 /** On-disk config format version. Bump only with a documented migration. */
 export const CONFIG_FILE_VERSION = 1;
@@ -196,6 +186,10 @@ export function describeMappingPolicy(policy: MappingPolicy): string {
     case 'on-request':
       return 'map only when the user explicitly asks';
   }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /**
@@ -240,186 +234,45 @@ export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): v
   renameSync(tmp, path);
 }
 
-export type StoreError =
-  | { readonly kind: 'not-found'; readonly path: string }
-  | { readonly kind: 'malformed-json'; readonly path: string; readonly detail: string }
-  | { readonly kind: 'bad-shape'; readonly path: string; readonly detail: string }
-  | { readonly kind: 'invariant-violation'; readonly path: string; readonly violation: MapError };
+// ---------------------------------------------------------------------------
+// legacy migration — stores written under the old host-coupled location
+// ---------------------------------------------------------------------------
+//
+// Up to 0.18 the store lived in `.claude/mellos-mapping.*`: the map's home
+// was coupled to one host brand, which turned absurd the moment another host
+// (a harness, Codex) drove the same server. The move is one-time and
+// explicit — entry points call it before touching the store; nothing here
+// runs as a hidden side effect of ordinary loads.
 
-export function describeStoreError(e: StoreError): string {
-  switch (e.kind) {
-    case 'not-found':
-      return `no map file at ${e.path}`;
-    case 'malformed-json':
-      return `map file ${e.path} is not valid JSON: ${e.detail}`;
-    case 'bad-shape':
-      return `map file ${e.path} has an unexpected shape: ${e.detail}`;
-    case 'invariant-violation':
-      return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
-  }
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function asArray(v: unknown): readonly unknown[] {
-  return Array.isArray(v) ? v : [];
-}
-
-function optionalString(v: unknown): string | undefined {
-  return typeof v === 'string' ? v : undefined;
-}
+/** Project-relative location of the pre-0.20 default page file. */
+export const LEGACY_STATE_FILE_RELATIVE_PATH = join('.claude', 'mellos-mapping.json');
+const LEGACY_PAGES_DIR_NAME = 'mellos-mapping.pages';
+const LEGACY_CONFIG_FILE_NAME = 'mellos-mapping.config.json';
 
 /**
- * Rebuild a MellosMap from untrusted raw data by replaying it through the
- * Layer 0 operations (P1). Field order in the file does not matter; replay
- * order (layers -> lanes -> groups -> nodes -> edges) supplies the required
- * declaration order.
+ * Move a legacy `.claude` store — map, pages, and mapping-policy config —
+ * into the tool-owned `.mellos` location. Never merges: a project whose new
+ * store already holds anything keeps it untouched, whatever the legacy
+ * directory still contains.
+ * @param defaultFile - the NEW default page path (`<root>/.mellos/map.json`);
+ *   the legacy store is looked up relative to `<root>`.
+ * @returns whether a legacy store was moved.
  */
-export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreError> {
-  if (!isRecord(raw)) return err({ kind: 'bad-shape', path, detail: 'root is not an object' });
-  if (raw['version'] !== STATE_FILE_VERSION) {
-    return err({ kind: 'bad-shape', path, detail: `version is ${String(raw['version'])}, expected ${STATE_FILE_VERSION}` });
-  }
-
-  let map = EMPTY_MAP;
-  const title = optionalString(raw['title']);
-  if (title !== undefined) map = setTitle(map, title);
-  const rawKind = optionalString(raw['kind']);
-  if (rawKind !== undefined) {
-    const kind = makeMapKind(rawKind);
-    if (!kind.ok) return err({ kind: 'invariant-violation', path, violation: kind.error });
-    map = setKind(map, kind.value);
-  }
-
-  for (const [i, rawLayer] of asArray(raw['layers']).entries()) {
-    if (!isRecord(rawLayer)) return err({ kind: 'bad-shape', path, detail: `layers[${i}] is not an object` });
-    const id = makeLayerId(String(rawLayer['id'] ?? ''));
-    if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
-    const name = optionalString(rawLayer['name']);
-    const rank = rawLayer['rank'];
-    if (name === undefined || typeof rank !== 'number' || !Number.isInteger(rank)) {
-      return err({ kind: 'bad-shape', path, detail: `layers[${i}] needs a string name and an integer rank` });
-    }
-    const next = declareLayer(map, { id: id.value, name, rank });
-    if (!next.ok) return err({ kind: 'invariant-violation', path, violation: next.error });
-    map = next.value;
-  }
-
-  for (const [i, rawLane] of asArray(raw['lanes']).entries()) {
-    if (!isRecord(rawLane)) return err({ kind: 'bad-shape', path, detail: `lanes[${i}] is not an object` });
-    const id = makeLaneId(String(rawLane['id'] ?? ''));
-    if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
-    const label = optionalString(rawLane['label']);
-    if (label === undefined) return err({ kind: 'bad-shape', path, detail: `lanes[${i}] needs a string label` });
-    const declared = declareLane(map, { id: id.value, label });
-    if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
-    map = declared.value;
-  }
-
-  for (const [i, rawGroup] of asArray(raw['groups']).entries()) {
-    if (!isRecord(rawGroup)) return err({ kind: 'bad-shape', path, detail: `groups[${i}] is not an object` });
-    const id = makeGroupId(String(rawGroup['id'] ?? ''));
-    if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
-    const layer = makeLayerId(String(rawGroup['layer'] ?? ''));
-    if (!layer.ok) return err({ kind: 'invariant-violation', path, violation: layer.error });
-    const label = optionalString(rawGroup['label']);
-    if (label === undefined) return err({ kind: 'bad-shape', path, detail: `groups[${i}] needs a string label` });
-    const declared = declareGroup(map, { id: id.value, label, layer: layer.value });
-    if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
-    map = declared.value;
-  }
-
-  for (const [i, rawNode] of asArray(raw['nodes']).entries()) {
-    if (!isRecord(rawNode)) return err({ kind: 'bad-shape', path, detail: `nodes[${i}] is not an object` });
-    const id = makeNodeId(String(rawNode['id'] ?? ''));
-    if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
-    const layer = makeLayerId(String(rawNode['layer'] ?? ''));
-    if (!layer.ok) return err({ kind: 'invariant-violation', path, violation: layer.error });
-    const status = makeNodeStatus(String(rawNode['status'] ?? ''));
-    if (!status.ok) return err({ kind: 'invariant-violation', path, violation: status.error });
-    const label = optionalString(rawNode['label']);
-    if (label === undefined) return err({ kind: 'bad-shape', path, detail: `nodes[${i}] needs a string label` });
-
-    const detail = optionalString(rawNode['detail']);
-    const rawGroup = optionalString(rawNode['group']);
-    let group;
-    if (rawGroup !== undefined) {
-      const made = makeGroupId(rawGroup);
-      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
-      group = made.value;
-    }
-    const rawNodeKind = optionalString(rawNode['kind']);
-    let nodeKind;
-    if (rawNodeKind !== undefined) {
-      const made = makeNodeKind(rawNodeKind);
-      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
-      nodeKind = made.value;
-    }
-    const rawLane = optionalString(rawNode['lane']);
-    let lane;
-    if (rawLane !== undefined) {
-      const made = makeLaneId(rawLane);
-      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
-      lane = made.value;
-    }
-    const rawSubmap = optionalString(rawNode['submap']);
-    let submap;
-    if (rawSubmap !== undefined) {
-      const made = makeSubmapRef(rawSubmap);
-      if (!made.ok) return err({ kind: 'invariant-violation', path, violation: made.error });
-      submap = made.value;
-    }
-    const declared = declareNode(map, {
-      id: id.value,
-      label,
-      layer: layer.value,
-      status: status.value,
-      ...(detail !== undefined ? { detail } : {}),
-      ...(group !== undefined ? { group } : {}),
-      ...(nodeKind !== undefined ? { kind: nodeKind } : {}),
-      ...(lane !== undefined ? { lane } : {}),
-      ...(submap !== undefined ? { submap } : {}),
-    });
-    if (!declared.ok) return err({ kind: 'invariant-violation', path, violation: declared.error });
-    map = declared.value;
-
-    const evidence = optionalString(rawNode['evidence']);
-    if (evidence !== undefined) {
-      const updated = updateNode(map, { id: id.value, evidence });
-      if (!updated.ok) return err({ kind: 'invariant-violation', path, violation: updated.error });
-      map = updated.value;
-    }
-  }
-
-  for (const [i, rawEdge] of asArray(raw['edges']).entries()) {
-    if (!isRecord(rawEdge)) return err({ kind: 'bad-shape', path, detail: `edges[${i}] is not an object` });
-    const from = makeNodeId(String(rawEdge['from'] ?? ''));
-    if (!from.ok) return err({ kind: 'invariant-violation', path, violation: from.error });
-    const to = makeNodeId(String(rawEdge['to'] ?? ''));
-    if (!to.ok) return err({ kind: 'invariant-violation', path, violation: to.error });
-    const linked = linkNodes(map, from.value, to.value, optionalString(rawEdge['label']));
-    if (!linked.ok) return err({ kind: 'invariant-violation', path, violation: linked.error });
-    map = linked.value;
-  }
-
-  return ok(map);
-}
-
-/** Serialize a map into the on-disk shape. Inverse of parseMap for valid maps. */
-export function serializeMap(map: MellosMap): string {
-  const body = {
-    version: STATE_FILE_VERSION,
-    ...(map.title !== undefined ? { title: map.title } : {}),
-    ...(map.kind !== undefined ? { kind: map.kind } : {}),
-    layers: map.layers,
-    ...(map.lanes.length > 0 ? { lanes: map.lanes } : {}),
-    ...(map.groups.length > 0 ? { groups: map.groups } : {}),
-    nodes: map.nodes,
-    edges: map.edges,
-  };
-  return JSON.stringify(body, null, 2) + '\n';
+export function migrateLegacyStore(defaultFile: string): boolean {
+  const projectRoot = dirname(dirname(defaultFile));
+  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
+  const hasCurrent = existsSync(defaultFile)
+    || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME))
+    || existsSync(configFilePath(defaultFile));
+  if (!hasLegacy || hasCurrent) return false;
+  mkdirSync(dirname(defaultFile), { recursive: true });
+  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
+  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
+  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  return true;
 }
 
 /** Load and validate the map file at `path`. */

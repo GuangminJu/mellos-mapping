@@ -84,7 +84,7 @@ if (!existsSync(watchPath)) {
   console.error(`watcher not found (is the plugin built?): ${watchPath}`);
   process.exit(1);
 }
-const mapFile = join(projectDir, '.claude', 'mellos-mapping.json');
+const mapFile = join(projectDir, '.mellos', 'map.json');
 
 function runPowerShell(script) {
   const encoded = Buffer.from(script, 'utf16le').toString('base64');

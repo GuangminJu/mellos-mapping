@@ -199,12 +199,17 @@ function updateNode(map, input) {
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
 }
 
-// src/render/render.ts
+// src/semantics/semantics.ts
 var ZOOM_MIN = -4;
 var ZOOM_MAX = 2;
 var ZOOM_DEFAULT = 0;
 function clampZoom(n) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n)));
+}
+function zoomMode(zoom) {
+  if (zoom >= 1) return "detail";
+  if (zoom <= -4) return "overview";
+  return "boxes";
 }
 function zoomLabel(zoom) {
   switch (zoom) {
@@ -224,6 +229,136 @@ function zoomLabel(zoom) {
       return "overview";
   }
 }
+function isNeutralKind(map) {
+  return map.kind !== void 0 && map.kind !== "dev";
+}
+function aggregateMap(map) {
+  if (map.groups.length === 0) return void 0;
+  const representative = /* @__PURE__ */ new Map();
+  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
+  const nodes = map.groups.map((g) => {
+    const members = map.nodes.filter((n) => n.group === g.id);
+    const done = members.filter((n) => n.status === "done").length;
+    return {
+      id: g.id,
+      // neutral kinds document structure, not progress — no member counts
+      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
+      layer: g.layer,
+      status: groupStatus(map, g.id)
+    };
+  });
+  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
+  const seen = /* @__PURE__ */ new Set();
+  const edges = [];
+  for (const e of map.edges) {
+    const from = representative.get(e.from);
+    const to = representative.get(e.to);
+    if (from === to || seen.has(`${from}->${to}`)) continue;
+    seen.add(`${from}->${to}`);
+    edges.push({ from, to });
+  }
+  return {
+    ...map.title !== void 0 ? { title: map.title } : {},
+    ...map.kind !== void 0 ? { kind: map.kind } : {},
+    layers: map.layers,
+    groups: [],
+    lanes: map.lanes,
+    nodes,
+    edges
+  };
+}
+function focusInfo(map, focusId) {
+  const layerNameOf = (layerId) => map.layers.find((l) => l.id === layerId)?.name ?? layerId;
+  const group = map.groups.find((g) => g.id === focusId);
+  if (group) {
+    const members = map.nodes.filter((n) => n.group === group.id);
+    const memberIds = new Set(members.map((n) => n.id));
+    const rep = (id) => {
+      const n = map.nodes.find((x) => x.id === id);
+      const owner = n.group !== void 0 ? map.groups.find((g) => g.id === n.group) : void 0;
+      return owner !== void 0 ? { id: owner.id, label: owner.label, status: groupStatus(map, owner.id) } : { id: n.id, label: n.label, status: n.status };
+    };
+    const dedupe = (refs) => {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of refs) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    };
+    return {
+      kind: "group",
+      group,
+      status: groupStatus(map, group.id),
+      layerName: layerNameOf(group.layer),
+      members,
+      uses: dedupe(
+        map.edges.filter((e) => memberIds.has(e.from) && !memberIds.has(e.to)).map((e) => rep(e.to))
+      ),
+      usedBy: dedupe(
+        map.edges.filter((e) => memberIds.has(e.to) && !memberIds.has(e.from)).map((e) => rep(e.from))
+      )
+    };
+  }
+  const node = map.nodes.find((n) => n.id === focusId);
+  if (!node) return void 0;
+  const ref = (id, edgeLabel) => {
+    const n = map.nodes.find((x) => x.id === id);
+    return {
+      id,
+      label: n?.label ?? id,
+      status: n?.status ?? "planned",
+      ...edgeLabel !== void 0 ? { edgeLabel } : {}
+    };
+  };
+  const laneLabel = node.lane !== void 0 ? map.lanes.find((l) => l.id === node.lane)?.label : void 0;
+  return {
+    kind: "node",
+    node,
+    layerName: layerNameOf(node.layer),
+    ...laneLabel !== void 0 ? { laneLabel } : {},
+    uses: map.edges.filter((e) => e.from === node.id).map((e) => ref(e.to, e.label)),
+    usedBy: map.edges.filter((e) => e.to === node.id).map((e) => ref(e.from, e.label))
+  };
+}
+function submapRefs(maps) {
+  const refs = /* @__PURE__ */ new Set();
+  for (const m of maps) {
+    for (const n of m?.nodes ?? []) if (n.submap !== void 0) refs.add(n.submap);
+  }
+  return refs;
+}
+function diveParent(entries, pageId) {
+  for (const [key, m] of entries) {
+    const node = m?.nodes.find((n) => n.submap === pageId);
+    if (node !== void 0) return { parent: key, label: node.label };
+  }
+  return void 0;
+}
+function mostRecentKey(keys, mtimeOf) {
+  let best;
+  let bestMtime = -Infinity;
+  for (const key of keys) {
+    const mtime = mtimeOf(key);
+    if (mtime !== void 0 && mtime > bestMtime) {
+      best = key;
+      bestMtime = mtime;
+    }
+  }
+  return best ?? keys[0];
+}
+function flipForSequence(map) {
+  if (map.kind !== "sequence") return map;
+  return {
+    ...map,
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
+  };
+}
+
+// src/render/render.ts
 var WIDE_RANGES = [
   [4352, 4447],
   // Hangul Jamo
@@ -488,9 +623,6 @@ function kindGlyph(kind, unicode) {
   const pair = NODE_KIND_GLYPHS[kind];
   return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
 }
-function isNeutralKind(map) {
-  return map.kind !== void 0 && map.kind !== "dev";
-}
 function neutralSkin(unicode) {
   return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
 }
@@ -500,21 +632,23 @@ var LEFT_MARGIN = 2;
 var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
 var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
+  const m = zoomMode(zoom);
+  const mode = m === "overview" ? "constellation" : m;
   switch (zoom) {
     case 2:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
-      return { mode: "boxes", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
-      return { mode: "boxes", scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -2:
-      return { mode: "boxes", scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
     case -3:
-      return { mode: "boxes", scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
     case -4:
-      return { mode: "constellation", scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
 var LABEL_BUDGET_MIN = 4;
@@ -567,41 +701,6 @@ function renderMapWindow(map, opts, viewport) {
     hits: built.hits
   };
 }
-function aggregateMap(map) {
-  if (map.groups.length === 0) return void 0;
-  const representative = /* @__PURE__ */ new Map();
-  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
-  const nodes = map.groups.map((g) => {
-    const members = map.nodes.filter((n) => n.group === g.id);
-    const done = members.filter((n) => n.status === "done").length;
-    return {
-      id: g.id,
-      // neutral kinds document structure, not progress — no member counts
-      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
-      layer: g.layer,
-      status: groupStatus(map, g.id)
-    };
-  });
-  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
-  const seen = /* @__PURE__ */ new Set();
-  const edges = [];
-  for (const e of map.edges) {
-    const from = representative.get(e.from);
-    const to = representative.get(e.to);
-    if (from === to || seen.has(`${from}->${to}`)) continue;
-    seen.add(`${from}->${to}`);
-    edges.push({ from, to });
-  }
-  return {
-    ...map.title !== void 0 ? { title: map.title } : {},
-    ...map.kind !== void 0 ? { kind: map.kind } : {},
-    layers: map.layers,
-    groups: [],
-    lanes: map.lanes,
-    nodes,
-    edges
-  };
-}
 var AGGREGATE_GEO = {
   mode: "boxes",
   scale: 1,
@@ -612,14 +711,6 @@ var AGGREGATE_GEO = {
   barGap: 1,
   bandCounts: false
 };
-function flipForSequence(map) {
-  if (map.kind !== "sequence") return map;
-  return {
-    ...map,
-    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
-    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
-  };
-}
 function buildCanvas(map, opts) {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
@@ -969,61 +1060,11 @@ function drawBox(canvas, box, opts, neutral, focused = false) {
 // src/store/store.ts
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+
+// src/store/format.ts
 var STATE_FILE_VERSION = 1;
-var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
-var PAGES_DIR_NAME = "mellos-mapping.pages";
 function makePageId(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
-}
-function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
-}
-function pageIdOfFile(defaultFile, path) {
-  if (path === defaultFile) return void 0;
-  const name = basename(path);
-  return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
-}
-function listPageFiles(defaultFile) {
-  const out = [];
-  if (existsSync(defaultFile)) out.push(defaultFile);
-  let entries = [];
-  try {
-    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
-  } catch {
-  }
-  for (const e of entries.sort()) {
-    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
-  }
-  return out;
-}
-var FOCUS_FILE_NAME = "mellos-mapping.focus";
-function focusFilePath(defaultFile) {
-  return join(dirname(defaultFile), FOCUS_FILE_NAME);
-}
-function takeFocusRequest(defaultFile) {
-  const path = focusFilePath(defaultFile);
-  let raw;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return void 0;
-  }
-  try {
-    rmSync(path, { force: true });
-  } catch {
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return void 0;
-  }
-  if (typeof parsed !== "object" || parsed === null) return void 0;
-  const page = parsed.page;
-  if (page === void 0 || page === null) return { page: void 0 };
-  if (typeof page !== "string") return void 0;
-  const id = makePageId(page);
-  return id.ok ? { page: id.value } : void 0;
 }
 function describeStoreError(e) {
   switch (e.kind) {
@@ -1165,6 +1206,81 @@ function parseMap(raw, path) {
     map = linked.value;
   }
   return ok(map);
+}
+
+// src/store/store.ts
+var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+var PAGES_DIR_NAME = "pages";
+function pageFilePath(defaultFile, page) {
+  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+}
+function pageIdOfFile(defaultFile, path) {
+  if (path === defaultFile) return void 0;
+  const name = basename(path);
+  return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+}
+function listPageFiles(defaultFile) {
+  const out = [];
+  if (existsSync(defaultFile)) out.push(defaultFile);
+  let entries = [];
+  try {
+    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+  } catch {
+  }
+  for (const e of entries.sort()) {
+    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+  }
+  return out;
+}
+var FOCUS_FILE_NAME = "focus";
+function focusFilePath(defaultFile) {
+  return join(dirname(defaultFile), FOCUS_FILE_NAME);
+}
+function takeFocusRequest(defaultFile) {
+  const path = focusFilePath(defaultFile);
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return void 0;
+  }
+  try {
+    rmSync(path, { force: true });
+  } catch {
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null) return void 0;
+  const page = parsed.page;
+  if (page === void 0 || page === null) return { page: void 0 };
+  if (typeof page !== "string") return void 0;
+  const id = makePageId(page);
+  return id.ok ? { page: id.value } : void 0;
+}
+var CONFIG_FILE_NAME = "config.json";
+function configFilePath(defaultFile) {
+  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
+var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
+function migrateLegacyStore(defaultFile) {
+  const projectRoot = dirname(dirname(defaultFile));
+  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
+  const hasCurrent = existsSync(defaultFile) || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME)) || existsSync(configFilePath(defaultFile));
+  if (!hasLegacy || hasCurrent) return false;
+  mkdirSync(dirname(defaultFile), { recursive: true });
+  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
+  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
+  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  return true;
 }
 function loadMapFile(path) {
   let text;
@@ -1320,16 +1436,7 @@ function dividerRow(width, unicode, follow) {
   return bar;
 }
 function mostRecentPageFile(files, mtimeOf) {
-  let best;
-  let bestMtime = -Infinity;
-  for (const file of files) {
-    const mtime = mtimeOf(file);
-    if (mtime !== void 0 && mtime > bestMtime) {
-      best = file;
-      bestMtime = mtime;
-    }
-  }
-  return best ?? files[0];
+  return mostRecentKey(files, mtimeOf);
 }
 var HIDE_CURSOR = "\x1B[?25l";
 var SHOW_CURSOR = "\x1B[?25h";
@@ -1417,10 +1524,7 @@ function tabScrollFor(tabs, width, unicode, scroll, index) {
   return s;
 }
 function topLevelFiles(defaultFile, files, mapOf) {
-  const refs = /* @__PURE__ */ new Set();
-  for (const m of mapOf.values()) {
-    for (const n of m?.nodes ?? []) if (n.submap !== void 0) refs.add(n.submap);
-  }
+  const refs = submapRefs(mapOf.values());
   return files.filter((f) => {
     const id = pageIdOfFile(defaultFile, f);
     return id === void 0 || !refs.has(id);
@@ -1429,12 +1533,8 @@ function topLevelFiles(defaultFile, files, mapOf) {
 function diveOrigin(defaultFile, file, files, mapOf) {
   const id = pageIdOfFile(defaultFile, file);
   if (id === void 0) return void 0;
-  for (const f of files) {
-    if (f === file) continue;
-    const node = mapOf.get(f)?.nodes.find((n) => n.submap === id);
-    if (node !== void 0) return { parent: f, label: node.label };
-  }
-  return void 0;
+  const entries = files.filter((f) => f !== file).map((f) => [f, mapOf.get(f)]);
+  return diveParent(entries, id);
 }
 function nearestHit(hits, cx, cy) {
   let best;
@@ -1451,28 +1551,14 @@ function nearestHit(hits, cx, cy) {
 function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS) {
   const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
-  const group = map.groups.find((gr) => gr.id === focusId);
-  if (group) {
-    const members = map.nodes.filter((n) => n.group === group.id);
-    const memberIds = new Set(members.map((n) => n.id));
-    const status = groupStatus(map, group.id);
-    const layerName2 = map.layers.find((l) => l.id === group.layer)?.name ?? group.layer;
+  const focus = focusInfo(map, focusId);
+  if (focus === void 0) return void 0;
+  const refText = (r) => `${g(r.status)} ${r.label}${r.edgeLabel !== void 0 ? ` (${r.edgeLabel})` : ""}`;
+  if (focus.kind === "group") {
+    const { group, status, layerName: layerName2, members } = focus;
     const [right2, left2] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
-    const repLabel = (id) => {
-      const n = map.nodes.find((x) => x.id === id);
-      const owner = n.group !== void 0 ? map.groups.find((gr) => gr.id === n.group) : void 0;
-      return owner !== void 0 ? `${g(groupStatus(map, owner.id))} ${owner.label}` : `${g(n.status)} ${n.label}`;
-    };
-    const uses2 = [
-      ...new Set(
-        map.edges.filter((e) => memberIds.has(e.from) && !memberIds.has(e.to)).map((e) => repLabel(e.to))
-      )
-    ];
-    const usedBy2 = [
-      ...new Set(
-        map.edges.filter((e) => memberIds.has(e.to) && !memberIds.has(e.from)).map((e) => repLabel(e.from))
-      )
-    ];
+    const uses2 = focus.uses.map(refText);
+    const usedBy2 = focus.usedBy.map(refText);
     const lines2 = [
       {
         text: fitWidth(
@@ -1491,21 +1577,13 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
     while (lines2.length < rows) lines2.push({ text: "", sgr: "" });
     return lines2.slice(0, rows);
   }
-  const node = map.nodes.find((n) => n.id === focusId);
-  if (!node) return void 0;
+  const { node, layerName, laneLabel } = focus;
   const neutral = isNeutralKind(map);
-  const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? node.layer;
   const [right, left] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
-  const withGlyph = (id) => {
-    const n = map.nodes.find((x) => x.id === id);
-    return n ? `${g(n.status)} ${n.label}` : id;
-  };
-  const withEdgeLabel = (base, label) => label !== void 0 ? `${base} (${label})` : base;
-  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withEdgeLabel(withGlyph(e.to), e.label));
-  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withEdgeLabel(withGlyph(e.from), e.label));
-  const pin = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
+  const uses = focus.uses.map(refText);
+  const usedBy = focus.usedBy.map(refText);
+  const pin = pinMark;
   const headGlyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0) ?? (unicode ? "\xB7" : ".") : g(node.status);
-  const laneLabel = node.lane !== void 0 ? map.lanes.find((l) => l.id === node.lane)?.label : void 0;
   const headParts = [
     `${headGlyph} ${node.label} [${node.id}]`,
     layerName,
@@ -1672,6 +1750,7 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
 }
 function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  migrateLegacyStore(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";

@@ -254,9 +254,9 @@ describe('diagram kinds in the panel', () => {
 });
 
 describe('sub-map hierarchy — interior pages are not sibling tabs', () => {
-  const DEFAULT = '/p/.claude/mellos-mapping.json';
-  const child = '/p/.claude/mellos-mapping.pages/core-internals.json';
-  const effort = '/p/.claude/mellos-mapping.pages/new-effort.json';
+  const DEFAULT = '/p/.mellos/map.json';
+  const child = '/p/.mellos/pages/core-internals.json';
+  const effort = '/p/.mellos/pages/new-effort.json';
 
   function overview(): MellosMap {
     let map = sample();

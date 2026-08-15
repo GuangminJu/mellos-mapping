@@ -45,4 +45,4 @@ if (added.error !== undefined || added.status !== 0) {
 }
 process.stdout.write(added.stdout ?? '');
 console.log(`mellos-mapping MCP registered with Codex: node ${serverPath}`);
-console.log('State files resolve to each session’s working directory (.claude/mellos-mapping.json).');
+console.log('State files resolve to each session’s working directory (.mellos/map.json).');

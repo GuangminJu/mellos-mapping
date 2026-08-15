@@ -147,7 +147,7 @@ npx -y mellos-mapping
 ```
 
 The map file lands in the client session's working directory
-(`.claude/mellos-mapping.json`). Open the live pane from the same project:
+(`.mellos/map.json`). Open the live pane from the same project:
 
 ```
 npx -y -p mellos-mapping mellos-mapping-watch
@@ -224,8 +224,8 @@ its own pan, zoom and pinned node. Because every page is its own file, two
 Claude sessions writing two pages can never clobber each other — this is
 also the answer to running several Claude sessions in one project.
 
-State lives in `.claude/mellos-mapping.json` (the default page) plus
-`.claude/mellos-mapping.pages/<page>.json` for named pages — plain JSON,
+State lives in `.mellos/map.json` (the default page) plus
+`.mellos/pages/<page>.json` for named pages — plain JSON,
 safe to commit if you want the maps' history in git.
 
 ### Diagram kinds
@@ -299,13 +299,26 @@ The repo is itself layered bottom-up, and each layer has its spec:
 | Layer | Code | Owns |
 | --- | --- | --- |
 | 0 domain | `src/domain/` | the map value, structural invariants, pure ops |
-| 1 store | `src/store/` | atomic state-file persistence, boundary validation |
+| 1 format | `src/store/format.ts` | the state-file format: replay-validated parse, serialize — I/O-free |
+| 1 store | `src/store/store.ts` | atomic state-file persistence on Node |
+| 1 semantics | `src/semantics/` | medium-neutral view semantics: zoom ladder, group aggregation, sequence flip |
 | 2 apply | `src/server/apply.ts` | tool inputs → transactional op sequences |
 | 3 server | `src/server/server.ts` | the four MCP tools over stdio |
 | 4 render | `src/render/`, `src/watch/` | ASCII renderer and the polling pane |
 
 `dist/` is committed deliberately: plugin installation clones this repo and
 runs nothing, so entry points ship bundled.
+
+### Library
+
+The lower layers are also a library (`npm run build` emits `lib/` with type
+declarations; npm packs it). Subpath exports mirror the source:
+`mellos-mapping/domain/types`, `/domain/ops`, `/format`, `/semantics` are
+**browser-safe** — no Node builtins in their import closure, gated by a test —
+so a graphical client (a web panel, an editor view) can parse state files and
+reuse the exact aggregation and zoom semantics the terminal pane draws with.
+`/store` (Node filesystem persistence) and `/render` (the terminal renderer)
+complete the surface for Node hosts.
 
 ## License
 

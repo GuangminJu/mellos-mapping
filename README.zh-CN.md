@@ -134,7 +134,7 @@ CLI……）都能用标准 stdio 条目接入：
 npx -y mellos-mapping
 ```
 
-地图文件落在客户端会话的工作目录（`.claude/mellos-mapping.json`）。在同
+地图文件落在客户端会话的工作目录（`.mellos/map.json`）。在同
 一项目里打开实况面板：
 
 ```
@@ -204,8 +204,8 @@ npx -y -p mellos-mapping mellos-mapping-watch
 每页就是一个独立文件，两个 Claude 会话各写各页永远不会互相覆盖——这也是
 同一项目里跑多个 Claude 会话的正确姿势。
 
-地图状态存在 `.claude/mellos-mapping.json`（默认页）和
-`.claude/mellos-mapping.pages/<页名>.json`（命名页）——纯 JSON，想在 git
+地图状态存在 `.mellos/map.json`（默认页）和
+`.mellos/pages/<页名>.json`（命名页）——纯 JSON，想在 git
 里留下地图的历史就把它们提交进去。
 
 ### 图种
@@ -272,13 +272,25 @@ npm run verify   # 类型检查 + 测试 + 打包
 | 层 | 代码 | 职责 |
 | --- | --- | --- |
 | 0 domain | `src/domain/` | 地图值、结构不变量、纯操作 |
-| 1 store | `src/store/` | 原子化状态文件持久化、边界校验 |
+| 1 format | `src/store/format.ts` | 状态文件格式：重放校验的解析与序列化，零 I/O |
+| 1 store | `src/store/store.ts` | Node 上的原子化状态文件持久化 |
+| 1 semantics | `src/semantics/` | 媒介无关的视图语义：缩放阶梯、分组聚合、时序翻转 |
 | 2 apply | `src/server/apply.ts` | 工具输入 → 事务性操作序列 |
 | 3 server | `src/server/server.ts` | stdio 上的四个 MCP 工具 |
 | 4 render | `src/render/`、`src/watch/` | ASCII 渲染器和轮询面板 |
 
 `dist/` 是刻意提交的：插件安装就是克隆本仓库、不运行任何东西，所以入口
 文件以打包形式随仓库分发。
+
+### 库
+
+底部各层同时是一个库（`npm run build` 产出带类型声明的 `lib/`，npm 打包
+收录）。子路径导出与源码结构一一对应：`mellos-mapping/domain/types`、
+`/domain/ops`、`/format`、`/semantics` 是**浏览器安全**的——import 闭包中
+没有任何 Node 内建模块，由测试门禁守护——图形客户端（web 面板、编辑器
+视图）可以直接解析状态文件，并复用与终端面板完全一致的聚合与缩放语义。
+`/store`（Node 文件系统持久化）与 `/render`（终端渲染器）补齐 Node 宿主
+所需的完整表面。
 
 ## 许可证
 

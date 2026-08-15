@@ -43,8 +43,9 @@ import { realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { groupStatus, mapStatus } from '../domain/ops.js';
+import { mapStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
+import { type NeighborRef, diveParent, focusInfo, mostRecentKey, submapRefs } from '../semantics/semantics.js';
 import {
   type BoxHit,
   type ZoomStep,
@@ -66,6 +67,7 @@ import {
   listPageFiles,
   loadMapFile,
   makePageId,
+  migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
   takeFocusRequest,
@@ -157,16 +159,7 @@ export function mostRecentPageFile(
   files: readonly string[],
   mtimeOf: (file: string) => number | undefined,
 ): string | undefined {
-  let best: string | undefined;
-  let bestMtime = -Infinity;
-  for (const file of files) {
-    const mtime = mtimeOf(file);
-    if (mtime !== undefined && mtime > bestMtime) {
-      best = file;
-      bestMtime = mtime;
-    }
-  }
-  return best ?? files[0];
+  return mostRecentKey(files, mtimeOf);
 }
 
 const HIDE_CURSOR = '\x1b[?25l';
@@ -376,10 +369,7 @@ export function topLevelFiles(
   files: readonly string[],
   mapOf: ReadonlyMap<string, MellosMap | undefined>,
 ): string[] {
-  const refs = new Set<string>();
-  for (const m of mapOf.values()) {
-    for (const n of m?.nodes ?? []) if (n.submap !== undefined) refs.add(n.submap as string);
-  }
+  const refs = submapRefs(mapOf.values());
   return files.filter((f) => {
     const id = pageIdOfFile(defaultFile, f);
     return id === undefined || !refs.has(id as string);
@@ -399,12 +389,8 @@ export function diveOrigin(
 ): { parent: string; label: string } | undefined {
   const id = pageIdOfFile(defaultFile, file);
   if (id === undefined) return undefined;
-  for (const f of files) {
-    if (f === file) continue;
-    const node = mapOf.get(f)?.nodes.find((n) => (n.submap as string | undefined) === (id as string));
-    if (node !== undefined) return { parent: f, label: node.label };
-  }
-  return undefined;
+  const entries = files.filter((f) => f !== file).map((f) => [f, mapOf.get(f)] as const);
+  return diveParent(entries, id as string);
 }
 
 /** The hit whose center is nearest to (cx, cy) by Manhattan distance. */
@@ -442,34 +428,16 @@ export function nodePanel(
 ): PanelLine[] | undefined {
   const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
   const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
+  const focus = focusInfo(map, focusId);
+  if (focus === undefined) return undefined;
+  const refText = (r: NeighborRef): string =>
+    `${g(r.status)} ${r.label}${r.edgeLabel !== undefined ? ` (${r.edgeLabel})` : ''}`;
 
-  const group = map.groups.find((gr) => (gr.id as string) === focusId);
-  if (group) {
-    const members = map.nodes.filter((n) => n.group === group.id);
-    const memberIds = new Set(members.map((n) => n.id as string));
-    const status = groupStatus(map, group.id);
-    const layerName = map.layers.find((l) => l.id === group.layer)?.name ?? (group.layer as string);
+  if (focus.kind === 'group') {
+    const { group, status, layerName, members } = focus;
     const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
-    // A neighbour is shown as its own group when it has one, else as itself.
-    const repLabel = (id: string): string => {
-      const n = map.nodes.find((x) => (x.id as string) === id)!;
-      const owner = n.group !== undefined ? map.groups.find((gr) => gr.id === n.group) : undefined;
-      return owner !== undefined ? `${g(groupStatus(map, owner.id))} ${owner.label}` : `${g(n.status)} ${n.label}`;
-    };
-    const uses = [
-      ...new Set(
-        map.edges
-          .filter((e) => memberIds.has(e.from as string) && !memberIds.has(e.to as string))
-          .map((e) => repLabel(e.to as string)),
-      ),
-    ];
-    const usedBy = [
-      ...new Set(
-        map.edges
-          .filter((e) => memberIds.has(e.to as string) && !memberIds.has(e.from as string))
-          .map((e) => repLabel(e.from as string)),
-      ),
-    ];
+    const uses = focus.uses.map(refText);
+    const usedBy = focus.usedBy.map(refText);
     const lines: PanelLine[] = [
       {
         text: fitWidth(
@@ -489,28 +457,19 @@ export function nodePanel(
     return lines.slice(0, rows);
   }
 
-  const node = map.nodes.find((n) => (n.id as string) === focusId);
-  if (!node) return undefined;
+  const { node, layerName, laneLabel } = focus;
   const neutral = isNeutralKind(map);
-  const layerName = map.layers.find((l) => l.id === node.layer)?.name ?? (node.layer as string);
   const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
-  const withGlyph = (id: string): string => {
-    const n = map.nodes.find((x) => (x.id as string) === id);
-    return n ? `${g(n.status)} ${n.label}` : id;
-  };
   // An edge label rides along in parentheses: what flows between the nodes.
-  const withEdgeLabel = (base: string, label: string | undefined): string =>
-    label !== undefined ? `${base} (${label})` : base;
-  const uses = map.edges.filter((e) => e.from === node.id).map((e) => withEdgeLabel(withGlyph(e.to as string), e.label));
-  const usedBy = map.edges.filter((e) => e.to === node.id).map((e) => withEdgeLabel(withGlyph(e.from as string), e.label));
+  const uses = focus.uses.map(refText);
+  const usedBy = focus.usedBy.map(refText);
 
-  const pin = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
+  const pin = pinMark;
   // Documentation kinds hide the status vocabulary: kind glyph (or bullet)
   // instead of the status glyph, no status word, no status color.
   const headGlyph = neutral
     ? (node.kind !== undefined ? kindGlyph(node.kind as string, unicode) : undefined) ?? (unicode ? '·' : '.')
     : g(node.status);
-  const laneLabel = node.lane !== undefined ? map.lanes.find((l) => l.id === node.lane)?.label : undefined;
   const headParts = [
     `${headGlyph} ${node.label} [${node.id}]`,
     layerName,
@@ -799,6 +758,8 @@ export function mapPanel(
 
 function main(): void {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  // One-time move of a pre-0.19 `.claude` store into `.mellos` (store.ts).
+  migrateLegacyStore(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
 

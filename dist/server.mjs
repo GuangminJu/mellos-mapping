@@ -21388,13 +21388,66 @@ function removeLayer(map, id) {
   return ok({ ...map, layers: map.layers.filter((l) => l.id !== id) });
 }
 
-// src/render/render.ts
+// src/semantics/semantics.ts
 var ZOOM_MIN = -4;
 var ZOOM_MAX = 2;
 var ZOOM_DEFAULT = 0;
 function clampZoom(n) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(n)));
 }
+function zoomMode(zoom) {
+  if (zoom >= 1) return "detail";
+  if (zoom <= -4) return "overview";
+  return "boxes";
+}
+function isNeutralKind(map) {
+  return map.kind !== void 0 && map.kind !== "dev";
+}
+function aggregateMap(map) {
+  if (map.groups.length === 0) return void 0;
+  const representative = /* @__PURE__ */ new Map();
+  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
+  const nodes = map.groups.map((g) => {
+    const members = map.nodes.filter((n) => n.group === g.id);
+    const done = members.filter((n) => n.status === "done").length;
+    return {
+      id: g.id,
+      // neutral kinds document structure, not progress — no member counts
+      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
+      layer: g.layer,
+      status: groupStatus(map, g.id)
+    };
+  });
+  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
+  const seen = /* @__PURE__ */ new Set();
+  const edges = [];
+  for (const e of map.edges) {
+    const from = representative.get(e.from);
+    const to = representative.get(e.to);
+    if (from === to || seen.has(`${from}->${to}`)) continue;
+    seen.add(`${from}->${to}`);
+    edges.push({ from, to });
+  }
+  return {
+    ...map.title !== void 0 ? { title: map.title } : {},
+    ...map.kind !== void 0 ? { kind: map.kind } : {},
+    layers: map.layers,
+    groups: [],
+    lanes: map.lanes,
+    nodes,
+    edges
+  };
+}
+function flipForSequence(map) {
+  if (map.kind !== "sequence") return map;
+  return {
+    ...map,
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
+  };
+}
+
+// src/render/render.ts
 var WIDE_RANGES = [
   [4352, 4447],
   // Hangul Jamo
@@ -21659,9 +21712,6 @@ function kindGlyph(kind, unicode) {
   const pair = NODE_KIND_GLYPHS[kind];
   return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
 }
-function isNeutralKind(map) {
-  return map.kind !== void 0 && map.kind !== "dev";
-}
 function neutralSkin(unicode) {
   return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
 }
@@ -21671,21 +21721,23 @@ var LEFT_MARGIN = 2;
 var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
 var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
+  const m = zoomMode(zoom);
+  const mode = m === "overview" ? "constellation" : m;
   switch (zoom) {
     case 2:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_PLUS_BUDGET };
     case 1:
-      return { mode: "detail", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false, detail: DETAIL_BUDGET };
     case 0:
-      return { mode: "boxes", scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 1, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -1:
-      return { mode: "boxes", scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.85, pad: 1, boxGap: BOX_GAP, breathe: 1, titleGap: 1, barGap: 1, bandCounts: false };
     case -2:
-      return { mode: "boxes", scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
+      return { mode, scale: 0.7, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: false };
     case -3:
-      return { mode: "boxes", scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0.55, pad: 0, boxGap: 1, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
     case -4:
-      return { mode: "constellation", scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
+      return { mode, scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
 var LABEL_BUDGET_MIN = 4;
@@ -21733,41 +21785,6 @@ function renderMap(map, opts) {
   const built = buildCanvas(map, opts);
   return built.canvas.emit(opts);
 }
-function aggregateMap(map) {
-  if (map.groups.length === 0) return void 0;
-  const representative = /* @__PURE__ */ new Map();
-  for (const n of map.nodes) representative.set(n.id, n.group ?? n.id);
-  const nodes = map.groups.map((g) => {
-    const members = map.nodes.filter((n) => n.group === g.id);
-    const done = members.filter((n) => n.status === "done").length;
-    return {
-      id: g.id,
-      // neutral kinds document structure, not progress — no member counts
-      label: isNeutralKind(map) ? g.label : `${g.label} ${done}/${members.length}`,
-      layer: g.layer,
-      status: groupStatus(map, g.id)
-    };
-  });
-  for (const n of map.nodes) if (n.group === void 0) nodes.push(n);
-  const seen = /* @__PURE__ */ new Set();
-  const edges = [];
-  for (const e of map.edges) {
-    const from = representative.get(e.from);
-    const to = representative.get(e.to);
-    if (from === to || seen.has(`${from}->${to}`)) continue;
-    seen.add(`${from}->${to}`);
-    edges.push({ from, to });
-  }
-  return {
-    ...map.title !== void 0 ? { title: map.title } : {},
-    ...map.kind !== void 0 ? { kind: map.kind } : {},
-    layers: map.layers,
-    groups: [],
-    lanes: map.lanes,
-    nodes,
-    edges
-  };
-}
 var AGGREGATE_GEO = {
   mode: "boxes",
   scale: 1,
@@ -21778,14 +21795,6 @@ var AGGREGATE_GEO = {
   barGap: 1,
   bandCounts: false
 };
-function flipForSequence(map) {
-  if (map.kind !== "sequence") return map;
-  return {
-    ...map,
-    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
-    edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
-  };
-}
 function buildCanvas(map, opts) {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
@@ -22135,63 +22144,9 @@ function drawBox(canvas, box, opts, neutral, focused = false) {
 // src/store/store.ts
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+
+// src/store/format.ts
 var STATE_FILE_VERSION = 1;
-var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
-var PAGES_DIR_NAME = "mellos-mapping.pages";
-function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
-}
-var CONFIG_FILE_NAME = "mellos-mapping.config.json";
-var CONFIG_FILE_VERSION = 1;
-function configFilePath(defaultFile) {
-  return join(dirname(defaultFile), CONFIG_FILE_NAME);
-}
-var MAPPING_POLICIES = ["always", "complex", "on-request"];
-function makeMappingPolicy(raw) {
-  return MAPPING_POLICIES.includes(raw) ? ok(raw) : err({ kind: "invalid-policy", raw, allowed: MAPPING_POLICIES });
-}
-function describeMappingPolicy(policy) {
-  switch (policy) {
-    case "always":
-      return "map every structured task \u2014 workflows, designs, architecture, technical dependencies";
-    case "complex":
-      return "map only medium or complex tasks \u2014 several modules, a new subsystem, roughly an hour or more";
-    case "on-request":
-      return "map only when the user explicitly asks";
-  }
-}
-function loadMappingPolicy(defaultFile) {
-  const path = configFilePath(defaultFile);
-  let text2;
-  try {
-    text2 = readFileSync(path, "utf8");
-  } catch (e) {
-    if (e.code === "ENOENT") return ok(void 0);
-    throw e;
-  }
-  let raw;
-  try {
-    raw = JSON.parse(text2);
-  } catch (e) {
-    return err({ kind: "malformed-json", path, detail: e.message });
-  }
-  if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
-  if (raw["version"] !== CONFIG_FILE_VERSION) {
-    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${CONFIG_FILE_VERSION}` });
-  }
-  const rawPolicy = raw["policy"];
-  if (rawPolicy === void 0) return ok(void 0);
-  if (typeof rawPolicy !== "string") return err({ kind: "bad-shape", path, detail: "policy is not a string" });
-  const policy = makeMappingPolicy(rawPolicy);
-  return policy.ok ? ok(policy.value) : err({ kind: "bad-shape", path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(" | ")}` });
-}
-function saveMappingPolicy(defaultFile, policy) {
-  const path = configFilePath(defaultFile);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n", "utf8");
-  renameSync(tmp, path);
-}
 function describeStoreError(e) {
   switch (e.kind) {
     case "not-found":
@@ -22345,6 +22300,84 @@ function serializeMap(map) {
     edges: map.edges
   };
   return JSON.stringify(body, null, 2) + "\n";
+}
+
+// src/store/store.ts
+var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+var PAGES_DIR_NAME = "pages";
+function pageFilePath(defaultFile, page) {
+  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+}
+var CONFIG_FILE_NAME = "config.json";
+var CONFIG_FILE_VERSION = 1;
+function configFilePath(defaultFile) {
+  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+var MAPPING_POLICIES = ["always", "complex", "on-request"];
+function makeMappingPolicy(raw) {
+  return MAPPING_POLICIES.includes(raw) ? ok(raw) : err({ kind: "invalid-policy", raw, allowed: MAPPING_POLICIES });
+}
+function describeMappingPolicy(policy) {
+  switch (policy) {
+    case "always":
+      return "map every structured task \u2014 workflows, designs, architecture, technical dependencies";
+    case "complex":
+      return "map only medium or complex tasks \u2014 several modules, a new subsystem, roughly an hour or more";
+    case "on-request":
+      return "map only when the user explicitly asks";
+  }
+}
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function loadMappingPolicy(defaultFile) {
+  const path = configFilePath(defaultFile);
+  let text2;
+  try {
+    text2 = readFileSync(path, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") return ok(void 0);
+    throw e;
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text2);
+  } catch (e) {
+    return err({ kind: "malformed-json", path, detail: e.message });
+  }
+  if (!isRecord2(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
+  if (raw["version"] !== CONFIG_FILE_VERSION) {
+    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${CONFIG_FILE_VERSION}` });
+  }
+  const rawPolicy = raw["policy"];
+  if (rawPolicy === void 0) return ok(void 0);
+  if (typeof rawPolicy !== "string") return err({ kind: "bad-shape", path, detail: "policy is not a string" });
+  const policy = makeMappingPolicy(rawPolicy);
+  return policy.ok ? ok(policy.value) : err({ kind: "bad-shape", path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(" | ")}` });
+}
+function saveMappingPolicy(defaultFile, policy) {
+  const path = configFilePath(defaultFile);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
+}
+var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
+var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
+function migrateLegacyStore(defaultFile) {
+  const projectRoot = dirname(dirname(defaultFile));
+  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
+  const hasCurrent = existsSync(defaultFile) || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME)) || existsSync(configFilePath(defaultFile));
+  if (!hasLegacy || hasCurrent) return false;
+  mkdirSync(dirname(defaultFile), { recursive: true });
+  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
+  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
+  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  return true;
 }
 function loadMapFile(path) {
   let text2;
@@ -22753,7 +22786,9 @@ function resolveStateFile(env, cwd) {
   return join2(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 async function main() {
-  const server = buildServer(resolveStateFile(process.env, process.cwd()));
+  const stateFile = resolveStateFile(process.env, process.cwd());
+  migrateLegacyStore(stateFile);
+  const server = buildServer(stateFile);
   await server.connect(new StdioServerTransport());
 }
 function launchedAsEntry(argv1, moduleUrl) {
