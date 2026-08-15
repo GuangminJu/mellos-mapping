@@ -151,6 +151,95 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
   return id.ok ? { page: id.value } : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// mapping policy — WHEN the assistant should open a map, chosen by the user
+// ---------------------------------------------------------------------------
+//
+// Plugin configuration, not map data: it never enters a MellosMap and the
+// ledger never enforces it (the ledger is not a judge). It lives in its own
+// sibling file so hand-editing or corrupting it can never touch a map.
+
+/** Sibling of the default file holding the project's plugin configuration. */
+export const CONFIG_FILE_NAME = 'mellos-mapping.config.json';
+
+/** On-disk config format version. Bump only with a documented migration. */
+export const CONFIG_FILE_VERSION = 1;
+
+export function configFilePath(defaultFile: string): string {
+  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+
+export const MAPPING_POLICIES = ['always', 'complex', 'on-request'] as const;
+
+/** How eagerly maps are opened; 'complex' is the behavior of an unconfigured project. */
+export type MappingPolicy = (typeof MAPPING_POLICIES)[number];
+
+export interface InvalidPolicy {
+  readonly kind: 'invalid-policy';
+  readonly raw: string;
+  readonly allowed: readonly string[];
+}
+
+export function makeMappingPolicy(raw: string): Result<MappingPolicy, InvalidPolicy> {
+  return (MAPPING_POLICIES as readonly string[]).includes(raw)
+    ? ok(raw as MappingPolicy)
+    : err({ kind: 'invalid-policy', raw, allowed: MAPPING_POLICIES });
+}
+
+/** One line of meaning per policy — the wording every surface repeats. */
+export function describeMappingPolicy(policy: MappingPolicy): string {
+  switch (policy) {
+    case 'always':
+      return 'map every structured task — workflows, designs, architecture, technical dependencies';
+    case 'complex':
+      return 'map only medium or complex tasks — several modules, a new subsystem, roughly an hour or more';
+    case 'on-request':
+      return 'map only when the user explicitly asks';
+  }
+}
+
+/**
+ * The configured policy, or ok(undefined) when the project has never been
+ * set up (missing file or missing key — both mean "nobody chose yet").
+ * A file that exists but does not parse is an error, never silently ignored.
+ */
+export function loadMappingPolicy(defaultFile: string): Result<MappingPolicy | undefined, StoreError> {
+  const path = configFilePath(defaultFile);
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return ok(undefined);
+    throw e; // unexpected I/O fault: fail fast, nothing meaningful to recover here
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    return err({ kind: 'malformed-json', path, detail: (e as Error).message });
+  }
+  if (!isRecord(raw)) return err({ kind: 'bad-shape', path, detail: 'root is not an object' });
+  if (raw['version'] !== CONFIG_FILE_VERSION) {
+    return err({ kind: 'bad-shape', path, detail: `version is ${String(raw['version'])}, expected ${CONFIG_FILE_VERSION}` });
+  }
+  const rawPolicy = raw['policy'];
+  if (rawPolicy === undefined) return ok(undefined);
+  if (typeof rawPolicy !== 'string') return err({ kind: 'bad-shape', path, detail: 'policy is not a string' });
+  const policy = makeMappingPolicy(rawPolicy);
+  return policy.ok
+    ? ok(policy.value)
+    : err({ kind: 'bad-shape', path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(' | ')}` });
+}
+
+/** Persist the policy atomically (P2), same temp-and-rename as the map files. */
+export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): void {
+  const path = configFilePath(defaultFile);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = path + '.tmp';
+  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + '\n', 'utf8');
+  renameSync(tmp, path);
+}
+
 export type StoreError =
   | { readonly kind: 'not-found'; readonly path: string }
   | { readonly kind: 'malformed-json'; readonly path: string; readonly detail: string }

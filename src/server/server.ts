@@ -1,10 +1,11 @@
 /**
- * Layer 3 — the MCP server: four tools over one state file.
+ * Layer 3 — the MCP server: five tools over one state file.
  *
  *   mmap_declare  grow the map (title, bands, nodes, edges)
  *   mmap_update   record progress (status / label / evidence)
  *   mmap_remove   revise the map (edges, nodes, empty bands)
  *   mmap_view     render the current map as text
+ *   mmap_setup    get/set the project's mapping policy (when maps open)
  *
  * Every mutating call is load -> apply (all-or-nothing, Layer 2) -> save
  * (atomic, Layer 1). The server holds no map state between calls: the file
@@ -28,12 +29,18 @@ import { z } from 'zod';
 import { EMPTY_MAP, type MellosMap, type Result } from '../domain/types.js';
 import { ZOOM_MAX, ZOOM_MIN, clampZoom, renderMap } from '../render/render.js';
 import {
+  MAPPING_POLICIES,
+  type MappingPolicy,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
+  configFilePath,
+  describeMappingPolicy,
   describeStoreError,
   loadMapFile,
+  loadMappingPolicy,
   pageFilePath,
   saveMapFile,
+  saveMappingPolicy,
 } from '../store/store.js';
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
@@ -115,6 +122,24 @@ export function buildServer(stateFile: string): McpServer {
     return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
+  /**
+   * The setup flow enforces itself here: every declare on a project whose
+   * policy was never chosen carries the nudge, so ANY client — skill loaded
+   * or not — is told to run setup exactly until the user has answered. It
+   * never blocks (the ledger is not a judge); a broken config file is
+   * surfaced the same way instead of being silently treated as unset.
+   */
+  const setupNudge = (): string => {
+    const policy = loadMappingPolicy(stateFile);
+    if (!policy.ok) return `\nnote: ${describeStoreError(policy.error)} — fix it or rerun setup (mmap_setup).`;
+    if (policy.value !== undefined) return '';
+    return (
+      '\nnote: mapping policy not set for this project. Ask the user when maps should open — ' +
+      MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join('; ') +
+      ' — then record the answer with mmap_setup.'
+    );
+  };
+
   server.registerTool(
     'mmap_declare',
     {
@@ -185,7 +210,12 @@ export function buildServer(stateFile: string): McpServer {
           .optional(),
       },
     },
-    (input) => mutate(input.page, (map) => applyDeclare(map, input)),
+    (input) => {
+      const result = mutate(input.page, (map) => applyDeclare(map, input));
+      if (result.isError === true) return result;
+      const nudge = setupNudge();
+      return nudge === '' ? result : text((result.content[0]?.text ?? '') + nudge);
+    },
   );
 
   server.registerTool(
@@ -247,6 +277,48 @@ export function buildServer(stateFile: string): McpServer {
       },
     },
     (input) => mutate(input.page, (map) => applyRemove(map, input)),
+  );
+
+  server.registerTool(
+    'mmap_setup',
+    {
+      title: 'Configure when maps open',
+      description:
+        "Get or set this project's mapping policy — WHEN the assistant opens a Mellos map. " +
+        'Call with no arguments to read it. If it reports "not set", ask the USER to choose ' +
+        '(never pick for them): always = ' +
+        describeMappingPolicy('always') +
+        '; complex = ' +
+        describeMappingPolicy('complex') +
+        '; on-request = ' +
+        describeMappingPolicy('on-request') +
+        '. Then call again with their choice to persist it. The policy guides you; it never ' +
+        'blocks the tools, and an explicit user request for a map always wins.',
+      inputSchema: {
+        policy: z
+          .enum(MAPPING_POLICIES)
+          .optional()
+          .describe("the user's choice to persist; omit to read the current policy"),
+      },
+    },
+    (input) => {
+      if (input.policy !== undefined) {
+        // zod enforced the enum; the cast at this boundary cannot widen it
+        const policy = input.policy as MappingPolicy;
+        saveMappingPolicy(stateFile, policy);
+        return text(`mapping policy set: ${policy} — ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
+      }
+      const loaded = loadMappingPolicy(stateFile);
+      if (!loaded.ok) return text(describeStoreError(loaded.error), true);
+      if (loaded.value === undefined) {
+        return text(
+          'mapping policy not set. Ask the user to choose one of: ' +
+            MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join('; ') +
+            ' — then call mmap_setup with their choice. Until then act as complex.',
+        );
+      }
+      return text(`mapping policy: ${loaded.value} — ${describeMappingPolicy(loaded.value)}`);
+    },
   );
 
   server.registerTool(

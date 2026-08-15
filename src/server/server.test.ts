@@ -5,7 +5,7 @@
  * watcher-visible file actually changes.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,9 +42,9 @@ async function callText(name: string, args: Record<string, unknown>): Promise<{ 
 }
 
 describe('mellos-mapping MCP server', () => {
-  it('exposes exactly the four mmap tools', async () => {
+  it('exposes exactly the five mmap tools', async () => {
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(['mmap_declare', 'mmap_remove', 'mmap_update', 'mmap_view']);
+    expect(tools).toEqual(['mmap_declare', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
   });
 
   it('declares a ghost design and persists it to the project state file', async () => {
@@ -61,7 +61,7 @@ describe('mellos-mapping MCP server', () => {
       edges: [{ from: 'shell', to: 'core' }],
     });
     expect(declared.isError).toBe(false);
-    expect(declared.text).toBe('map now: 2 layer(s), 2 node(s) [2 planned], 1 edge(s)');
+    expect(declared.text).toContain('map now: 2 layer(s), 2 node(s) [2 planned], 1 edge(s)');
 
     const onDisk = JSON.parse(readFileSync(stateFile, 'utf8')) as { title: string; nodes: unknown[] };
     expect(onDisk.title).toBe('演示');
@@ -149,6 +149,62 @@ describe('mellos-mapping MCP server', () => {
     const removed = await callText('mmap_remove', { nodes: ['shell'] });
     expect(removed.isError).toBe(false);
     expect(removed.text).toBe('map now: 2 layer(s), 1 node(s) [1 planned], 0 edge(s)');
+  });
+});
+
+describe('mapping policy setup — the flow enforces itself over the wire', () => {
+  const DECLARE = {
+    layers: [{ id: 'base', name: 'Base', rank: 0 }],
+    nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
+  };
+
+  it('a declare on an unconfigured project carries the setup nudge; configuring stops it', async () => {
+    const first = await callText('mmap_declare', DECLARE);
+    expect(first.isError).toBe(false);
+    expect(first.text).toContain('mapping policy not set');
+    for (const option of ['always', 'complex', 'on-request']) expect(first.text).toContain(option);
+    expect(first.text).toContain('Ask the user');
+
+    const set = await callText('mmap_setup', { policy: 'complex' });
+    expect(set.isError).toBe(false);
+    expect(set.text).toContain('mapping policy set: complex');
+    const configFile = join(dir, '.claude', 'mellos-mapping.config.json');
+    expect(JSON.parse(readFileSync(configFile, 'utf8'))).toEqual({ version: 1, policy: 'complex' });
+
+    const second = await callText('mmap_declare', { nodes: [{ id: 'more', label: 'More', layer: 'base' }] });
+    expect(second.isError).toBe(false);
+    expect(second.text).not.toContain('note:');
+  });
+
+  it('reads back: unconfigured hands the question to the user, configured reports the choice', async () => {
+    const unset = await callText('mmap_setup', {});
+    expect(unset.isError).toBe(false);
+    expect(unset.text).toContain('mapping policy not set');
+    expect(unset.text).toContain('Ask the user');
+
+    await callText('mmap_setup', { policy: 'on-request' });
+    const read = await callText('mmap_setup', {});
+    expect(read.text).toBe('mapping policy: on-request — map only when the user explicitly asks');
+  });
+
+  it('rejects a policy outside the enum at the schema boundary', async () => {
+    const bad = await callText('mmap_setup', { policy: 'sometimes' });
+    expect(bad.isError).toBe(true);
+  });
+
+  it('a broken config file is surfaced on declare and on read, never treated as unset', async () => {
+    const configFile = join(dir, '.claude', 'mellos-mapping.config.json');
+    await callText('mmap_declare', DECLARE); // creates .claude/
+    writeFileSync(configFile, 'not json');
+
+    const read = await callText('mmap_setup', {});
+    expect(read.isError).toBe(true);
+    expect(read.text).toContain('not valid JSON');
+
+    const declared = await callText('mmap_declare', { nodes: [{ id: 'more', label: 'More', layer: 'base' }] });
+    expect(declared.isError).toBe(false); // the ledger still works —
+    expect(declared.text).toContain('note:'); // — but the breakage is named
+    expect(declared.text).toContain('not valid JSON');
   });
 });
 

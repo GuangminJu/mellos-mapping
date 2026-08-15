@@ -22,14 +22,19 @@ import {
   type SubmapRef,
 } from '../domain/types.js';
 import {
+  configFilePath,
+  describeMappingPolicy,
   focusFilePath,
   listPageFiles,
   loadMapFile,
+  loadMappingPolicy,
+  makeMappingPolicy,
   makePageId,
   pageFilePath,
   pageIdOfFile,
   parseMap,
   saveMapFile,
+  saveMappingPolicy,
   serializeMap,
   takeFocusRequest,
 } from './store.js';
@@ -276,6 +281,58 @@ describe('focus requests — one-shot "show this page" channel', () => {
       expect(takeFocusRequest(defaultFile)).toBeUndefined();
       expect(existsSync(focusFilePath(defaultFile))).toBe(false);
     }
+  });
+});
+
+describe('mapping policy — project setup choice', () => {
+  it('the config file sits beside the default file', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    expect(configFilePath(defaultFile)).toBe(join(dir, 'mellos-mapping.config.json'));
+  });
+
+  it('validates the policy value at the boundary', () => {
+    for (const p of ['always', 'complex', 'on-request']) expect(makeMappingPolicy(p)).toEqual({ ok: true, value: p });
+    const bad = makeMappingPolicy('sometimes');
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error).toEqual({ kind: 'invalid-policy', raw: 'sometimes', allowed: ['always', 'complex', 'on-request'] });
+  });
+
+  it('save then load round-trips, atomically and with no temp file behind', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    saveMappingPolicy(defaultFile, 'on-request');
+    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: 'on-request' });
+    expect(readdirSync(dir)).toEqual(['mellos-mapping.config.json']);
+    saveMappingPolicy(defaultFile, 'always'); // a re-run of setup overwrites
+    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: 'always' });
+  });
+
+  it('an unconfigured project is ok(undefined), never an error', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: undefined }); // no file
+    writeFileSync(configFilePath(defaultFile), '{"version":1}\n');
+    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: undefined }); // no key
+  });
+
+  it('a config file that exists but is broken is an error, never silently ignored', () => {
+    const defaultFile = join(dir, 'mellos-mapping.json');
+    const cases: Array<[string, string]> = [
+      ['not json', 'malformed-json'],
+      ['{"version":99,"policy":"always"}', 'bad-shape'],
+      ['{"version":1,"policy":"sometimes"}', 'bad-shape'],
+      ['{"version":1,"policy":5}', 'bad-shape'],
+    ];
+    for (const [content, kind] of cases) {
+      writeFileSync(configFilePath(defaultFile), content);
+      const loaded = loadMappingPolicy(defaultFile);
+      expect(loaded.ok).toBe(false);
+      if (!loaded.ok) expect(loaded.error.kind).toBe(kind);
+    }
+  });
+
+  it('every policy has a one-line meaning for the surfaces to repeat', () => {
+    expect(describeMappingPolicy('always')).toContain('every structured task');
+    expect(describeMappingPolicy('complex')).toContain('medium or complex');
+    expect(describeMappingPolicy('on-request')).toContain('explicitly asks');
   });
 });
 
