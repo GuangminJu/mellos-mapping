@@ -22,6 +22,7 @@ import {
   type SubmapRef,
 } from '../domain/types.js';
 import {
+  STATE_FILE_RELATIVE_PATH,
   configFilePath,
   describeMappingPolicy,
   focusFilePath,
@@ -30,6 +31,7 @@ import {
   loadMappingPolicy,
   makeMappingPolicy,
   makePageId,
+  migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
   parseMap,
@@ -86,15 +88,15 @@ afterEach(() => {
 
 describe('round-trip (P1 + P2)', () => {
   it('save then load reproduces the map exactly', () => {
-    const path = join(dir, '.claude', 'mellos-mapping.json');
+    const path = join(dir, '.mellos', 'map.json');
     saveMapFile(path, sampleMap());
     expect(must(loadMapFile(path))).toEqual(sampleMap());
   });
 
   it('creates the parent directory and leaves no temp file behind', () => {
-    const path = join(dir, '.claude', 'mellos-mapping.json');
+    const path = join(dir, '.mellos', 'map.json');
     saveMapFile(path, sampleMap());
-    expect(readdirSync(join(dir, '.claude'))).toEqual(['mellos-mapping.json']);
+    expect(readdirSync(join(dir, '.mellos'))).toEqual(['map.json']);
   });
 
   it('serializes deterministically', () => {
@@ -226,17 +228,17 @@ describe('pages — one effort, one file', () => {
   });
 
   it('maps the default page to the classic file and named pages to the pages dir', () => {
-    const defaultFile = join(dir, '.claude', 'mellos-mapping.json');
+    const defaultFile = join(dir, '.mellos', 'map.json');
     expect(pageFilePath(defaultFile)).toBe(defaultFile);
     const named = pageFilePath(defaultFile, must(makePageId('pages')));
-    expect(named).toBe(join(dir, '.claude', 'mellos-mapping.pages', 'pages.json'));
+    expect(named).toBe(join(dir, '.mellos', 'pages', 'pages.json'));
     // path -> id roundtrip
     expect(pageIdOfFile(defaultFile, defaultFile)).toBeUndefined();
     expect(pageIdOfFile(defaultFile, named)).toBe('pages');
   });
 
   it('lists existing pages: default first, then named pages sorted by slug', () => {
-    const defaultFile = join(dir, '.claude', 'mellos-mapping.json');
+    const defaultFile = join(dir, '.mellos', 'map.json');
     expect(listPageFiles(defaultFile)).toEqual([]); // nothing yet
     saveMapFile(pageFilePath(defaultFile, must(makePageId('zeta'))), sampleMap());
     saveMapFile(pageFilePath(defaultFile, must(makePageId('alpha'))), sampleMap());
@@ -250,16 +252,16 @@ describe('pages — one effort, one file', () => {
 
 describe('focus requests — one-shot "show this page" channel', () => {
   it('the focus file sits beside the default file', () => {
-    const defaultFile = join(dir, 'mellos-mapping.json');
-    expect(focusFilePath(defaultFile)).toBe(join(dir, 'mellos-mapping.focus'));
+    const defaultFile = join(dir, 'map.json');
+    expect(focusFilePath(defaultFile)).toBe(join(dir, 'focus'));
   });
 
   it('no file means no request', () => {
-    expect(takeFocusRequest(join(dir, 'mellos-mapping.json'))).toBeUndefined();
+    expect(takeFocusRequest(join(dir, 'map.json'))).toBeUndefined();
   });
 
   it('consuming a request returns the page AND deletes the file (one-shot)', () => {
-    const defaultFile = join(dir, 'mellos-mapping.json');
+    const defaultFile = join(dir, 'map.json');
     writeFileSync(focusFilePath(defaultFile), '{"page":"page-focus"}');
     expect(takeFocusRequest(defaultFile)).toEqual({ page: 'page-focus' });
     expect(existsSync(focusFilePath(defaultFile))).toBe(false);
@@ -267,7 +269,7 @@ describe('focus requests — one-shot "show this page" channel', () => {
   });
 
   it('page null (or absent) requests the default page', () => {
-    const defaultFile = join(dir, 'mellos-mapping.json');
+    const defaultFile = join(dir, 'map.json');
     writeFileSync(focusFilePath(defaultFile), '{"page":null}');
     expect(takeFocusRequest(defaultFile)).toEqual({ page: undefined });
     writeFileSync(focusFilePath(defaultFile), '{}');
@@ -275,7 +277,7 @@ describe('focus requests — one-shot "show this page" channel', () => {
   });
 
   it('junk in the channel is no request, and the delete sweeps it', () => {
-    const defaultFile = join(dir, 'mellos-mapping.json');
+    const defaultFile = join(dir, 'map.json');
     for (const junk of ['not json', '"just-a-string"', '{"page":5}', '{"page":"NOT A SLUG"}']) {
       writeFileSync(focusFilePath(defaultFile), junk);
       expect(takeFocusRequest(defaultFile)).toBeUndefined();
@@ -287,7 +289,7 @@ describe('focus requests — one-shot "show this page" channel', () => {
 describe('mapping policy — project setup choice', () => {
   it('the config file sits beside the default file', () => {
     const defaultFile = join(dir, 'mellos-mapping.json');
-    expect(configFilePath(defaultFile)).toBe(join(dir, 'mellos-mapping.config.json'));
+    expect(configFilePath(defaultFile)).toBe(join(dir, 'config.json'));
   });
 
   it('validates the policy value at the boundary', () => {
@@ -301,7 +303,7 @@ describe('mapping policy — project setup choice', () => {
     const defaultFile = join(dir, 'mellos-mapping.json');
     saveMappingPolicy(defaultFile, 'on-request');
     expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: 'on-request' });
-    expect(readdirSync(dir)).toEqual(['mellos-mapping.config.json']);
+    expect(readdirSync(dir)).toEqual(['config.json']);
     saveMappingPolicy(defaultFile, 'always'); // a re-run of setup overwrites
     expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: 'always' });
   });
@@ -349,5 +351,33 @@ describe('atomicity (P2)', () => {
     expect(after).toBe(serializeMap(next));
     expect(after).not.toBe(before);
     expect(readdirSync(dir)).toEqual(['map.json']);
+  });
+});
+
+describe('legacy store migration (.claude -> .mellos)', () => {
+  it('moves a legacy store once, pages included', () => {
+    const legacyDefault = join(dir, '.claude', 'mellos-mapping.json');
+    saveMapFile(legacyDefault, sampleMap());
+    saveMapFile(join(dir, '.claude', 'mellos-mapping.pages', 'side.json'), sampleMap());
+    const defaultFile = join(dir, STATE_FILE_RELATIVE_PATH);
+    expect(migrateLegacyStore(defaultFile)).toBe(true);
+    expect(must(loadMapFile(defaultFile))).toEqual(sampleMap());
+    expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual([undefined, 'side']);
+    expect(existsSync(legacyDefault)).toBe(false);
+    // Second call is a no-op: the move happens exactly once.
+    expect(migrateLegacyStore(defaultFile)).toBe(false);
+  });
+
+  it('never merges into a project whose new store already holds anything', () => {
+    const defaultFile = join(dir, STATE_FILE_RELATIVE_PATH);
+    saveMapFile(defaultFile, sampleMap());
+    const legacyDefault = join(dir, '.claude', 'mellos-mapping.json');
+    saveMapFile(legacyDefault, sampleMap());
+    expect(migrateLegacyStore(defaultFile)).toBe(false);
+    expect(existsSync(legacyDefault)).toBe(true);
+  });
+
+  it('a project with no store anywhere is a no-op', () => {
+    expect(migrateLegacyStore(join(dir, STATE_FILE_RELATIVE_PATH))).toBe(false);
   });
 });

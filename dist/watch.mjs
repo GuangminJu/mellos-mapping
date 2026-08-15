@@ -1209,8 +1209,8 @@ function parseMap(raw, path) {
 }
 
 // src/store/store.ts
-var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
-var PAGES_DIR_NAME = "mellos-mapping.pages";
+var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
   return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
 }
@@ -1232,7 +1232,7 @@ function listPageFiles(defaultFile) {
   }
   return out;
 }
-var FOCUS_FILE_NAME = "mellos-mapping.focus";
+var FOCUS_FILE_NAME = "focus";
 function focusFilePath(defaultFile) {
   return join(dirname(defaultFile), FOCUS_FILE_NAME);
 }
@@ -1260,6 +1260,27 @@ function takeFocusRequest(defaultFile) {
   if (typeof page !== "string") return void 0;
   const id = makePageId(page);
   return id.ok ? { page: id.value } : void 0;
+}
+var CONFIG_FILE_NAME = "config.json";
+function configFilePath(defaultFile) {
+  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
+var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
+function migrateLegacyStore(defaultFile) {
+  const projectRoot = dirname(dirname(defaultFile));
+  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
+  const hasCurrent = existsSync(defaultFile) || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME)) || existsSync(configFilePath(defaultFile));
+  if (!hasLegacy || hasCurrent) return false;
+  mkdirSync(dirname(defaultFile), { recursive: true });
+  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
+  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
+  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  return true;
 }
 function loadMapFile(path) {
   let text;
@@ -1729,6 +1750,7 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
 }
 function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  migrateLegacyStore(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";

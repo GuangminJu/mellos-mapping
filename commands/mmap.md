@@ -15,11 +15,11 @@ confirm what was saved and where. Then stop.
 
 Otherwise: open the live Mellos map watcher for this project in a separate terminal pane.
 The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`. The store is
-MULTI-PAGE: the default page lives at `.claude/mellos-mapping.json` and named
-pages at `.claude/mellos-mapping.pages/<slug>.json` — the watcher takes the
+MULTI-PAGE: the default page lives at `.mellos/map.json` and named
+pages at `.mellos/pages/<slug>.json` — the watcher takes the
 default path as its base, polls ALL of these files, and redraws on change.
 The default file is optional; a project whose work lives on named pages has
-no `.claude/mellos-mapping.json` at all. So never probe that single file to
+no `.mellos/map.json` at all. So never probe that single file to
 decide whether a map exists — call `mmap_view`, which reads the real store.
 
 Follow the platform-appropriate route:
@@ -61,11 +61,11 @@ Follow the platform-appropriate route:
    running (default is to skip).
 
 2. **tmux session**: run
-   `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json" --page <PAGE_SLUG>`
+   `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
    (same `--page` judgment as route 1; omit it when no page is the subject).
 
 3. **Neither**: print the command
-   `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.claude/mellos-mapping.json" --page <PAGE_SLUG>`
+   `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
    and tell the user to run it in any second terminal themselves (add
    `--ascii` if their font lacks box-drawing characters).
 

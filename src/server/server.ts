@@ -36,6 +36,7 @@ import {
   configFilePath,
   describeMappingPolicy,
   describeStoreError,
+  migrateLegacyStore,
   loadMapFile,
   loadMappingPolicy,
   pageFilePath,
@@ -357,7 +358,10 @@ export function resolveStateFile(env: NodeJS.ProcessEnv, cwd: string): string {
 }
 
 async function main(): Promise<void> {
-  const server = buildServer(resolveStateFile(process.env, process.cwd()));
+  const stateFile = resolveStateFile(process.env, process.cwd());
+  // One-time move of a pre-0.19 `.claude` store into `.mellos` (store.ts).
+  migrateLegacyStore(stateFile);
+  const server = buildServer(stateFile);
   await server.connect(new StdioServerTransport());
 }
 

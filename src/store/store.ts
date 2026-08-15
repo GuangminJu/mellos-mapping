@@ -35,20 +35,26 @@ export {
   serializeMap,
 } from './format.js';
 
-/** Project-relative location of the DEFAULT page's state file. */
-export const STATE_FILE_RELATIVE_PATH = join('.claude', 'mellos-mapping.json');
+/**
+ * Project-relative location of the DEFAULT page's state file. The store lives
+ * in the tool-owned `.mellos/` directory: the map belongs to mellos-mapping,
+ * not to whichever host (Claude Code, Codex, a harness) happens to drive the
+ * server, so no host brand appears in the path. Pre-0.19 stores under
+ * `.claude/` are moved once by {@link migrateLegacyStore}.
+ */
+export const STATE_FILE_RELATIVE_PATH = join('.mellos', 'map.json');
 
 // ---------------------------------------------------------------------------
 // pages — a project may keep several maps side by side (one effort = one page)
 // ---------------------------------------------------------------------------
 //
-// The default page IS the classic mellos-mapping.json, so existing maps stay
-// where they are. Named pages live in a sibling directory, one file each:
-// file-per-page keeps concurrent sessions isolated — two writers on two pages
-// can never clobber each other, because every save renames a whole file.
+// The default page IS the classic map.json. Named pages live in a sibling
+// directory, one file each: file-per-page keeps concurrent sessions isolated —
+// two writers on two pages can never clobber each other, because every save
+// renames a whole file.
 
 /** Directory (next to the default file) holding the named pages. */
-export const PAGES_DIR_NAME = 'mellos-mapping.pages';
+export const PAGES_DIR_NAME = 'pages';
 
 /** Where a page's map file lives, given the default page's file path. */
 export function pageFilePath(defaultFile: string, page?: PageId): string {
@@ -90,7 +96,7 @@ export function listPageFiles(defaultFile: string): string[] {
 // status barely ever sees the file exist.
 
 /** Sibling of the default file carrying a one-shot "show this page" request. */
-export const FOCUS_FILE_NAME = 'mellos-mapping.focus';
+export const FOCUS_FILE_NAME = 'focus';
 
 export function focusFilePath(defaultFile: string): string {
   return join(dirname(defaultFile), FOCUS_FILE_NAME);
@@ -144,7 +150,7 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
 // sibling file so hand-editing or corrupting it can never touch a map.
 
 /** Sibling of the default file holding the project's plugin configuration. */
-export const CONFIG_FILE_NAME = 'mellos-mapping.config.json';
+export const CONFIG_FILE_NAME = 'config.json';
 
 /** On-disk config format version. Bump only with a documented migration. */
 export const CONFIG_FILE_VERSION = 1;
@@ -227,6 +233,48 @@ export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): v
   writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + '\n', 'utf8');
   renameSync(tmp, path);
 }
+
+// ---------------------------------------------------------------------------
+// legacy migration — stores written under the old host-coupled location
+// ---------------------------------------------------------------------------
+//
+// Up to 0.18 the store lived in `.claude/mellos-mapping.*`: the map's home
+// was coupled to one host brand, which turned absurd the moment another host
+// (a harness, Codex) drove the same server. The move is one-time and
+// explicit — entry points call it before touching the store; nothing here
+// runs as a hidden side effect of ordinary loads.
+
+/** Project-relative location of the pre-0.20 default page file. */
+export const LEGACY_STATE_FILE_RELATIVE_PATH = join('.claude', 'mellos-mapping.json');
+const LEGACY_PAGES_DIR_NAME = 'mellos-mapping.pages';
+const LEGACY_CONFIG_FILE_NAME = 'mellos-mapping.config.json';
+
+/**
+ * Move a legacy `.claude` store — map, pages, and mapping-policy config —
+ * into the tool-owned `.mellos` location. Never merges: a project whose new
+ * store already holds anything keeps it untouched, whatever the legacy
+ * directory still contains.
+ * @param defaultFile - the NEW default page path (`<root>/.mellos/map.json`);
+ *   the legacy store is looked up relative to `<root>`.
+ * @returns whether a legacy store was moved.
+ */
+export function migrateLegacyStore(defaultFile: string): boolean {
+  const projectRoot = dirname(dirname(defaultFile));
+  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
+  const hasCurrent = existsSync(defaultFile)
+    || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME))
+    || existsSync(configFilePath(defaultFile));
+  if (!hasLegacy || hasCurrent) return false;
+  mkdirSync(dirname(defaultFile), { recursive: true });
+  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
+  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
+  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  return true;
+}
+
 /** Load and validate the map file at `path`. */
 export function loadMapFile(path: string): Result<MellosMap, StoreError> {
   let text: string;

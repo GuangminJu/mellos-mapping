@@ -147,7 +147,7 @@ npx -y mellos-mapping
 ```
 
 The map file lands in the client session's working directory
-(`.claude/mellos-mapping.json`). Open the live pane from the same project:
+(`.mellos/map.json`). Open the live pane from the same project:
 
 ```
 npx -y -p mellos-mapping mellos-mapping-watch
@@ -224,8 +224,8 @@ its own pan, zoom and pinned node. Because every page is its own file, two
 Claude sessions writing two pages can never clobber each other — this is
 also the answer to running several Claude sessions in one project.
 
-State lives in `.claude/mellos-mapping.json` (the default page) plus
-`.claude/mellos-mapping.pages/<page>.json` for named pages — plain JSON,
+State lives in `.mellos/map.json` (the default page) plus
+`.mellos/pages/<page>.json` for named pages — plain JSON,
 safe to commit if you want the maps' history in git.
 
 ### Diagram kinds

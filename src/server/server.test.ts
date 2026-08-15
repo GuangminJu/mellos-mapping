@@ -23,7 +23,7 @@ let stateFile: string;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mellos-mapping-server-'));
-  stateFile = join(dir, '.claude', 'mellos-mapping.json');
+  stateFile = join(dir, '.mellos', 'map.json');
   const server = buildServer(stateFile);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'spec-client', version: '0.0.0' });
@@ -123,7 +123,7 @@ describe('mellos-mapping MCP server', () => {
     expect(paged.text).toContain('[page: pages-feature]');
 
     // the page landed in its own file; the default page is untouched
-    const pageFile = join(dir, '.claude', 'mellos-mapping.pages', 'pages-feature.json');
+    const pageFile = join(dir, '.mellos', 'pages', 'pages-feature.json');
     expect((JSON.parse(readFileSync(pageFile, 'utf8')) as { title: string }).title).toBe('多页支持');
     expect(readFileSync(stateFile, 'utf8')).toBe(defaultBefore);
 
@@ -168,7 +168,7 @@ describe('mapping policy setup — the flow enforces itself over the wire', () =
     const set = await callText('mmap_setup', { policy: 'complex' });
     expect(set.isError).toBe(false);
     expect(set.text).toContain('mapping policy set: complex');
-    const configFile = join(dir, '.claude', 'mellos-mapping.config.json');
+    const configFile = join(dir, '.mellos', 'config.json');
     expect(JSON.parse(readFileSync(configFile, 'utf8'))).toEqual({ version: 1, policy: 'complex' });
 
     const second = await callText('mmap_declare', { nodes: [{ id: 'more', label: 'More', layer: 'base' }] });
@@ -193,7 +193,7 @@ describe('mapping policy setup — the flow enforces itself over the wire', () =
   });
 
   it('a broken config file is surfaced on declare and on read, never treated as unset', async () => {
-    const configFile = join(dir, '.claude', 'mellos-mapping.config.json');
+    const configFile = join(dir, '.mellos', 'config.json');
     await callText('mmap_declare', DECLARE); // creates .claude/
     writeFileSync(configFile, 'not json');
 
@@ -212,11 +212,11 @@ describe('resolveStateFile', () => {
   it('resolves MELLOS_MAPPING_CWD, then CLAUDE_PROJECT_DIR, then the process cwd', () => {
     expect(
       resolveStateFile({ MELLOS_MAPPING_CWD: 'D:\\override', CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere'),
-    ).toBe(join('D:\\override', '.claude', 'mellos-mapping.json'));
+    ).toBe(join('D:\\override', '.mellos', 'map.json'));
     expect(resolveStateFile({ CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere')).toBe(
-      join('D:\\proj', '.claude', 'mellos-mapping.json'),
+      join('D:\\proj', '.mellos', 'map.json'),
     );
-    expect(resolveStateFile({}, 'C:\\elsewhere')).toBe(join('C:\\elsewhere', '.claude', 'mellos-mapping.json'));
+    expect(resolveStateFile({}, 'C:\\elsewhere')).toBe(join('C:\\elsewhere', '.mellos', 'map.json'));
   });
 });
 

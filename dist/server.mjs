@@ -22303,10 +22303,81 @@ function serializeMap(map) {
 }
 
 // src/store/store.ts
-var STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
-var PAGES_DIR_NAME = "mellos-mapping.pages";
+var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
   return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+}
+var CONFIG_FILE_NAME = "config.json";
+var CONFIG_FILE_VERSION = 1;
+function configFilePath(defaultFile) {
+  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+var MAPPING_POLICIES = ["always", "complex", "on-request"];
+function makeMappingPolicy(raw) {
+  return MAPPING_POLICIES.includes(raw) ? ok(raw) : err({ kind: "invalid-policy", raw, allowed: MAPPING_POLICIES });
+}
+function describeMappingPolicy(policy) {
+  switch (policy) {
+    case "always":
+      return "map every structured task \u2014 workflows, designs, architecture, technical dependencies";
+    case "complex":
+      return "map only medium or complex tasks \u2014 several modules, a new subsystem, roughly an hour or more";
+    case "on-request":
+      return "map only when the user explicitly asks";
+  }
+}
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function loadMappingPolicy(defaultFile) {
+  const path = configFilePath(defaultFile);
+  let text2;
+  try {
+    text2 = readFileSync(path, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") return ok(void 0);
+    throw e;
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text2);
+  } catch (e) {
+    return err({ kind: "malformed-json", path, detail: e.message });
+  }
+  if (!isRecord2(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
+  if (raw["version"] !== CONFIG_FILE_VERSION) {
+    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${CONFIG_FILE_VERSION}` });
+  }
+  const rawPolicy = raw["policy"];
+  if (rawPolicy === void 0) return ok(void 0);
+  if (typeof rawPolicy !== "string") return err({ kind: "bad-shape", path, detail: "policy is not a string" });
+  const policy = makeMappingPolicy(rawPolicy);
+  return policy.ok ? ok(policy.value) : err({ kind: "bad-shape", path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(" | ")}` });
+}
+function saveMappingPolicy(defaultFile, policy) {
+  const path = configFilePath(defaultFile);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
+}
+var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
+var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
+function migrateLegacyStore(defaultFile) {
+  const projectRoot = dirname(dirname(defaultFile));
+  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
+  const hasCurrent = existsSync(defaultFile) || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME)) || existsSync(configFilePath(defaultFile));
+  if (!hasLegacy || hasCurrent) return false;
+  mkdirSync(dirname(defaultFile), { recursive: true });
+  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
+  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
+  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  return true;
 }
 function loadMapFile(path) {
   let text2;
@@ -22528,7 +22599,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.18.0";
+var SERVER_VERSION = "0.19.0";
 var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
 var PAGE = ID.optional().describe(
   "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
@@ -22564,6 +22635,13 @@ function buildServer(stateFile) {
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
     saveMapFile(file, applied.value);
     return text(summarize(applied.value) + (page !== void 0 ? ` [page: ${page}]` : ""));
+  };
+  const setupNudge = () => {
+    const policy = loadMappingPolicy(stateFile);
+    if (!policy.ok) return `
+note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_setup).`;
+    if (policy.value !== void 0) return "";
+    return "\nnote: mapping policy not set for this project. Ask the user when maps should open \u2014 " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then record the answer with mmap_setup.";
   };
   server.registerTool(
     "mmap_declare",
@@ -22612,7 +22690,12 @@ function buildServer(stateFile) {
         edges: external_exports.array(EDGE.extend({ label: external_exports.string().max(80).optional().describe("what flows along the edge") })).optional()
       }
     },
-    (input) => mutate(input.page, (map) => applyDeclare(map, input))
+    (input) => {
+      const result = mutate(input.page, (map) => applyDeclare(map, input));
+      if (result.isError === true) return result;
+      const nudge = setupNudge();
+      return nudge === "" ? result : text((result.content[0]?.text ?? "") + nudge);
+    }
   );
   server.registerTool(
     "mmap_update",
@@ -22655,6 +22738,31 @@ function buildServer(stateFile) {
     (input) => mutate(input.page, (map) => applyRemove(map, input))
   );
   server.registerTool(
+    "mmap_setup",
+    {
+      title: "Configure when maps open",
+      description: `Get or set this project's mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it. If it reports "not set", ask the USER to choose (never pick for them): always = ` + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + ". Then call again with their choice to persist it. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.",
+      inputSchema: {
+        policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy")
+      }
+    },
+    (input) => {
+      if (input.policy !== void 0) {
+        const policy = input.policy;
+        saveMappingPolicy(stateFile, policy);
+        return text(`mapping policy set: ${policy} \u2014 ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
+      }
+      const loaded = loadMappingPolicy(stateFile);
+      if (!loaded.ok) return text(describeStoreError(loaded.error), true);
+      if (loaded.value === void 0) {
+        return text(
+          "mapping policy not set. Ask the user to choose one of: " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then call mmap_setup with their choice. Until then act as complex."
+        );
+      }
+      return text(`mapping policy: ${loaded.value} \u2014 ${describeMappingPolicy(loaded.value)}`);
+    }
+  );
+  server.registerTool(
     "mmap_view",
     {
       title: "View the current map",
@@ -22678,7 +22786,9 @@ function resolveStateFile(env, cwd) {
   return join2(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 async function main() {
-  const server = buildServer(resolveStateFile(process.env, process.cwd()));
+  const stateFile = resolveStateFile(process.env, process.cwd());
+  migrateLegacyStore(stateFile);
+  const server = buildServer(stateFile);
   await server.connect(new StdioServerTransport());
 }
 function launchedAsEntry(argv1, moduleUrl) {

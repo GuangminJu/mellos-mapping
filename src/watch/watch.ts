@@ -67,6 +67,7 @@ import {
   listPageFiles,
   loadMapFile,
   makePageId,
+  migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
   takeFocusRequest,
@@ -757,6 +758,8 @@ export function mapPanel(
 
 function main(): void {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  // One-time move of a pre-0.19 `.claude` store into `.mellos` (store.ts).
+  migrateLegacyStore(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
 

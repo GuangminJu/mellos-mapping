@@ -134,7 +134,7 @@ CLI……）都能用标准 stdio 条目接入：
 npx -y mellos-mapping
 ```
 
-地图文件落在客户端会话的工作目录（`.claude/mellos-mapping.json`）。在同
+地图文件落在客户端会话的工作目录（`.mellos/map.json`）。在同
 一项目里打开实况面板：
 
 ```
@@ -204,8 +204,8 @@ npx -y -p mellos-mapping mellos-mapping-watch
 每页就是一个独立文件，两个 Claude 会话各写各页永远不会互相覆盖——这也是
 同一项目里跑多个 Claude 会话的正确姿势。
 
-地图状态存在 `.claude/mellos-mapping.json`（默认页）和
-`.claude/mellos-mapping.pages/<页名>.json`（命名页）——纯 JSON，想在 git
+地图状态存在 `.mellos/map.json`（默认页）和
+`.mellos/pages/<页名>.json`（命名页）——纯 JSON，想在 git
 里留下地图的历史就把它们提交进去。
 
 ### 图种
