@@ -10,6 +10,9 @@
 
     # The live map panel in the web view: a side-by-side column on frames
     # that carry the generic aux slot, a right-edge drawer everywhere else.
+    # A row names a plugin, it does not install one — the package reaches the
+    # profile as this bundle's own dependency, so the one-command install
+    # resolves it.
     - id: mmap-view
       name: 'mellos-mapping-dsh-client'
 
