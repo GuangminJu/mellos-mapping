@@ -1,0 +1,60 @@
+{
+  "name": "mellos-mapping-dsh",
+  "version": "0.20.0-dev.0",
+  "description": "Mellos Mapping for DeepSeek Harness — one installable bundle: the live map panel plus the MCP bridge that gives the model the mmap_* tools",
+  "type": "module",
+  "license": "MIT",
+  "author": "Mellos",
+  "homepage": "https://github.com/GuangminJu/mellos-mapping#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GuangminJu/mellos-mapping.git",
+    "directory": "packages/dsh"
+  },
+  "bugs": "https://github.com/GuangminJu/mellos-mapping/issues",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "mcp",
+    "visualization",
+    "dependency-graph",
+    "bottom-up"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    },
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "mellos-mapping": "^0.20.0",
+    "zod": "^4.4.3"
+  }
+}

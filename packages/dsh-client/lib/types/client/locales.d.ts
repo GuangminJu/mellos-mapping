@@ -1,0 +1,88 @@
+/** Copy dictionaries for the Mellos map companion column. */
+/** Simplified Chinese dictionary and key source of truth. */
+export declare const zh: {
+    'view.mmap': string;
+    loading: string;
+    error: string;
+    retry: string;
+    empty: string;
+    emptyHint: string;
+    defaultPage: string;
+    pageInvalid: string;
+    stalePage: string;
+    'status.planned': string;
+    'status.in-progress': string;
+    'status.done': string;
+    'status.regressed': string;
+    evidence: string;
+    noEvidence: string;
+    notes: string;
+    noNotes: string;
+    uses: string;
+    usedBy: string;
+    after: string;
+    before: string;
+    members: string;
+    none: string;
+    pinned: string;
+    emptyMap: string;
+    dashboardHint: string;
+    'unit.layers': string;
+    'unit.nodes': string;
+    'unit.edges': string;
+    'unit.lanes': string;
+    'unit.members': string;
+    back: string;
+    close: string;
+    submapMissing: string;
+    zoomHint: string;
+    aggregated: string;
+    followTag: string;
+    followOn: string;
+    followOff: string;
+};
+/** Mellos map view locale key union. */
+export type MmapLocaleKey = keyof typeof zh;
+/** English dictionary checked against the Chinese key set. */
+export declare const en: {
+    'view.mmap': string;
+    loading: string;
+    error: string;
+    retry: string;
+    empty: string;
+    emptyHint: string;
+    defaultPage: string;
+    pageInvalid: string;
+    stalePage: string;
+    'status.planned': string;
+    'status.in-progress': string;
+    'status.done': string;
+    'status.regressed': string;
+    evidence: string;
+    noEvidence: string;
+    notes: string;
+    noNotes: string;
+    uses: string;
+    usedBy: string;
+    after: string;
+    before: string;
+    members: string;
+    none: string;
+    pinned: string;
+    emptyMap: string;
+    dashboardHint: string;
+    'unit.layers': string;
+    'unit.nodes': string;
+    'unit.edges': string;
+    'unit.lanes': string;
+    'unit.members': string;
+    back: string;
+    close: string;
+    submapMissing: string;
+    zoomHint: string;
+    aggregated: string;
+    followTag: string;
+    followOn: string;
+    followOff: string;
+};
+//# sourceMappingURL=locales.d.ts.map

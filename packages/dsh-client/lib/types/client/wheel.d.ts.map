@@ -1,0 +1,1 @@
+{"version":3,"file":"wheel.d.ts","sourceRoot":"","sources":["../../../src/client/wheel.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;GAWG;AASH,gEAAgE;AAChE,MAAM,WAAW,UAAU;IACzB,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAA;IACvB,wDAAwD;IACxD,QAAQ,CAAC,SAAS,EAAE,MAAM,CAAA;IAC1B,2CAA2C;IAC3C,QAAQ,CAAC,OAAO,EAAE,OAAO,CAAA;CAC1B;AAED;;;;GAIG;AACH,wBAAgB,gBAAgB,CAAC,KAAK,EAAE,UAAU,GAAG,MAAM,CAG1D"}

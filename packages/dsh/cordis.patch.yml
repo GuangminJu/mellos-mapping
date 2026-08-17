@@ -1,0 +1,28 @@
+# Mellos Mapping for DeepSeek Harness. One bundle mounts the whole surface:
+# the host read seam (this package's own plugin), the browser map panel, and
+# the MCP bridge that gives the model the five mmap_* tools. Install with
+#   dsh plugin --profile web add mellos-mapping-dsh
+- insert:
+    # Reads each session workspace's .mellos map store and serves it to the
+    # panel over the mmap Remote namespace; emits mmap/changed on writes.
+    - id: mmap-host
+      name: 'mellos-mapping-dsh'
+
+    # The live map panel in the web view: a side-by-side column on frames
+    # that carry the generic aux slot, a right-edge drawer everywhere else.
+    - id: mmap-view
+      name: 'mellos-mapping-dsh-client'
+
+    # The writing half: the mellos-mapping MCP server bridged into the model
+    # plane as mcp__mellos-mapping__mmap_* tools. The server child inherits
+    # the dsh process working directory, so maps land in the project dsh was
+    # started from — on dsh builds whose mcp-client supports workspaceScoped,
+    # add `workspaceScoped: true` in a user patch layer for per-session
+    # workspace routing.
+    - id: mcp-mellos-mapping
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: mellos-mapping
+        transport: stdio
+        command: npx
+        args: ['-y', 'mellos-mapping']

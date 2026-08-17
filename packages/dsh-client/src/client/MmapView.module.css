@@ -1,0 +1,527 @@
+/* The whole panel speaks monospace, SVG text included — the map is an
+   instrument, not an article. base.css's code stack carries CJK tails. */
+.view {
+  /* No app-global border-box reset exists; without this, height:100% plus
+     the vertical padding overflows the column and clips the status bar. */
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 8px 10px 6px;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  outline: none;
+}
+
+.status {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  padding: 8px 4px;
+}
+
+.failure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  padding: 8px 4px;
+}
+
+/* A blinking block cursor on the waiting state — the terminal is listening. */
+.cursor::after {
+  content: '▍';
+  color: var(--dsw-alias-state-success-primary);
+  animation: mmap-blink 1.1s steps(1) infinite;
+}
+
+.hint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* -- page tabs and the dive breadcrumb ----------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+}
+
+/* vim buffer-list manners: bracketed shortcut digit, square corners, the
+   current page an inverse block, a changed background page starred. */
+.tabs button {
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+
+.tabs button b {
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.tabs button[data-active='true'] b,
+.tabs button[data-fresh='true'] b {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.tabs button[data-active='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+  border-color: var(--dsw-alias-border-l3);
+  font-weight: 600;
+}
+
+.tabs button[data-active='true'][data-status='done'] { color: var(--dsw-alias-state-success-primary); }
+.tabs button[data-active='true'][data-status='in-progress'] { color: var(--dsw-alias-state-warn-primary); }
+.tabs button[data-active='true'][data-status='regressed'] { color: var(--dsw-alias-state-error-primary); }
+.tabs button[data-active='true'][data-status='planned'],
+.tabs button[data-active='true'][data-status='neutral'] { color: var(--dsw-alias-label-primary); }
+
+/* A background page that changed keeps its status color lit instead of fading. */
+.tabs button[data-fresh='true'][data-status='done'] { color: var(--dsw-alias-state-success-primary); }
+.tabs button[data-fresh='true'][data-status='in-progress'] { color: var(--dsw-alias-state-warn-primary); }
+.tabs button[data-fresh='true'][data-status='regressed'] { color: var(--dsw-alias-state-error-primary); }
+.tabs button[data-fresh='true'][data-status='planned'],
+.tabs button[data-fresh='true'][data-status='neutral'] { color: var(--dsw-alias-label-primary); }
+
+.crumb {
+  display: block;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  padding: 2px 4px 8px;
+  cursor: pointer;
+}
+
+.crumb strong {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* -- the map viewport ----------------------------------------------------- */
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  cursor: grab;
+  touch-action: none;
+  /* The map is an instrument, not a document: selectable svg text turns a
+     press-drag into a native SELECTION drag, whose autoscroll (OS-captured,
+     invisible to pointer events) slams the container toward the cursor the
+     moment it leaves the window — the fight our pan cannot win. */
+  user-select: none;
+  overscroll-behavior: contain;
+}
+
+.scroll:active {
+  cursor: grabbing;
+}
+
+.map {
+  display: block;
+  font-size: 12px;
+}
+
+.lane text {
+  fill: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lane line {
+  stroke: var(--dsw-alias-border-l1);
+  stroke-dasharray: 2 6;
+}
+
+.band line {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-dasharray: 1 3;
+}
+
+.band text {
+  fill: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* Wires read like the terminal pane's: solid enough to follow, arrowheads
+   carrying direction, and (via layout.ts routing) never drawn on top of
+   each other. */
+.edge path {
+  fill: none;
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-opacity: 0.55;
+  stroke-width: 1.4;
+  /* Same-structure elbow paths (M V H V) interpolate; a threshold reflow
+     glides the wires along with their boxes (Chromium; inert elsewhere). */
+  transition: d 180ms ease;
+}
+
+.edge[data-active='true'] path {
+  stroke: var(--dsw-alias-label-secondary);
+  stroke-opacity: 1;
+  stroke-width: 1.8;
+}
+
+.edge text {
+  fill: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  text-anchor: middle;
+}
+
+/* A threshold crossing recomputes the whole layout in one frame; the
+   transition turns that teleport into a 180ms glide, and freshly unfolded
+   boxes fade in instead of popping. */
+.node {
+  cursor: pointer;
+  transition: transform 180ms ease;
+  animation: mmap-enter 160ms ease;
+}
+
+.node rect {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke-width: 1.4;
+  transition: width 180ms ease, height 180ms ease;
+}
+
+.node text {
+  fill: var(--dsw-alias-label-primary);
+}
+
+.boxLine[data-role='evidence'] {
+  fill: var(--dsw-alias-label-tertiary);
+  font-size: 10.5px;
+}
+
+.boxLine[data-role='note'] {
+  fill: var(--dsw-alias-label-secondary);
+  font-size: 10.5px;
+}
+
+.submapBadge {
+  fill: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+}
+
+.node[data-status='planned'] rect {
+  stroke: var(--dsw-alias-border-l4);
+  stroke-dasharray: 4 3;
+}
+
+.node[data-status='planned'] text {
+  fill: var(--dsw-alias-label-secondary);
+}
+
+.node[data-status='in-progress'] rect {
+  stroke: var(--dsw-alias-state-warn-primary);
+  animation: mmap-pulse 1.4s ease-in-out infinite;
+}
+
+.node[data-status='done'] rect {
+  stroke: var(--dsw-alias-state-success-primary);
+  stroke-width: 2;
+}
+
+.node[data-status='regressed'] rect {
+  stroke: var(--dsw-alias-state-error-primary);
+  stroke-width: 2;
+}
+
+.node[data-status='neutral'] rect {
+  stroke: var(--dsw-alias-border-l3);
+}
+
+.node[data-focused='true'] rect {
+  stroke-width: 2.4;
+}
+
+.node[data-selected='true'] rect {
+  fill: var(--dsw-alias-interactive-bg-active);
+}
+
+@keyframes mmap-pulse {
+  0%, 100% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.35; }
+}
+
+@keyframes mmap-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+
+@keyframes mmap-enter {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node,
+  .node[data-status='in-progress'] rect {
+    animation: none;
+  }
+
+  .node,
+  .node rect,
+  .edge path {
+    transition: none;
+  }
+
+  .cursor::after {
+    animation: none;
+  }
+}
+
+.stale,
+.flash {
+  margin: 0;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.flash {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* -- the resident detail panel -------------------------------------------- */
+
+.divider {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 12px;
+  margin-top: 2px;
+  border-top: 1px dashed var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 10px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.dividerGrip {
+  pointer-events: none;
+}
+
+/* The auto-follow tag rides the divider's right edge, the terminal pane's
+   spot; clicking it toggles without starting a divider drag. */
+.followTag {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.followTag[data-armed='true'] {
+  color: var(--dsw-alias-brand-primary);
+  opacity: 1;
+}
+
+.panel {
+  overflow-y: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.panelBody p {
+  margin: 0;
+}
+
+.panelTitle {
+  font-weight: 600;
+}
+
+.panelHeader {
+  font-weight: 600;
+}
+
+.panelHeader code {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.panelHeader[data-status='done'] { color: var(--dsw-alias-state-success-primary); }
+.panelHeader[data-status='in-progress'] { color: var(--dsw-alias-state-warn-primary); }
+.panelHeader[data-status='regressed'] { color: var(--dsw-alias-state-error-primary); }
+
+.pinMark {
+  margin-inline-start: 8px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.panelMeta {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.statusCounts {
+  display: flex;
+  gap: 12px;
+}
+
+.statusCounts span[data-status='done'] { color: var(--dsw-alias-state-success-primary); }
+.statusCounts span[data-status='in-progress'] { color: var(--dsw-alias-state-warn-primary); }
+.statusCounts span[data-status='planned'] { color: var(--dsw-alias-label-secondary); }
+.statusCounts span[data-status='regressed'] { color: var(--dsw-alias-state-error-primary); }
+
+.panelHint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.wireRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.detailKey {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chip {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+/* Neighbour chips carry the terminal's status glyphs, not an abstract dot. */
+.chip::before {
+  content: '·';
+  font-size: 11px;
+}
+
+.chip em {
+  font-style: normal;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chip[data-status='done']::before { content: '■'; color: var(--dsw-alias-state-success-primary); }
+.chip[data-status='in-progress']::before { content: '◐'; color: var(--dsw-alias-state-warn-primary); }
+.chip[data-status='planned']::before { content: '·'; color: var(--dsw-alias-label-tertiary); }
+.chip[data-status='regressed']::before { content: '✗'; color: var(--dsw-alias-state-error-primary); }
+
+.panelNotes {
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+}
+
+/* The resident status bar: zoom gear on the left, key legend on the right. */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  margin-top: 6px;
+  padding-top: 5px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* -- the session-header toggle -------------------------------------------- */
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.toggle:hover,
+.toggle:focus-visible {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Drawer chrome for hosts without an aux column: the same view, floated at
+   the right edge and slid offscreen while closed so it stays mounted (the
+   aux column's width-0 behavior, in drawer form). */
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(560px, 70vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-layer-1);
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: -12px 0 32px rgb(0 0 0 / 18%);
+  transform: translateX(102%);
+  transition: transform 200ms ease;
+  z-index: 60;
+}
+
+.drawer[data-open] {
+  transform: translateX(0);
+}
+
+.drawerClose {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.drawerClose:hover,
+.drawerClose:focus-visible {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.toggle[data-open] {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer {
+    transition: none;
+  }
+}

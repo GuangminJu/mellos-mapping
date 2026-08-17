@@ -1,0 +1,51 @@
+{
+  "name": "mellos-mapping-dsh-client",
+  "version": "0.20.0-dev.0",
+  "description": "Browser half of Mellos Mapping's DeepSeek Harness surface: the live map panel the dsh web loader serves to the browser",
+  "type": "module",
+  "license": "MIT",
+  "author": "Mellos",
+  "homepage": "https://github.com/GuangminJu/mellos-mapping#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GuangminJu/mellos-mapping.git",
+    "directory": "packages/dsh-client"
+  },
+  "bugs": "https://github.com/GuangminJu/mellos-mapping/issues",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "visualization",
+    "dependency-graph"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
