@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping-dsh-client",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "Browser half of Mellos Mapping's DeepSeek Harness surface: the live map panel the dsh web loader serves to the browser",
   "type": "module",
   "license": "MIT",
