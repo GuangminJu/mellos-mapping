@@ -55,6 +55,7 @@
   "dependencies": {
     "chokidar": "^4.0.3",
     "mellos-mapping": "^0.20.0",
+    "mellos-mapping-dsh-client": "^0.20.0",
     "zod": "^4.4.3"
   }
 }

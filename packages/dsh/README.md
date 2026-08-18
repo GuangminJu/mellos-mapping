@@ -24,8 +24,11 @@ poll backing it up everywhere else.
 Framework packages (`@deepseek-ai/cordis`, `@deepseek-ai/dsh-*`) are
 deliberately **not** declared as dependencies: the dsh loader supplies them
 from the installation, and a profile-local copy would split framework
-identity. Declared dependencies are only the leaf libraries this plugin
-truly owns (`mellos-mapping`, `chokidar`, `zod`).
+identity. Declared dependencies are the leaf libraries this plugin truly owns
+(`mellos-mapping`, `chokidar`, `zod`) plus `mellos-mapping-dsh-client` — a
+patch row names a plugin, it does not install one, so the browser half has to
+arrive as this bundle's own dependency for the one-command install to
+resolve. Both mellos packages are pinned to the shared version line.
 
 Known limitation: the stock `dsh-mcp-client` spawns the MCP server in the dsh
 process working directory, so maps land in the project `dsh web` was started

@@ -45,10 +45,17 @@ bump('.codex-plugin/plugin.json', jsonVersion, `"version": "${version}"`, 1);
 bump('package.json', jsonVersion, `"version": "${version}"`, 1);
 bump('server.json', jsonVersion, `"version": "${version}"`, 2); // top-level + packages[0]
 bump('src/server/server.ts', /SERVER_VERSION = '\d+\.\d+\.\d+'/g, `SERVER_VERSION = '${version}'`, 1);
-// The dsh plugin packages ride the same version line, and the bundle's
-// dependency on the npm server tracks it (one release, one version).
+// The dsh plugin packages ride the same version line, and the bundle's two
+// npm dependencies — the server it bridges and the client half its patch
+// mounts — track it (one release, one version).
 bump('packages/dsh/package.json', jsonVersion, `"version": "${version}"`, 1);
 bump('packages/dsh/package.json', /"mellos-mapping": "\^\d+\.\d+\.\d+[^"]*"/g, `"mellos-mapping": "^${version}"`, 1);
+bump(
+  'packages/dsh/package.json',
+  /"mellos-mapping-dsh-client": "\^\d+\.\d+\.\d+[^"]*"/g,
+  `"mellos-mapping-dsh-client": "^${version}"`,
+  1,
+);
 bump('packages/dsh-client/package.json', jsonVersion, `"version": "${version}"`, 1);
 
 // package-lock.json mirrors the root version in two spots that a regex can't
