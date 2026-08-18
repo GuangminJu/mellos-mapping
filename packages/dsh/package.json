@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping-dsh",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "Mellos Mapping for DeepSeek Harness — one installable bundle: the live map panel plus the MCP bridge that gives the model the mmap_* tools",
   "type": "module",
   "license": "MIT",
@@ -54,8 +54,8 @@
   },
   "dependencies": {
     "chokidar": "^4.0.3",
-    "mellos-mapping": "^0.20.0",
-    "mellos-mapping-dsh-client": "^0.20.0",
+    "mellos-mapping": "^0.20.1",
+    "mellos-mapping-dsh-client": "^0.20.1",
     "zod": "^4.4.3"
   }
 }
