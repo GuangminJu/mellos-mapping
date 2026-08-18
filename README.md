@@ -4,8 +4,9 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A live, terminal-native map of bottom-up development for
-[Claude Code](https://claude.com/claude-code) and Codex CLI.
+A live map of bottom-up development — a terminal pane beside
+[Claude Code](https://claude.com/claude-code) and Codex CLI, a native web
+panel inside [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
 <p align="center">
   <picture>
@@ -137,6 +138,54 @@ off), or start with `--no-follow`. Elsewhere run
 `node <plugin root>/dist/watch.mjs` (same `--page` / `--no-follow` flags)
 from the project directory in a second terminal (or any terminal split).
 
+## DeepSeek Harness
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)
+renders the map as a **native web panel** — conversation on the left, live
+map column on the right. There is no terminal pane here and nothing to
+launch: the panel ships inside dsh itself (its `mmap` package family, built
+on this package's browser-safe library exports) and watches the workspace
+store directly. The only thing to install from this repo is the MCP server.
+
+dsh enables no MCP server out of the box — a server command is trusted code
+outside the agent sandbox — so you opt in through a user patch layer. Add
+this entry to `~/.dsh/cordis.patch.yml` (`$DSH_HOME`; applies to every
+profile on the machine) or `~/.dsh/profiles/<name>/cordis.patch.yml` (one
+profile):
+
+```yaml
+- insert:
+    - id: mcp-mellos-mapping
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: mellos-mapping
+        transport: stdio
+        command: npx
+        args: ['-y', 'mellos-mapping']
+        workspaceScoped: true
+```
+
+`@deepseek-ai/dsh-mcp-client` ships with the dsh CLI; the tools reach the
+model as `mcp__mellos-mapping__mmap_*`.
+
+`workspaceScoped: true` is load-bearing. One dsh process hosts many
+sessions across many workspaces, so this flag makes the bridge route each
+tool call to a server child spawned in the **calling session's** workspace —
+every project's map lands in its own `.mellos/`, exactly where Claude Code
+and Codex write it. Without the flag a single server would write every
+session's map into whatever directory dsh happened to start from.
+
+In the web view the map column opens by itself the first time the map
+changes; the **Map** button in the conversation header toggles it any time.
+Zoom, pan, page tabs and sub-map dives work as in the terminal pane, and
+the viewpoint is remembered **per conversation**.
+
+The mapping discipline is a skill under Claude Code and Codex; dsh
+discovers user skills in `~/.dsh/skills/`. To have the same discipline on
+tap, drop an `mmap.md` there — start from this repo's
+[`skills/mellos-mapping/SKILL.md`](skills/mellos-mapping/SKILL.md) and cut
+its terminal-pane instructions, which do not apply.
+
 ## Any MCP client
 
 The server ships on npm, so any MCP client (Cursor, Windsurf, Zed,
@@ -154,7 +203,7 @@ npx -y -p mellos-mapping mellos-mapping-watch
 ```
 
 The skill/discipline layer is Claude Code + Codex specific; other clients
-get the four `mmap_*` tools and the pane, and bring their own prompting.
+get the five `mmap_*` tools and the pane, and bring their own prompting.
 
 ## Use
 
@@ -277,7 +326,7 @@ first time the assistant declares a map — the reply nudges it to ask you):
 - `complex` — map only medium or complex tasks (the default until configured).
 - `on-request` — map only when you explicitly ask.
 
-The choice is stored in `.claude/mellos-mapping.config.json` and guides the
+The choice is stored in `.mellos/config.json` and guides the
 assistant; it never blocks the tools, and asking for a map explicitly always
 works under any policy.
 
@@ -303,7 +352,7 @@ The repo is itself layered bottom-up, and each layer has its spec:
 | 1 store | `src/store/store.ts` | atomic state-file persistence on Node |
 | 1 semantics | `src/semantics/` | medium-neutral view semantics: zoom ladder, group aggregation, sequence flip |
 | 2 apply | `src/server/apply.ts` | tool inputs → transactional op sequences |
-| 3 server | `src/server/server.ts` | the four MCP tools over stdio |
+| 3 server | `src/server/server.ts` | the five MCP tools over stdio |
 | 4 render | `src/render/`, `src/watch/` | ASCII renderer and the polling pane |
 
 `dist/` is committed deliberately: plugin installation clones this repo and

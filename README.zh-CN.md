@@ -4,8 +4,10 @@
 
 [English](README.md) | 简体中文
 
-给 [Claude Code](https://claude.com/claude-code) 与 Codex CLI 的自下而上
-开发实况地图，原生运行在终端里。
+自下而上开发的实况地图——在 [Claude Code](https://claude.com/claude-code)
+与 Codex CLI 旁边是终端分屏，在
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 里是
+原生 web 面板。
 
 <p align="center">
   <picture>
@@ -125,6 +127,49 @@ node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<版本>/scripts/codex
 其他环境在项目目录下的第二个终端（或任意分屏）运行
 `node <插件根>/dist/watch.mjs`（同样支持 `--page` / `--no-follow`）。
 
+## DeepSeek Harness
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）
+把地图渲染成**原生 web 面板**——对话在左，实况地图列在右。这里没有终端
+分屏，也不需要启动任何东西：面板随 dsh 本体分发（它的 `mmap` 包族，构建
+在本包浏览器安全的库导出之上），直接监视工作区里的地图文件。需要从本仓库
+安装的只有 MCP 服务器。
+
+dsh 默认不启用任何 MCP 服务器——服务器命令是运行在智能体沙箱之外的受信任
+代码——所以要通过用户 patch 层显式接入。把下面的条目加进
+`~/.dsh/cordis.patch.yml`（`$DSH_HOME`；对本机所有 profile 生效）或
+`~/.dsh/profiles/<name>/cordis.patch.yml`（只对一个 profile 生效）：
+
+```yaml
+- insert:
+    - id: mcp-mellos-mapping
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: mellos-mapping
+        transport: stdio
+        command: npx
+        args: ['-y', 'mellos-mapping']
+        workspaceScoped: true
+```
+
+`@deepseek-ai/dsh-mcp-client` 随 dsh CLI 一起分发；工具以
+`mcp__mellos-mapping__mmap_*` 的名字出现在模型面前。
+
+`workspaceScoped: true` 是关键。一个 dsh 进程承载多个工作区里的多个会话，
+这个开关让桥接层把每次工具调用路由到**发起调用的那个会话**的工作区里拉起
+的服务器子进程——每个项目的地图都落在自己的 `.mellos/` 里，和 Claude
+Code、Codex 写入的位置完全一致。不开它，单个服务器会把所有会话的地图写进
+dsh 恰好启动时所在的目录。
+
+在 web 视图里，本会话工作区的地图第一次发生变化时，地图列会自动展开；
+对话标题栏的「地图」按钮随时开关。缩放、平移、多页标签、子图下潜与终端
+分屏一致，且视角**按会话**各自记忆。
+
+建图纪律在 Claude Code 和 Codex 下是 skill；dsh 会从 `~/.dsh/skills/`
+发现用户技能。想在 dsh 里也随手可用，就放一份 `mmap.md` 进去——以本仓库
+的 [`skills/mellos-mapping/SKILL.md`](skills/mellos-mapping/SKILL.md) 为
+底稿，删掉其中不适用的终端分屏部分即可。
+
 ## 任意 MCP 客户端
 
 服务器已发布到 npm，任何 MCP 客户端（Cursor、Windsurf、Zed、Gemini
@@ -141,7 +186,7 @@ npx -y mellos-mapping
 npx -y -p mellos-mapping mellos-mapping-watch
 ```
 
-技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得四个 `mmap_*`
+技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得五个 `mmap_*`
 工具和面板，提示词自备。
 
 ## 使用
@@ -253,7 +298,7 @@ npx -y -p mellos-mapping mellos-mapping-watch
 - `complex` —— 只在中等或复杂任务时建图（未配置时的默认行为）。
 - `on-request` —— 只在你明确要求时建图。
 
-选择保存在 `.claude/mellos-mapping.config.json`，用于引导 AI；它从不阻止
+选择保存在 `.mellos/config.json`，用于引导 AI；它从不阻止
 工具本身——无论什么策略，明确要求建图永远有效。
 
 工具强制的结构不变量：层按 rank 构成全序；每个节点恰好属于一层；边**严格
@@ -276,7 +321,7 @@ npm run verify   # 类型检查 + 测试 + 打包
 | 1 store | `src/store/store.ts` | Node 上的原子化状态文件持久化 |
 | 1 semantics | `src/semantics/` | 媒介无关的视图语义：缩放阶梯、分组聚合、时序翻转 |
 | 2 apply | `src/server/apply.ts` | 工具输入 → 事务性操作序列 |
-| 3 server | `src/server/server.ts` | stdio 上的四个 MCP 工具 |
+| 3 server | `src/server/server.ts` | stdio 上的五个 MCP 工具 |
 | 4 render | `src/render/`、`src/watch/` | ASCII 渲染器和轮询面板 |
 
 `dist/` 是刻意提交的：插件安装就是克隆本仓库、不运行任何东西，所以入口
