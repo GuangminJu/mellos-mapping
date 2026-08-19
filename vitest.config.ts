@@ -81,7 +81,7 @@ export default defineConfig({
     ],
   },
   test: {
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts', 'packages/*/tests/**/*.spec.ts'],
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts', 'scripts/**/*.test.mjs', 'packages/*/tests/**/*.spec.ts'],
     exclude: [...configDefaults.exclude, ...EXCLUDED_PACKAGE_SPECS],
   },
 });
