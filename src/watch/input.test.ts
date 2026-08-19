@@ -53,6 +53,12 @@ describe('SGR mouse', () => {
     expect(parseInput('\x1b[<69;5;5M').events).toEqual([{ kind: 'pan', dx: 0, dy: 3 }]);
   });
 
+  it('pans sideways on a horizontal wheel tilt instead of zooming', () => {
+    expect(parseInput('\x1b[<66;5;5M').events).toEqual([{ kind: 'pan', dx: -4, dy: 0 }]);
+    expect(parseInput('\x1b[<67;5;5M').events).toEqual([{ kind: 'pan', dx: 4, dy: 0 }]);
+    expect(parseInput('\x1b[<70;5;5M').events).toEqual([{ kind: 'pan', dx: -4, dy: 0 }]); // shift held
+  });
+
   it('maps + / = / - keys to zoom steps', () => {
     expect(parseInput('+').events).toEqual([{ kind: 'zoom', delta: 1 }]);
     expect(parseInput('=').events).toEqual([{ kind: 'zoom', delta: 1 }]);
@@ -88,6 +94,26 @@ describe('SGR mouse', () => {
   });
 });
 
+describe('keys this pane has no use for', () => {
+  it('swallows a complete sequence whole instead of reading its bytes as hotkeys', () => {
+    // F2 ends in Q (quit), End in F (follow-toggle), PgUp carries 5 (page 5)
+    expect(parseInput('\x1bOQ').events).toEqual([]); // F2
+    expect(parseInput('\x1bOP\x1bOR\x1bOS').events).toEqual([]); // F1 F3 F4
+    expect(parseInput('\x1b[H').events).toEqual([]); // Home
+    expect(parseInput('\x1b[F').events).toEqual([]); // End
+    expect(parseInput('\x1b[5~').events).toEqual([]); // PgUp
+    expect(parseInput('\x1b[6~').events).toEqual([]); // PgDn
+    expect(parseInput('\x1b[2~').events).toEqual([]); // Insert
+    expect(parseInput('\x1b[3~').events).toEqual([]); // Delete
+    expect(parseInput('\x1b[15~').events).toEqual([]); // F5
+    expect(parseInput('\x1b[1;5C').events).toEqual([]); // Ctrl+Right
+  });
+
+  it('still reads the very next keypress after one', () => {
+    expect(parseInput('\x1b[5~q').events).toEqual([{ kind: 'quit' }]);
+  });
+});
+
 describe('split escape sequences', () => {
   it('holds an incomplete sequence as rest and completes it on the next chunk', () => {
     const first = parseInput('j\x1b[<32;14');
@@ -99,8 +125,18 @@ describe('split escape sequences', () => {
     expect(second.rest).toBe('');
   });
 
-  it('holds a bare CSI head (but a lone ESC is the Esc key, handled above)', () => {
+  it('holds a bare CSI or SS3 head, which cannot yet be anything else', () => {
     expect(parseInput('\x1b[').rest).toBe('\x1b[');
-    expect(parseInput('j\x1b').rest).toBe('\x1b'); // trailing ESC mid-stream still buffers
+    expect(parseInput('\x1bO').rest).toBe('\x1bO');
+    expect(parseInput('\x1b[1;5').rest).toBe('\x1b[1;5');
+  });
+
+  it('reads a trailing ESC as the Esc key, so Esc keeps working afterwards', () => {
+    // Held as `rest`, that ESC prefixed the next chunk and every later Esc
+    // arrived as ESC ESC — unmatched, and swallowed for the life of the pane.
+    const first = parseInput('h\x1b');
+    expect(first.events).toEqual([{ kind: 'pan', dx: -4, dy: 0 }, { kind: 'clear' }]);
+    expect(first.rest).toBe('');
+    expect(parseInput(first.rest + '\x1b').events).toEqual([{ kind: 'clear' }]);
   });
 });
