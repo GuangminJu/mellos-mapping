@@ -45,7 +45,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { mapStatus } from '../domain/ops.js';
 import { type MellosMap, type NodeStatus } from '../domain/types.js';
-import { type NeighborRef, diveParent, focusInfo, mostRecentKey, submapRefs } from '../semantics/semantics.js';
+import {
+  type NeighborRef,
+  SPINNER_FRAMES,
+  diveParent,
+  focusInfo,
+  mostRecentKey,
+  statusGlyph,
+  submapRefs,
+} from '../semantics/semantics.js';
 import {
   type BoxHit,
   type ZoomStep,
@@ -56,6 +64,7 @@ import {
   isNeutralKind,
   kindGlyph,
   renderMapWindow,
+  statusSgr,
   wrapWidth,
   zoomLabel,
 } from '../render/render.js';
@@ -202,20 +211,6 @@ export function panelRowsFromDividerY(termY: number, totalRows: number, tabRows:
   return clampPanelRows(totalRows - termY - 1, totalRows, tabRows);
 }
 
-const STATUS_GLYPH: Readonly<Record<NodeStatus, [unicode: string, ascii: string]>> = {
-  planned: ['·', '.'],
-  'in-progress': ['⠿', '*'],
-  done: ['■', '#'],
-  regressed: ['✗', 'X'],
-};
-
-const STATUS_SGR: Readonly<Record<NodeStatus, string>> = {
-  planned: '2',
-  'in-progress': '33',
-  done: '32',
-  regressed: '31',
-};
-
 /**
  * Keep a zoom change visually anchored. With an anchor node (same id hit
  * before and after), shift the pan so the node stays at the same screen
@@ -286,7 +281,7 @@ const TAB_INDICATOR_W = 3;
 export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boolean, scroll = 0): TabSegment[] {
   const texts = tabs.map((tab) => {
     const marker = tab.active ? (unicode ? '●' : '*') : unicode ? '○' : 'o';
-    const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
+    const glyph = statusGlyph(tab.status, unicode);
     // Neutral (documentation) pages carry no status: no glyph, activity in cyan.
     return tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `;
   });
@@ -298,9 +293,9 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
           ? '36'
           : '90'
       : tab.active
-        ? `${STATUS_SGR[tab.status]};1`
+        ? `${statusSgr(tab.status)};1`
         : tab.fresh
-          ? STATUS_SGR[tab.status]
+          ? statusSgr(tab.status)
           : '90';
   const widths = texts.map(displayWidth);
   const count = tabs.length;
@@ -426,7 +421,7 @@ export function nodePanel(
   pinned: boolean,
   rows: number = PANEL_CONTENT_ROWS,
 ): PanelLine[] | undefined {
-  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const g = (s: NodeStatus): string => statusGlyph(s, unicode);
   const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
   const focus = focusInfo(map, focusId);
   if (focus === undefined) return undefined;
@@ -444,7 +439,7 @@ export function nodePanel(
           `${g(status)} ${group.label} [${group.id}] · ${layerName} · ${status} · ${members.length} member(s)${pinMark}`,
           width,
         ),
-        sgr: `${STATUS_SGR[status]};1`,
+        sgr: `${statusSgr(status)};1`,
       },
       {
         text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join('  ') || '—'}`, width),
@@ -484,7 +479,7 @@ export function nodePanel(
   const lines: PanelLine[] = [
     {
       text: fitWidth(`${headParts.join(' · ')}${pin}`, width),
-      sgr: neutral ? '1' : `${STATUS_SGR[node.status]};1`,
+      sgr: neutral ? '1' : `${statusSgr(node.status)};1`,
     },
     { text: fitWidth(`evidence: ${node.evidence ?? '—'}`, width), sgr: '90' },
     { text: fitWidth(`${usesWord} ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
@@ -535,10 +530,6 @@ const SPLASH_SHADES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = 
  * gradient over the letters instead of confetti. Still water sits mid-ramp.
  */
 const WAVE_RAMP: readonly number[] = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
-const SPINNER_FRAMES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
-  unicode: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  ascii: ['|', '/', '-', '\\'],
-};
 
 /** m:ss below an hour, h:mm:ss beyond — how long the pane has been waiting. */
 export function elapsedLabel(ms: number): string {
@@ -735,7 +726,7 @@ export function mapPanel(
   width: number,
   rows: number = PANEL_CONTENT_ROWS,
 ): PanelLine[] {
-  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const g = (s: NodeStatus): string => statusGlyph(s, unicode);
   const count = (s: NodeStatus): number => map.nodes.filter((n) => n.status === s).length;
   const statuses: NodeStatus[] = ['done', 'in-progress', 'planned', 'regressed'];
   const counts = statuses

@@ -16,11 +16,13 @@ import {
   type MellosMap,
   type NodeId,
   type NodeKind,
+  type NodeStatus,
   type Rank,
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
-import type { BoxHit } from '../render/render.js';
+import { SPINNER_FRAMES, spinnerGlyph, statusGlyph } from '../semantics/semantics.js';
+import { type BoxHit, statusSgr } from '../render/render.js';
 import {
   type PageTab,
   anchorOffsets,
@@ -136,6 +138,41 @@ describe('nodePanel', () => {
     expect(panel[1]!.text).toBe('members: · 外壳  ⠿ CLI');
     expect(panel[2]!.text).toBe('uses →  ■ 核心'); // two member edges, deduped to one neighbour
     expect(panel[3]!.text).toBe('used by ←  —');
+  });
+});
+
+describe('one status vocabulary across the pane and the picture', () => {
+  const statuses: NodeStatus[] = ['planned', 'in-progress', 'done', 'regressed'];
+
+  it('the tab strip and the dashboard read their glyphs from the library', () => {
+    for (const unicode of [true, false]) {
+      const tabs: PageTab[] = statuses.map((status) => ({ title: status, status, active: false, fresh: false }));
+      const segments = pageTabRow(tabs, 200, unicode);
+      for (const [i, status] of statuses.entries()) {
+        expect(segments[i]!.text).toContain(statusGlyph(status, unicode));
+      }
+      const counts = mapPanel(sample(), unicode, 80)[2]!.text;
+      for (const status of ['done', 'in-progress', 'planned'] as NodeStatus[]) {
+        expect(counts).toContain(`${statusGlyph(status, unicode)} 1 ${status}`);
+      }
+    }
+  });
+
+  it('the pane paints a status in the same color the picture gives its box', () => {
+    // Header and tab strip take their SGR from the renderer's own skin table,
+    // so the chrome and the boxes cannot drift apart.
+    expect(nodePanel(sample(), 'core', true, 80, false)![0]!.sgr).toBe(`${statusSgr('done')};1`);
+    expect(pageTabRow([{ title: 't', status: 'regressed', active: false, fresh: true }], 80, true)[0]!.sgr).toBe(
+      statusSgr('regressed'),
+    );
+  });
+
+  it('a still surface shows the spinner at rest; an animated one cycles the same frames', () => {
+    expect(statusGlyph('in-progress', true)).toBe('⠿');
+    expect(spinnerGlyph(0, true)).toBe(SPINNER_FRAMES.unicode[0]);
+    expect(spinnerGlyph(SPINNER_FRAMES.unicode.length, true)).toBe(SPINNER_FRAMES.unicode[0]);
+    expect(spinnerGlyph(-1, true)).toBe(SPINNER_FRAMES.unicode.at(-1));
+    expect(spinnerGlyph(0, false)).toBe(SPINNER_FRAMES.ascii[0]);
   });
 });
 

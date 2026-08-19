@@ -4,13 +4,26 @@
  * Every renderer (the terminal pane, a web panel, a future editor view) must
  * agree on what a zoom step MEANS, when a map aggregates into its groups,
  * how sequence time is oriented, and which map kinds render neutrally.
- * Those rules live here, pure of any medium: no cells, no glyphs, no DOM,
+ * Those rules live here, pure of any medium: no cells, no colors, no DOM,
  * no I/O. Geometry — how a mode maps onto character cells or pixels — stays
  * private to each renderer.
+ *
+ * The shared ALPHABET (status glyphs, spinner frames, node-kind glyphs) is
+ * medium-neutral for the same reason and lives beside this file in
+ * ./vocabulary.js, re-exported here so consumers keep one import site.
  */
 
 import { groupStatus } from '../domain/ops.js';
 import type { DepEdge, MapGroup, MapNode, MellosMap, NodeId, NodeStatus, Rank } from '../domain/types.js';
+
+export {
+  NODE_KIND_GLYPHS,
+  SPINNER_FRAMES,
+  STATUS_GLYPHS,
+  kindGlyph,
+  spinnerGlyph,
+  statusGlyph,
+} from './vocabulary.js';
 
 // ---------------------------------------------------------------------------
 // zoom ladder
