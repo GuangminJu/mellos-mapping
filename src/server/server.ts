@@ -1,16 +1,18 @@
 /**
  * Layer 3 — the MCP server: five tools over one state file.
  *
- *   mmap_declare  grow the map (title, bands, nodes, edges)
- *   mmap_update   record progress (status / label / evidence)
- *   mmap_remove   revise the map (edges, nodes, empty bands)
- *   mmap_view     render the current map as text
+ *   mmap_declare  grow the map (title, bands, lanes, groups, nodes, edges)
+ *   mmap_update   record progress AND revise (status, evidence, moves, renames)
+ *   mmap_remove   take things off the map (edges, nodes, groups, lanes, bands)
+ *   mmap_view     render the map as text, and name the project's pages
  *   mmap_setup    get/set the project's mapping policy (when maps open)
  *
  * Every mutating call is load -> apply (all-or-nothing, Layer 2) -> save
  * (atomic, Layer 1). The server holds no map state between calls: the file
  * is the single source of truth, so several sessions against one project
- * stay consistent per call.
+ * stay consistent per call. A save that does not land changes nothing and is
+ * reported as such — see saveFailed — so a refused write never leaves the
+ * caller believing the ledger recorded something it did not.
  *
  * The state file lives in the project the CLIENT is working in, resolved in
  * this order: MELLOS_MAPPING_CWD (explicit override for manual runs),
@@ -44,6 +46,7 @@ import {
   type MappingPolicy,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
+  type StoreError,
   configFilePath,
   describeMappingPolicy,
   describeStoreError,
@@ -246,6 +249,15 @@ function text(s: string, isError = false): ToolText {
   return { content: [{ type: 'text', text: s }], ...(isError ? { isError: true } : {}) };
 }
 
+/**
+ * The one answer to a write that did not land, so both save sites say the
+ * same thing: the previous file is intact, this call changed nothing, and
+ * calling again is the whole recovery.
+ */
+function saveFailed(error: StoreError): ToolText {
+  return text(`save failed, nothing changed (retry): ${describeStoreError(error)}`, true);
+}
+
 /** Load the map, treating a missing file as an empty map (first declare creates it). */
 function loadOrEmpty(stateFile: string): Result<MellosMap, string> {
   const loaded = loadMapFile(stateFile);
@@ -269,7 +281,7 @@ export function buildServer(stateFile: string): McpServer {
     const applied = apply(current.value);
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
     const saved = saveMapFile(file, applied.value);
-    if (!saved.ok) return text(`save failed, nothing changed (retry): ${describeStoreError(saved.error)}`, true);
+    if (!saved.ok) return saveFailed(saved.error);
     return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
@@ -500,7 +512,7 @@ export function buildServer(stateFile: string): McpServer {
         // zod enforced the enum; the cast at this boundary cannot widen it
         const policy = input.policy as MappingPolicy;
         const saved = saveMappingPolicy(stateFile, policy);
-        if (!saved.ok) return text(`save failed, nothing changed (retry): ${describeStoreError(saved.error)}`, true);
+        if (!saved.ok) return saveFailed(saved.error);
         return text(`mapping policy set: ${policy} — ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
       }
       const loaded = loadMappingPolicy(stateFile);
