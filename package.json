@@ -52,6 +52,7 @@
       "types": "./lib/render/render.d.ts",
       "default": "./lib/render/render.js"
     },
+    "./server": "./dist/server.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {

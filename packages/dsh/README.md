@@ -15,6 +15,17 @@ The bundle's [`cordis.patch.yml`](cordis.patch.yml) mounts three rows:
 | `mmap-view` | [`mellos-mapping-dsh-client`](../dsh-client/README.md): the live map panel in the web view |
 | `mcp-mellos-mapping` | The [`mellos-mapping`](https://www.npmjs.com/package/mellos-mapping) MCP server bridged into the model plane — the five `mmap_*` tools |
 
+The MCP row runs the installed `mellos-mapping` dependency directly: the
+command is `process.execPath` (the node binary dsh is already running) and its
+one argument is that package's `mellos-mapping/server` entry, resolved at mount
+time from this package's own location. So the running server is exactly the
+pinned dependency — nothing is fetched at startup, and there is no second place
+a version could drift. It also spawns on Windows: `dsh-mcp-client` hands the
+command to the MCP SDK's `StdioClientTransport`, which spawns with
+`shell: false`, where a bare `npx` is `ENOENT` (a `.cmd` shim is not a
+spawnable executable) and even `npx.cmd` is `EINVAL` since the CVE-2024-27980
+fix — the panel would mount while the `mmap_*` tools silently never appeared.
+
 The panel probes the web frame at load: on frames carrying the generic `aux`
 slot it renders as a side-by-side column; on stock dsh it is a right-edge
 drawer owned by the Map header button. Live refresh rides the forwarded
@@ -28,7 +39,9 @@ identity. Declared dependencies are the leaf libraries this plugin truly owns
 (`mellos-mapping`, `chokidar`, `zod`) plus `mellos-mapping-dsh-client` — a
 patch row names a plugin, it does not install one, so the browser half has to
 arrive as this bundle's own dependency for the one-command install to
-resolve. Both mellos packages are pinned to the shared version line.
+resolve. Both mellos packages are pinned to the shared version line, and the
+patch layer names no version of its own — the MCP row resolves the server
+through the `mellos-mapping` dependency above, so one release bumps one place.
 
 Known limitation: the stock `dsh-mcp-client` spawns the MCP server in the dsh
 process working directory, so maps land in the project `dsh web` was started
