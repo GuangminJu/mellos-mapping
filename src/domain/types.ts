@@ -299,9 +299,12 @@ export function describeMapError(e: MapError): string {
         `groups cluster nodes within one band`
       );
     case 'layer-not-empty':
-      return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
+      return (
+        `layer "${e.id}" still holds node "${e.occupant}"; move its nodes to another band (moveNode) ` +
+        `or remove them (removeNode) first`
+      );
     case 'layer-holds-group':
-      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups first`;
+      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups (removeGroup) first`;
     case 'edge-not-downward':
       return (
         `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; ` +

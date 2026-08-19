@@ -16,6 +16,7 @@ import {
   groupStatus,
   linkNodes,
   mapStatus,
+  moveNode,
   removeEdge,
   removeGroup,
   removeLane,
@@ -23,6 +24,9 @@ import {
   removeNode,
   setKind,
   setTitle,
+  updateGroup,
+  updateLane,
+  updateLayer,
   updateNode,
 } from './ops.js';
 import {
@@ -435,6 +439,116 @@ describe('node kind and edge label — annotation, not structure', () => {
     map = must(declareNode(map, { id: nid('top'), label: 'T', layer: lid('orchestration') }));
     map = must(linkNodes(map, nid('top'), nid('low')));
     expect('label' in map.edges[1]!).toBe(false);
+  });
+});
+
+describe('revision — a ghost design is a hypothesis', () => {
+  /** primitives(0): low ; contracts(1): mid uses low ; orchestration(2): high uses mid. */
+  function stack(): MellosMap {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('low'), label: 'L', layer: lid('primitives') }));
+    map = must(declareNode(map, { id: nid('mid'), label: 'M', layer: lid('contracts') }));
+    map = must(declareNode(map, { id: nid('high'), label: 'H', layer: lid('orchestration') }));
+    map = must(linkNodes(map, nid('mid'), nid('low')));
+    map = must(linkNodes(map, nid('high'), nid('mid')));
+    return map;
+  }
+
+  /** primitives(0): low ; orchestration(2): high uses low — one free band between them. */
+  function pair(): MellosMap {
+    let map = threeBands();
+    map = must(declareNode(map, { id: nid('low'), label: 'L', layer: lid('primitives') }));
+    map = must(declareNode(map, { id: nid('high'), label: 'H', layer: lid('orchestration') }));
+    return must(linkNodes(map, nid('high'), nid('low')));
+  }
+
+  it('moves a node to another band when every edge stays downward (I4)', () => {
+    const layerOf = (map: MellosMap, id: string): string => map.nodes.find((n) => n.id === id)!.layer;
+    const moved = must(moveNode(pair(), nid('high'), lid('contracts')));
+    expect(layerOf(moved, 'high')).toBe('contracts');
+    expect(layerOf(must(moveNode(moved, nid('high'), lid('orchestration'))), 'high')).toBe('orchestration');
+    // ...but not onto its dependency's own band: that would flatten the edge
+    expect(mustFail(moveNode(moved, nid('high'), lid('primitives')))).toMatchObject({ kind: 'edge-not-downward' });
+  });
+
+  it('refuses a move that would invert or flatten an edge, naming the edge', () => {
+    const e = mustFail(moveNode(stack(), nid('low'), lid('orchestration')));
+    expect(e).toMatchObject({ kind: 'edge-not-downward', from: 'mid', to: 'low', fromRank: 1, toRank: 2 });
+    expect(mustFail(moveNode(stack(), nid('mid'), lid('primitives')))).toMatchObject({ kind: 'edge-not-downward' });
+  });
+
+  it('refuses an unknown node or band, and never ungroups silently (I7)', () => {
+    expect(mustFail(moveNode(stack(), nid('ghost'), lid('primitives'))).kind).toBe('unknown-node');
+    expect(mustFail(moveNode(stack(), nid('low'), lid('nowhere'))).kind).toBe('unknown-layer');
+
+    let map = must(declareGroup(threeBands(), { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+    map = must(declareNode(map, { id: nid('a'), label: 'A', layer: lid('primitives'), group: gid('ground') }));
+    // the band the node would land on holds no such group: refused, not dropped
+    expect(mustFail(moveNode(map, nid('a'), lid('contracts'))).kind).toBe('group-layer-mismatch');
+    const ungrouped = must(updateNode(map, { id: nid('a'), group: null }));
+    expect(must(moveNode(ungrouped, nid('a'), lid('contracts'))).nodes[0]!.layer).toBe('contracts');
+  });
+
+  it('empties a band by moving its nodes, then removes it', () => {
+    const moved = must(moveNode(pair(), nid('high'), lid('contracts')));
+    expect(must(removeLayer(moved, lid('orchestration'))).layers).toHaveLength(2);
+    // the refusal names the operation that exists now, not one that does not
+    expect(describeMapError(mustFail(removeLayer(pair(), lid('orchestration'))))).toContain('moveNode');
+  });
+
+  it('renames a band and re-orders it while every edge stays downward', () => {
+    let map = must(updateLayer(stack(), lid('contracts'), { name: '契约' }));
+    expect(map.layers.find((l) => l.id === 'contracts')).toMatchObject({ name: '契约', rank: 1 });
+    // rank 1 -> 5 keeps mid above low and below high? no: high sits at 2
+    expect(mustFail(updateLayer(map, lid('contracts'), { rank: rnk(5) }))).toMatchObject({
+      kind: 'edge-not-downward',
+      from: 'high',
+      to: 'mid',
+    });
+    // moving the TOP band up is free — nothing stands on it
+    map = must(updateLayer(map, lid('orchestration'), { rank: rnk(9) }));
+    expect(map.layers.find((l) => l.id === 'orchestration')!.rank).toBe(9);
+  });
+
+  it('refuses a rank another band already holds, and an unknown band', () => {
+    expect(mustFail(updateLayer(stack(), lid('contracts'), { rank: rnk(0) }))).toMatchObject({
+      kind: 'duplicate-rank',
+      existing: 'primitives',
+    });
+    // re-declaring a band's OWN rank is a no-op, not a duplicate
+    expect(must(updateLayer(stack(), lid('contracts'), { rank: rnk(1) })).layers).toEqual(stack().layers);
+    expect(mustFail(updateLayer(stack(), lid('nowhere'), { name: 'x' })).kind).toBe('unknown-layer');
+  });
+
+  it('relabels a group and a lane without touching their members', () => {
+    let map = must(declareGroup(threeBands(), { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+    map = must(declareNode(map, { id: nid('a'), label: 'A', layer: lid('primitives'), group: gid('ground') }));
+    map = must(updateGroup(map, gid('ground'), '地基子系统'));
+    expect(map.groups[0]).toEqual({ id: 'ground', label: '地基子系统', layer: 'primitives' });
+    expect(map.nodes[0]!.group).toBe('ground');
+    expect(mustFail(updateGroup(map, gid('ghost'), 'x')).kind).toBe('unknown-group');
+
+    map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
+    map = must(updateNode(map, { id: nid('a'), lane: laid('client') }));
+    map = must(updateLane(map, laid('client'), '前端'));
+    expect(map.lanes[0]).toEqual({ id: 'client', label: '前端' });
+    expect(map.nodes[0]!.lane).toBe('client');
+    expect(mustFail(updateLane(map, laid('ghost'), 'x')).kind).toBe('unknown-lane');
+  });
+
+  it('clears evidence, detail and the title as explicitly as they were set', () => {
+    let map = must(declareNode(threeBands(), { id: nid('a'), label: 'A', layer: lid('primitives'), detail: '设计说明' }));
+    map = must(updateNode(map, { id: nid('a'), status: 'done', evidence: 'vitest: 3 passed' }));
+    expect(map.nodes[0]).toMatchObject({ evidence: 'vitest: 3 passed', detail: '设计说明' });
+
+    // a node demoted back to a plan drops the stale evidence entirely — the
+    // key disappears rather than becoming an empty string
+    map = must(updateNode(map, { id: nid('a'), status: 'planned', evidence: null, detail: null }));
+    expect('evidence' in map.nodes[0]!).toBe(false);
+    expect('detail' in map.nodes[0]!).toBe(false);
+
+    expect('title' in setTitle(setTitle(EMPTY_MAP, '标题'), null)).toBe(false);
+    expect(setTitle(setTitle(EMPTY_MAP, '标题'), '新标题').title).toBe('新标题');
   });
 });
 
