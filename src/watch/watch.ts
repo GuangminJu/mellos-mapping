@@ -31,6 +31,14 @@
  * With nothing focused it shows the map dashboard instead. Fixed height —
  * details never float over the map and the layout never jumps.
  *
+ * WHICH page is shown, and what is known about the others, is not decided
+ * here: ./pane-state.js folds one look at the store into the next page set,
+ * and this file is the shell around it — stdin, stdout, timers, the
+ * filesystem, and the view (pan, zoom, pin) of whatever page that fold
+ * chose. Every promise about pages — a request beats follow, the startup
+ * scan is not news, a torn file never costs the last good picture — is
+ * specified over there.
+ *
  * Resilience contract: NOTHING a file or a picture does may take the pane
  * down. A torn or half-written file (only possible with foreign writers; our
  * own saves are atomic) leaves the last good picture up and the next poll
@@ -57,7 +65,6 @@ import {
   diveParent,
   focusInfo,
   interiorPages,
-  mostRecentKey,
   statusGlyph,
 } from '../semantics/semantics.js';
 import {
@@ -81,8 +88,6 @@ import {
   PAGES_DIR_NAME,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
-  type StoreError,
-  describeStoreError,
   listPageFiles,
   loadMapFile,
   makePageId,
@@ -92,6 +97,26 @@ import {
   takeFocusRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
+import {
+  type PageEntry,
+  type PageFault,
+  type PaneState,
+  describePageFault,
+  entryOf,
+  filesOf,
+  initialPaneState,
+  mapOf,
+  mapsOf,
+  popDive,
+  pushDive,
+  scan,
+  toggleFollow,
+  userSwitch,
+} from './pane-state.js';
+
+// The page-set rules and their fault vocabulary live in ./pane-state.js;
+// re-exported here so the pane has one import site, as it always had.
+export { type PageFault, type PageEntry, type PaneState, describePageFault } from './pane-state.js';
 
 // Width helpers live with the renderer now; re-exported for panel tests.
 export { fitWidth, wrapWidth };
@@ -153,20 +178,6 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
 // cannot process: a file it cannot read, and a map it cannot draw
 // ---------------------------------------------------------------------------
 
-/** A fault the store does not model: the page file could not be read at all. */
-export interface UnreadablePage {
-  readonly kind: 'unreadable';
-  readonly path: string;
-  readonly detail: string;
-}
-
-/** Everything that can go wrong between a page file and a picture of it. */
-export type PageFault = StoreError | UnreadablePage;
-
-export function describePageFault(fault: PageFault): string {
-  return fault.kind === 'unreadable' ? `cannot read ${fault.path}: ${fault.detail}` : describeStoreError(fault);
-}
-
 /**
  * Read a page file, turning EVERY fault into a value.
  *
@@ -219,19 +230,6 @@ export function dividerRow(width: number, unicode: boolean, follow: boolean): st
     if (at > gripAt + grip.length) bar = bar.slice(0, at) + tag + bar.slice(at + tag.length);
   }
   return bar;
-}
-
-/**
- * The page a pane shows when nobody asked for one: the most recently WRITTEN
- * page — the ledger last touched is almost always the effort under way. Files
- * without a readable mtime lose; an empty store falls back to list order
- * (default page first, then slug order).
- */
-export function mostRecentPageFile(
-  files: readonly string[],
-  mtimeOf: (file: string) => number | undefined,
-): string | undefined {
-  return mostRecentKey(files, mtimeOf);
 }
 
 const HIDE_CURSOR = '\x1b[?25l';
@@ -842,29 +840,20 @@ function main(): void {
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
 
-  // pages — one map file each; the active page owns the mutable view below
-  interface PageEntry {
-    map: MellosMap | undefined;
-    mtimeMs: number;
-    fresh: boolean;
-    /** Store error of a file that exists but does not load — never hide it. */
-    error?: string;
-  }
+  // Pages — one map file each. Which page is shown and what is known about
+  // the others is a value the reducer folds (./pane-state.js); this shell
+  // owns only the I/O around it and the VIEW of the page on screen.
   interface PageView {
     offsetX: number;
     offsetY: number;
     zoom: ZoomStep;
     selectedId: string | undefined;
   }
-  let pageFiles: string[] = [cfg.file];
-  const pageData = new Map<string, PageEntry>();
+  let pane: PaneState = initialPaneState(
+    cfg.follow,
+    cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page),
+  );
   const pageViews = new Map<string, PageView>();
-  let activeFile: string | undefined;
-  let firstScan = true;
-  /** A requested page whose file may not exist yet — shown the moment it appears. */
-  let pendingFocusFile: string | undefined = cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page);
-  /** Auto-follow: the pane switches to the page last written. 'f' toggles. */
-  let follow = cfg.follow;
   let lastTabSegments: readonly TabSegment[] = [];
   /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
   let tabScroll = 0;
@@ -884,25 +873,24 @@ function main(): void {
   let dividerDrag = false;
   // sub-map navigation: double-click dives, Backspace climbs back out
   let lastClick: { id: string; at: number } | undefined;
-  const diveStack: string[] = [];
   let flash: { text: string; until: number } | undefined;
   /** Tab-bar files as painted (top-level pages only), for click hit-testing. */
   let lastTabFiles: string[] = [];
 
-  const maps = (): ReadonlyMap<string, MellosMap | undefined> =>
-    new Map([...pageData].map(([f, e]) => [f, e.map]));
-  const topFiles = (): string[] => topLevelFiles(cfg.file, pageFiles, maps());
+  const topFiles = (): string[] => topLevelFiles(cfg.file, filesOf(pane), mapsOf(pane));
   /** Inside a sub-map the tab row becomes the breadcrumb instead. */
-  const inSubmap = (): boolean => activeFile !== undefined && !topFiles().includes(activeFile);
+  const inSubmap = (): boolean => pane.activeFile !== undefined && !topFiles().includes(pane.activeFile);
   const tabRows = (): number => (topFiles().length > 1 || inSubmap() ? 1 : 0);
   /** Climb out of the last dive; with no stack, derive the parent by scan. */
   const climbBack = (): boolean => {
-    let parent = diveStack.pop();
-    while (parent !== undefined && !pageFiles.includes(parent)) parent = diveStack.pop();
-    if (parent === undefined && activeFile !== undefined) {
-      parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
-    }
-    if (parent !== undefined && parent !== activeFile) {
+    const climbed = popDive(pane);
+    pane = climbed.state;
+    const parent =
+      climbed.parent ??
+      (pane.activeFile !== undefined
+        ? diveOrigin(cfg.file, pane.activeFile, filesOf(pane), mapsOf(pane))?.parent
+        : undefined);
+    if (parent !== undefined && parent !== pane.activeFile) {
       handSwitch(parent);
       return true;
     }
@@ -917,34 +905,54 @@ function main(): void {
   /** The tab strip's view models for `files`, in tab order. */
   const pageTabsOf = (files: readonly string[]): PageTab[] =>
     files.map((f) => {
-      const m = pageData.get(f)?.map;
+      const entry = entryOf(pane, f);
+      const m = mapOf(entry);
       return {
         title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
         status: m !== undefined ? mapStatus(m) : 'planned',
-        active: f === activeFile,
-        fresh: pageData.get(f)?.fresh ?? false,
+        active: f === pane.activeFile,
+        fresh: entry?.fresh ?? false,
         neutral: m !== undefined && isNeutralKind(m),
       };
     });
 
-  /** Park the current view, activate `file`, restore its view (or defaults). */
-  const switchPage = (file: string): void => {
-    if (activeFile !== undefined) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
-    activeFile = file;
+  /**
+   * What the pane says when it cannot show a map: a fault outranks
+   * everything, a missing DEFAULT file is the virgin-project standby (the
+   * diagnostics block already names the watched paths), and a missing PAGE
+   * file is transient until the next scan. A fault with a last good map
+   * behind it is worth saying too — unless it is a torn read, which the next
+   * tick will most likely undo.
+   */
+  const noticeFor = (file: string | undefined): string => {
+    const entry = entryOf(pane, file);
+    if (entry === undefined || entry.state.kind === 'absent') {
+      return file === undefined || file === cfg.file ? standbyNotice : `waiting for ${file} ...`;
+    }
+    if (entry.state.kind === 'loaded') return '';
+    return entry.state.transient && entry.state.lastGood !== undefined ? '' : describePageFault(entry.state.fault);
+  };
+
+  /** Adopt what the pane state now says: the active page's map and message. */
+  const adoptPage = (): void => {
+    map = mapOf(entryOf(pane, pane.activeFile));
+    notice = noticeFor(pane.activeFile);
+  };
+
+  /**
+   * Follow a page change: park the view of the page being left, restore the
+   * one being entered (or defaults), and keep the active tab on screen.
+   */
+  const adoptView = (previous: string | undefined): void => {
+    const file = pane.activeFile;
+    if (file === undefined || file === previous) return;
+    if (previous !== undefined) pageViews.set(previous, { offsetX, offsetY, zoom, selectedId });
     const view = pageViews.get(file);
     offsetX = view?.offsetX ?? 0;
     offsetY = view?.offsetY ?? 0;
     zoom = view?.zoom ?? ZOOM_DEFAULT;
     selectedId = view?.selectedId;
     hoverId = undefined;
-    const entry = pageData.get(file);
-    if (entry !== undefined && entry.fresh) pageData.set(file, { ...entry, fresh: false });
-    map = entry?.map;
-    // no map: a recorded store error outranks everything; a missing DEFAULT
-    // file is the virgin-project standby (the diagnostics block already names
-    // the watched paths); a missing PAGE file is transient until the next scan.
-    notice =
-      map !== undefined ? '' : (entry?.error ?? (file === cfg.file ? standbyNotice : `waiting for ${file} ...`));
     // the strip follows the switch — the active tab must never sit off-screen
     const top = topFiles();
     const tabIndex = top.indexOf(file);
@@ -952,17 +960,19 @@ function main(): void {
   };
 
   /**
-   * A page switch the USER made — it withdraws any pending focus request and
-   * turns auto-follow off: a pane that yanks the view back while its user is
-   * deliberately looking elsewhere would make follow its own enemy.
+   * A page switch the USER made — the reducer withdraws any pending focus
+   * request and turns auto-follow off: a pane that yanks the view back while
+   * its user is deliberately looking elsewhere would make follow its enemy.
    */
   const handSwitch = (file: string): void => {
-    pendingFocusFile = undefined;
-    if (follow) {
-      follow = false;
+    const previous = pane.activeFile;
+    const switched = userSwitch(pane, file);
+    pane = switched.state;
+    if (switched.followTurnedOff) {
       flash = { text: 'auto-follow off — press f to re-enable', until: Date.now() + 3000 };
     }
-    switchPage(file);
+    adoptView(previous);
+    adoptPage();
   };
 
   /** Terminal cell (1-based) -> node under it, honoring tab row and pan. */
@@ -1040,7 +1050,9 @@ function main(): void {
           pagesDir: join(dirname(cfg.file), PAGES_DIR_NAME),
           intervalMs: cfg.intervalMs,
           elapsedMs: interactive ? Date.now() - startedAt : undefined,
-          broken: [...pageData.values()].flatMap((e) => (e.map === undefined && e.error !== undefined ? [e.error] : [])),
+          broken: pane.pages.flatMap((p) =>
+            p.state.kind === 'faulted' && p.state.lastGood === undefined ? [describePageFault(p.state.fault)] : [],
+          ),
         },
         Math.max(1, viewW - 2),
       );
@@ -1065,7 +1077,7 @@ function main(): void {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
     // the separator doubles as the drag handle and carries the follow tag
-    const separator = dividerRow(viewW, cfg.unicode, follow);
+    const separator = dividerRow(viewW, cfg.unicode, pane.follow);
     const panelRows = [
       cfg.color ? `\x1b[90m${separator}${RESET}` : separator,
       ...panel.map((l) =>
@@ -1076,19 +1088,19 @@ function main(): void {
     // -- top row: tab bar over top-level pages, or the breadcrumb of a dive --
     let tabLine: string | undefined;
     lastTabFiles = topFiles();
-    if (inSubmap() && activeFile !== undefined) {
+    if (inSubmap() && pane.activeFile !== undefined) {
       // ⌫ parent title ▸ node label — the whole row is one "back" target.
       // The stack knows where we dived from; the scan supplies the linking
       // node's label and survives a restart with an empty stack.
-      const stackParent = [...diveStack].reverse().find((f) => pageFiles.includes(f));
-      const scanned = diveOrigin(cfg.file, activeFile, pageFiles, maps());
-      const parentFile = stackParent ?? scanned?.parent;
+      const stackParent = pane.diveStack[pane.diveStack.length - 1];
+      const origin = diveOrigin(cfg.file, pane.activeFile, filesOf(pane), mapsOf(pane));
+      const parentFile = stackParent ?? origin?.parent;
       const parentTitle =
         parentFile !== undefined
-          ? (pageData.get(parentFile)?.map?.title ??
+          ? (mapOf(entryOf(pane, parentFile))?.title ??
             ((pageIdOfFile(cfg.file, parentFile) as string | undefined) ?? 'main'))
           : 'main';
-      const nodeLabel = scanned?.label ?? map?.title ?? '';
+      const nodeLabel = origin?.label ?? map?.title ?? '';
       const crumbHead = ` ${cfg.unicode ? '⌫' : '<'} ${parentTitle} ${cfg.unicode ? '▸' : '>'} `;
       const head: TabSegment = { text: crumbHead, sgr: '90', lo: 1, hi: displayWidth(crumbHead), action: { kind: 'back' } };
       const tailText = fitWidth(`${nodeLabel} `, Math.max(1, viewW - displayWidth(crumbHead)));
@@ -1157,87 +1169,41 @@ function main(): void {
 
     // discover pages; a project without page files still watches the default
     const discovered = listPageFiles(cfg.file);
-    pageFiles = discovered.length > 0 ? discovered : [cfg.file];
-    for (const known of [...pageData.keys()]) {
-      if (!pageFiles.includes(known)) {
-        pageData.delete(known);
-        pageViews.delete(known);
-      }
-    }
-
-    const changedFiles: string[] = []; // pages successfully (re)loaded this tick, startup scan excluded
-    for (const file of pageFiles) {
-      let mtimeMs: number | undefined;
-      try {
-        mtimeMs = statSync(file).mtimeMs;
-      } catch {
-        continue; // file absent — keep waiting
-      }
-      const entry = pageData.get(file);
-      if (mtimeMs === entry?.mtimeMs) continue;
-      const loaded = readPage(file);
-      if (loaded.ok) {
-        if (!firstScan) changedFiles.push(file);
-        // background pages light their tab up; the startup scan is not news
-        const becameFresh = !firstScan && file !== activeFile;
-        pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
-        if (file === activeFile) {
-          map = loaded.value;
-          notice = '';
-        } else if (becameFresh && !topFiles().includes(file)) {
-          // a hidden sub-map changed — it has no tab to light, so surface it here
-          const title = loaded.value.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? '?');
-          flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + 4000 };
-        }
-      } else if (loaded.error.kind === 'malformed-json') {
-        // Plausible torn read from a foreign writer — keep retrying (mtime is
-        // NOT recorded, so every tick reloads), but say what was seen: a file
-        // that stays junk must not hide behind "waiting" forever.
-        pageData.set(file, {
-          map: entry?.map,
-          mtimeMs: entry?.mtimeMs ?? -1,
-          fresh: entry?.fresh ?? false,
-          error: describePageFault(loaded.error),
-        });
-        if (file === activeFile && entry?.map === undefined) notice = describePageFault(loaded.error);
-      } else {
-        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describePageFault(loaded.error) });
-        if (file === activeFile) notice = describePageFault(loaded.error);
-      }
-    }
-    // An explicit focus request (--page, or the one-shot focus file) outranks
-    // every default. On the spawn tick the --page argument is the newest
-    // intent — a leftover focus file from a dead watcher merely gets swept;
-    // afterwards the file channel is how a running pane is retargeted.
+    const files = discovered.length > 0 ? discovered : [cfg.file];
     const request = takeFocusRequest(cfg.file);
-    if (request !== undefined && !(firstScan && pendingFocusFile !== undefined)) {
-      pendingFocusFile = pageFilePath(cfg.file, request.page);
+    const previous = pane.activeFile;
+    const scanned = scan(pane, {
+      files,
+      mtimeAt: (file) => {
+        try {
+          return statSync(file).mtimeMs;
+        } catch {
+          return undefined; // file absent — keep waiting
+        }
+      },
+      load: readPage,
+      focusRequest: request === undefined ? undefined : pageFilePath(cfg.file, request.page),
+      // a drag in progress holds auto-follow off: the user is engaged with
+      // THIS page, and a missed switch is re-triggered by the next save
+      engaged: dragAnchor !== undefined,
+    });
+    pane = scanned.state;
+    for (const known of [...pageViews.keys()]) {
+      if (!files.includes(known)) pageViews.delete(known); // the page is gone; so is its view
     }
-    let requestApplied = false;
-    if (pendingFocusFile !== undefined && pageFiles.includes(pendingFocusFile)) {
-      if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
-      pendingFocusFile = undefined;
-      requestApplied = true;
-    }
+    adoptView(previous);
+    adoptPage();
 
-    // Auto-follow: the pane switches to the page last WRITTEN — the map being
-    // operated on right now. An explicit focus request outranks it this tick;
-    // a drag in progress skips it (the user is engaged with THIS page, and a
-    // missed switch is re-triggered by the writer's next save anyway).
-    if (follow && !requestApplied && changedFiles.length > 0 && dragAnchor === undefined) {
-      const target = mostRecentPageFile(changedFiles, (f) => pageData.get(f)?.mtimeMs)!;
-      if (target !== activeFile) switchPage(target);
-    }
-    firstScan = false;
-
-    // nobody asked for a page: the most recently written one is the effort
-    // under way — never just "first in the list"
-    if (activeFile === undefined || !pageFiles.includes(activeFile)) {
-      switchPage(mostRecentPageFile(pageFiles, (f) => pageData.get(f)?.mtimeMs)!);
+    // a hidden sub-map changed — it has no tab to light, so surface it here
+    const top = topFiles();
+    for (const file of scanned.freshened) {
+      if (top.includes(file)) continue;
+      const title = mapOf(entryOf(pane, file))?.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? '?');
+      flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + 4000 };
     }
 
     // any page spinning keeps the animation alive
-    if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
+    if (pane.pages.some((p) => mapOf(p)?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
     if (flash !== undefined && Date.now() > flash.until) flash = undefined; // footer message expires
     paint();
   };
@@ -1363,7 +1329,7 @@ function main(): void {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
-                  if (target !== undefined && target !== activeFile) handSwitch(target);
+                  if (target !== undefined && target !== pane.activeFile) handSwitch(target);
                 }
               } else {
                 // a press that never dragged is a click: pin, or unpin on empty.
@@ -1373,12 +1339,13 @@ function main(): void {
                 const now = Date.now();
                 if (id !== undefined && lastClick?.id === id && now - lastClick.at <= 450) {
                   const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
-                  if (submap !== undefined && activeFile !== undefined) {
+                  if (submap !== undefined && pane.activeFile !== undefined) {
                     const target = pageFilePath(cfg.file, submap as unknown as PageId);
-                    if (pageFiles.includes(target) && target !== activeFile) {
-                      diveStack.push(activeFile);
+                    const files = filesOf(pane);
+                    if (files.includes(target) && target !== pane.activeFile) {
+                      pane = pushDive(pane, pane.activeFile);
                       handSwitch(target);
-                    } else if (!pageFiles.includes(target)) {
+                    } else if (!files.includes(target)) {
                       flash = { text: `submap "${submap as string}" has no page yet`, until: now + 2500 };
                     }
                   }
@@ -1397,11 +1364,11 @@ function main(): void {
           case 'prev-page': {
             // pages cycle over the TOP-LEVEL tabs; sub-maps are reached by diving
             const top = topFiles();
-            if (top.length > 0 && activeFile !== undefined) {
-              const current = top.indexOf(activeFile); // -1 inside a sub-map — steps to an end tab
+            if (top.length > 0 && pane.activeFile !== undefined) {
+              const current = top.indexOf(pane.activeFile); // -1 inside a sub-map — steps to an end tab
               const step = event.kind === 'next-page' ? 1 : -1;
               const target = top[(current + step + top.length) % top.length]!;
-              if (target !== activeFile) {
+              if (target !== pane.activeFile) {
                 handSwitch(target);
                 dirty = true;
               }
@@ -1410,7 +1377,7 @@ function main(): void {
           }
           case 'page': {
             const target = topFiles()[event.index];
-            if (target !== undefined && target !== activeFile) {
+            if (target !== undefined && target !== pane.activeFile) {
               handSwitch(target);
               dirty = true;
             }
@@ -1420,8 +1387,8 @@ function main(): void {
             if (climbBack()) dirty = true;
             break;
           case 'follow-toggle':
-            follow = !follow;
-            flash = { text: follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + 2500 };
+            pane = toggleFollow(pane);
+            flash = { text: pane.follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + 2500 };
             dirty = true;
             break;
         }
