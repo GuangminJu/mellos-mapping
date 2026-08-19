@@ -15,6 +15,19 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * The registry every `resolved` URL in package-lock.json must point at.
+ *
+ * The lock is a checked-in artifact that CI and every contributor installs
+ * from, so it may never inherit the releasing developer's registry config: a
+ * mirror baked into `resolved` sends every `npm ci` in the world to a third
+ * party, and npm's `replace-registry-host` default (`npmjs`) only rewrites
+ * npmjs-owned hosts, so nothing rewrites a mirror back. Passing it explicitly
+ * makes a release reproducible from any machine; `tests/lockfile.test.ts`
+ * fails the build if a `resolved` ever lands elsewhere.
+ */
+const LOCKFILE_REGISTRY = 'https://registry.npmjs.org/';
+
 const version = process.argv[2];
 if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
   console.error('usage: node scripts/release.mjs <semver>   e.g. 0.12.0');
@@ -63,7 +76,11 @@ bump('packages/dsh-client/package.json', jsonVersion, `"version": "${version}"`,
 // (npm ci refuses to install when the lock disagrees with package.json.)
 // Single command strings throughout: an args array alongside shell:true is
 // deprecated (DEP0190) because the pieces would be concatenated unescaped.
-const lock = spawnSync('npm install --package-lock-only', { cwd: root, stdio: 'inherit', shell: true });
+const lock = spawnSync(`npm install --package-lock-only --registry=${LOCKFILE_REGISTRY}`, {
+  cwd: root,
+  stdio: 'inherit',
+  shell: true,
+});
 if (lock.status !== 0) {
   console.error('package-lock resync failed.');
   process.exit(1);
