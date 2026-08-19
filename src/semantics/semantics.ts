@@ -258,9 +258,8 @@ export function focusInfo(map: MellosMap, focusId: string): NodeFocus | GroupFoc
 // ---------------------------------------------------------------------------
 
 /**
- * Page slugs some node of any map dives into. A page referenced as a submap
- * is interior detail — it is reached by diving through its linking node,
- * never by sitting beside its parent as a sibling tab.
+ * Page slugs some node of any map dives into — the raw fact only, WITHOUT
+ * the rule a sibling strip needs on top of it (that is interiorPages).
  * @param maps - every known page's map (undefined entries are skipped).
  * @returns the referenced submap slugs.
  */
@@ -270,6 +269,73 @@ export function submapRefs(maps: Iterable<MellosMap | undefined>): Set<string> {
     for (const n of m?.nodes ?? []) if (n.submap !== undefined) refs.add(n.submap as string);
   }
   return refs;
+}
+
+/**
+ * Which pages are INTERIOR: reached by diving through a node, never by
+ * sitting beside their parent as a sibling tab.
+ *
+ * "Referenced by anyone" is NOT the rule, because a strip computed that way
+ * can erase itself. Two refinements make it total:
+ *   - a page never hides itself. A node whose submap names its own page is a
+ *     loop with no bottom, not a parent link — read as one, it deleted the
+ *     tab of the very page it was drawn on.
+ *   - a page referenced only from pages it can itself reach keeps its tab. A
+ *     link cycle has no outside, so hiding every page in it leaves a strip
+ *     with nothing in it and a client with nowhere left to go.
+ * Everything else is interior: some page OUTSIDE its own loop dives into it,
+ * and that page's node is the way in.
+ *
+ * @param pages - every known page as (slug, map) pairs; the default page has
+ *   no slug a node could name, so it is passed as undefined and is never
+ *   interior. Entries with no map (unreadable, not yet loaded) contribute no
+ *   links.
+ * @returns the slugs to keep out of a sibling strip.
+ */
+export function interiorPages(pages: Iterable<readonly [string | undefined, MellosMap | undefined]>): Set<string> {
+  /** slug -> the pages it dives into. */
+  const dives = new Map<string, Set<string>>();
+  /** slug -> the pages that dive into it (undefined = the default page). */
+  const divedIntoBy = new Map<string, Set<string | undefined>>();
+  for (const [slug, map] of pages) {
+    const targets = new Set<string>();
+    for (const n of map?.nodes ?? []) {
+      const target = n.submap as string | undefined;
+      if (target === undefined || target === slug) continue;
+      targets.add(target);
+      const sources = divedIntoBy.get(target) ?? new Set<string | undefined>();
+      sources.add(slug);
+      divedIntoBy.set(target, sources);
+    }
+    if (slug !== undefined) dives.set(slug, targets);
+  }
+
+  /** Every page reachable from `start` by following submap links onward. */
+  const reachableFrom = (start: string): Set<string> => {
+    const seen = new Set<string>();
+    const pending = [start];
+    while (pending.length > 0) {
+      for (const target of dives.get(pending.pop()!) ?? []) {
+        if (seen.has(target)) continue;
+        seen.add(target);
+        pending.push(target);
+      }
+    }
+    return seen;
+  };
+
+  const interior = new Set<string>();
+  for (const [target, sources] of divedIntoBy) {
+    const outward = reachableFrom(target);
+    for (const source of sources) {
+      // the default page (undefined) is never reachable: it has no slug
+      if (source === undefined || !outward.has(source)) {
+        interior.add(target);
+        break;
+      }
+    }
+  }
+  return interior;
 }
 
 /**

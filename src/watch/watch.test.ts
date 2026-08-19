@@ -325,6 +325,26 @@ describe('sub-map hierarchy — interior pages are not sibling tabs', () => {
     expect(topLevelFiles(DEFAULT, [DEFAULT, child], new Map([[DEFAULT, undefined]]))).toEqual([DEFAULT, child]);
   });
 
+  it('never lets a page erase its own tab, or a pair erase them both', () => {
+    // "hide whatever anyone dives into" is a rule that can hide everything: a
+    // page whose node names its OWN slug deleted the tab it was drawn on, and
+    // two pages linking each other left a strip with nothing in it.
+    const selfLinked = must(updateNode(sample(), { id: nid('core'), submap: 'new-effort' as SubmapRef }));
+    expect(topLevelFiles(DEFAULT, [DEFAULT, effort], new Map([[effort, selfLinked]]))).toEqual([DEFAULT, effort]);
+
+    const toChild = must(updateNode(sample(), { id: nid('core'), submap: 'core-internals' as SubmapRef }));
+    const toEffort = must(updateNode(sample(), { id: nid('core'), submap: 'new-effort' as SubmapRef }));
+    const mutual = new Map<string, MellosMap | undefined>([
+      [effort, toChild],
+      [child, toEffort],
+    ]);
+    expect(topLevelFiles(DEFAULT, [DEFAULT, child, effort], mutual)).toEqual([DEFAULT, child, effort]);
+
+    // but a page the DEFAULT page dives into is interior, loop or not
+    mutual.set(DEFAULT, toChild);
+    expect(topLevelFiles(DEFAULT, [DEFAULT, child, effort], mutual)).toEqual([DEFAULT, effort]);
+  });
+
   it('derives where a sub-map was dived from: parent file and linking node label', () => {
     const mapOf = new Map<string, MellosMap | undefined>([[DEFAULT, overview()]]);
     expect(diveOrigin(DEFAULT, child, [DEFAULT, child], mapOf)).toEqual({ parent: DEFAULT, label: '核心' });

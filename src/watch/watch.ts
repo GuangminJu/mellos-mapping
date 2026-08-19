@@ -56,9 +56,9 @@ import {
   SPINNER_FRAMES,
   diveParent,
   focusInfo,
+  interiorPages,
   mostRecentKey,
   statusGlyph,
-  submapRefs,
 } from '../semantics/semantics.js';
 import {
   type BoxHit,
@@ -427,20 +427,25 @@ export function tabScrollFor(
 }
 
 /**
- * Pages that deserve a tab: those NO node of any page dives into. A page
- * referenced as some node's submap is interior detail — it is reached by
- * double-clicking that node, never by sitting beside its parent as a
- * sibling. The default page is never hidden.
+ * Pages that deserve a tab: everything not INTERIOR. A page some other page
+ * dives into is interior detail — reached by double-clicking that node, never
+ * by sitting beside its parent as a sibling. The default page is never
+ * hidden.
+ *
+ * The rule needs each page's own slug, not just its map: a page that links
+ * ITSELF, or two pages that link each other, are loops with no outside, and
+ * "hide everything anyone dives into" erased their tabs — in the mutual case,
+ * the whole strip. interiorPages (../semantics) owns that judgement.
  */
 export function topLevelFiles(
   defaultFile: string,
   files: readonly string[],
   mapOf: ReadonlyMap<string, MellosMap | undefined>,
 ): string[] {
-  const refs = submapRefs(mapOf.values());
+  const interior = interiorPages(files.map((f) => [pageIdOfFile(defaultFile, f), mapOf.get(f)] as const));
   return files.filter((f) => {
     const id = pageIdOfFile(defaultFile, f);
-    return id === undefined || !refs.has(id as string);
+    return id === undefined || !interior.has(id as string);
   });
 }
 
