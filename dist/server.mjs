@@ -243,13 +243,13 @@ var require_scope = __commonJS({
       }
     };
     exports.ValueScopeName = ValueScopeName;
-    var line = (0, code_1._)`\n`;
+    var line2 = (0, code_1._)`\n`;
     var ValueScope = class extends Scope {
       constructor(opts) {
         super(opts);
         this._values = {};
         this._scope = opts.scope;
-        this.opts = { ...opts, _n: opts.lines ? line : code_1.nil };
+        this.opts = { ...opts, _n: opts.lines ? line2 : code_1.nil };
       }
       get() {
         return this._scope;
@@ -2232,10 +2232,10 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize) {
+    function getFullPath(resolver, id2 = "", normalize) {
       if (normalize !== false)
-        id = normalizeId(id);
-      const p = resolver.parse(id);
+        id2 = normalizeId(id2);
+      const p = resolver.parse(id2);
       return _getFullPath(resolver, p);
     }
     exports.getFullPath = getFullPath;
@@ -2245,13 +2245,13 @@ var require_resolve = __commonJS({
     }
     exports._getFullPath = _getFullPath;
     var TRAILING_SLASH_HASH = /#\/?$/;
-    function normalizeId(id) {
-      return id ? id.replace(TRAILING_SLASH_HASH, "") : "";
+    function normalizeId(id2) {
+      return id2 ? id2.replace(TRAILING_SLASH_HASH, "") : "";
     }
     exports.normalizeId = normalizeId;
-    function resolveUrl(resolver, baseId, id) {
-      id = normalizeId(id);
-      return resolver.resolve(baseId, id);
+    function resolveUrl(resolver, baseId, id2) {
+      id2 = normalizeId(id2);
+      return resolver.resolve(baseId, id2);
     }
     exports.resolveUrl = resolveUrl;
     var ANCHOR = /^[a-z_][-a-z0-9._]*$/i;
@@ -3021,8 +3021,8 @@ var require_compile = __commonJS({
       if (Object.keys(root.schema).length > 0 && refPath === baseId) {
         return getJsonPointer.call(this, p, root);
       }
-      const id = (0, resolve_1.normalizeId)(refPath);
-      const schOrRef = this.refs[id] || this.schemas[id];
+      const id2 = (0, resolve_1.normalizeId)(refPath);
+      const schOrRef = this.refs[id2] || this.schemas[id2];
       if (typeof schOrRef == "string") {
         const sch = resolveSchema.call(this, root, schOrRef);
         if (typeof (sch === null || sch === void 0 ? void 0 : sch.schema) !== "object")
@@ -3033,7 +3033,7 @@ var require_compile = __commonJS({
         return;
       if (!schOrRef.validate)
         compileSchema.call(this, schOrRef);
-      if (id === (0, resolve_1.normalizeId)(ref)) {
+      if (id2 === (0, resolve_1.normalizeId)(ref)) {
         const { schema } = schOrRef;
         const { schemaId } = this.opts;
         const schId = schema[schemaId];
@@ -4176,15 +4176,15 @@ var require_core = __commonJS({
             this.addSchema(sch, void 0, _meta, _validateSchema);
           return this;
         }
-        let id;
+        let id2;
         if (typeof schema === "object") {
           const { schemaId } = this.opts;
-          id = schema[schemaId];
-          if (id !== void 0 && typeof id != "string") {
+          id2 = schema[schemaId];
+          if (id2 !== void 0 && typeof id2 != "string") {
             throw new Error(`schema ${schemaId} must be string`);
           }
         }
-        key = (0, resolve_1.normalizeId)(key || id);
+        key = (0, resolve_1.normalizeId)(key || id2);
         this._checkUnique(key);
         this.schemas[key] = this._addSchema(schema, _meta, key, _validateSchema, true);
         return this;
@@ -4263,11 +4263,11 @@ var require_core = __commonJS({
           case "object": {
             const cacheKey = schemaKeyRef;
             this._cache.delete(cacheKey);
-            let id = schemaKeyRef[this.opts.schemaId];
-            if (id) {
-              id = (0, resolve_1.normalizeId)(id);
-              delete this.schemas[id];
-              delete this.refs[id];
+            let id2 = schemaKeyRef[this.opts.schemaId];
+            if (id2) {
+              id2 = (0, resolve_1.normalizeId)(id2);
+              delete this.schemas[id2];
+              delete this.refs[id2];
             }
             return this;
           }
@@ -4374,10 +4374,10 @@ var require_core = __commonJS({
         }
       }
       _addSchema(schema, meta, baseId, validateSchema = this.opts.validateSchema, addSchema = this.opts.addUsedSchema) {
-        let id;
+        let id2;
         const { schemaId } = this.opts;
         if (typeof schema == "object") {
-          id = schema[schemaId];
+          id2 = schema[schemaId];
         } else {
           if (this.opts.jtd)
             throw new Error("schema must be object");
@@ -4387,7 +4387,7 @@ var require_core = __commonJS({
         let sch = this._cache.get(schema);
         if (sch !== void 0)
           return sch;
-        baseId = (0, resolve_1.normalizeId)(id || baseId);
+        baseId = (0, resolve_1.normalizeId)(id2 || baseId);
         const localRefs = resolve_1.getSchemaRefs.call(this, schema, baseId);
         sch = new compile_1.SchemaEnv({ schema, schemaId, meta, baseId, localRefs });
         this._cache.set(sch.schema, sch);
@@ -4400,9 +4400,9 @@ var require_core = __commonJS({
           this.validateSchema(schema, true);
         return sch;
       }
-      _checkUnique(id) {
-        if (this.schemas[id] || this.refs[id]) {
-          throw new Error(`schema with key or id "${id}" already exists`);
+      _checkUnique(id2) {
+        if (this.schemas[id2] || this.refs[id2]) {
+          throw new Error(`schema with key or id "${id2}" already exists`);
         }
       }
       _compileSchemaEnv(sch) {
@@ -7451,18 +7451,18 @@ var ParseStatus = class _ParseStatus {
     if (this.value !== "aborted")
       this.value = "aborted";
   }
-  static mergeArray(status, results) {
+  static mergeArray(status2, results) {
     const arrayValue = [];
     for (const s of results) {
       if (s.status === "aborted")
         return INVALID;
       if (s.status === "dirty")
-        status.dirty();
+        status2.dirty();
       arrayValue.push(s.value);
     }
-    return { status: status.value, value: arrayValue };
+    return { status: status2.value, value: arrayValue };
   }
-  static async mergeObjectAsync(status, pairs) {
+  static async mergeObjectAsync(status2, pairs) {
     const syncPairs = [];
     for (const pair of pairs) {
       const key = await pair.key;
@@ -7472,9 +7472,9 @@ var ParseStatus = class _ParseStatus {
         value
       });
     }
-    return _ParseStatus.mergeObjectSync(status, syncPairs);
+    return _ParseStatus.mergeObjectSync(status2, syncPairs);
   }
-  static mergeObjectSync(status, pairs) {
+  static mergeObjectSync(status2, pairs) {
     const finalObject = {};
     for (const pair of pairs) {
       const { key, value } = pair;
@@ -7483,14 +7483,14 @@ var ParseStatus = class _ParseStatus {
       if (value.status === "aborted")
         return INVALID;
       if (key.status === "dirty")
-        status.dirty();
+        status2.dirty();
       if (value.status === "dirty")
-        status.dirty();
+        status2.dirty();
       if (key.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
         finalObject[key.value] = value.value;
       }
     }
-    return { status: status.value, value: finalObject };
+    return { status: status2.value, value: finalObject };
   }
 };
 var INVALID = Object.freeze({
@@ -7950,7 +7950,7 @@ var ZodString = class _ZodString2 extends ZodType {
       });
       return INVALID;
     }
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     let ctx = void 0;
     for (const check2 of this._def.checks) {
       if (check2.kind === "min") {
@@ -7964,7 +7964,7 @@ var ZodString = class _ZodString2 extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         if (input.data.length > check2.value) {
@@ -7977,7 +7977,7 @@ var ZodString = class _ZodString2 extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "length") {
         const tooBig = input.data.length > check2.value;
@@ -8003,7 +8003,7 @@ var ZodString = class _ZodString2 extends ZodType {
               message: check2.message
             });
           }
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "email") {
         if (!emailRegex.test(input.data)) {
@@ -8013,7 +8013,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "emoji") {
         if (!emojiRegex) {
@@ -8026,7 +8026,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "uuid") {
         if (!uuidRegex.test(input.data)) {
@@ -8036,7 +8036,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "nanoid") {
         if (!nanoidRegex.test(input.data)) {
@@ -8046,7 +8046,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "cuid") {
         if (!cuidRegex.test(input.data)) {
@@ -8056,7 +8056,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "cuid2") {
         if (!cuid2Regex.test(input.data)) {
@@ -8066,7 +8066,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "ulid") {
         if (!ulidRegex.test(input.data)) {
@@ -8076,7 +8076,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "url") {
         try {
@@ -8088,7 +8088,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "regex") {
         check2.regex.lastIndex = 0;
@@ -8100,7 +8100,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "trim") {
         input.data = input.data.trim();
@@ -8112,7 +8112,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: { includes: check2.value, position: check2.position },
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "toLowerCase") {
         input.data = input.data.toLowerCase();
@@ -8126,7 +8126,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: { startsWith: check2.value },
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "endsWith") {
         if (!input.data.endsWith(check2.value)) {
@@ -8136,7 +8136,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: { endsWith: check2.value },
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "datetime") {
         const regex = datetimeRegex(check2);
@@ -8147,7 +8147,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: "datetime",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "date") {
         const regex = dateRegex;
@@ -8158,7 +8158,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: "date",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "time") {
         const regex = timeRegex(check2);
@@ -8169,7 +8169,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: "time",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "duration") {
         if (!durationRegex.test(input.data)) {
@@ -8179,7 +8179,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "ip") {
         if (!isValidIP(input.data, check2.version)) {
@@ -8189,7 +8189,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "jwt") {
         if (!isValidJWT(input.data, check2.alg)) {
@@ -8199,7 +8199,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "cidr") {
         if (!isValidCidr(input.data, check2.version)) {
@@ -8209,7 +8209,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "base64") {
         if (!base64Regex.test(input.data)) {
@@ -8219,7 +8219,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "base64url") {
         if (!base64urlRegex.test(input.data)) {
@@ -8229,13 +8229,13 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
-    return { status: status.value, value: input.data };
+    return { status: status2.value, value: input.data };
   }
   _regex(regex, validation, message) {
     return this.refinement((data) => regex.test(data), {
@@ -8511,7 +8511,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
       return INVALID;
     }
     let ctx = void 0;
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     for (const check2 of this._def.checks) {
       if (check2.kind === "int") {
         if (!util.isInteger(input.data)) {
@@ -8522,7 +8522,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             received: "float",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "min") {
         const tooSmall = check2.inclusive ? input.data < check2.value : input.data <= check2.value;
@@ -8536,7 +8536,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         const tooBig = check2.inclusive ? input.data > check2.value : input.data >= check2.value;
@@ -8550,7 +8550,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "multipleOf") {
         if (floatSafeRemainder(input.data, check2.value) !== 0) {
@@ -8560,7 +8560,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             multipleOf: check2.value,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "finite") {
         if (!Number.isFinite(input.data)) {
@@ -8569,13 +8569,13 @@ var ZodNumber = class _ZodNumber extends ZodType {
             code: ZodIssueCode.not_finite,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
-    return { status: status.value, value: input.data };
+    return { status: status2.value, value: input.data };
   }
   gte(value, message) {
     return this.setLimit("min", value, true, errorUtil.toString(message));
@@ -8740,7 +8740,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
       return this._getInvalidInput(input);
     }
     let ctx = void 0;
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     for (const check2 of this._def.checks) {
       if (check2.kind === "min") {
         const tooSmall = check2.inclusive ? input.data < check2.value : input.data <= check2.value;
@@ -8753,7 +8753,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             inclusive: check2.inclusive,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         const tooBig = check2.inclusive ? input.data > check2.value : input.data >= check2.value;
@@ -8766,7 +8766,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             inclusive: check2.inclusive,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "multipleOf") {
         if (input.data % check2.value !== BigInt(0)) {
@@ -8776,13 +8776,13 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             multipleOf: check2.value,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
-    return { status: status.value, value: input.data };
+    return { status: status2.value, value: input.data };
   }
   _getInvalidInput(input) {
     const ctx = this._getOrReturnCtx(input);
@@ -8940,7 +8940,7 @@ var ZodDate = class _ZodDate extends ZodType {
       });
       return INVALID;
     }
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     let ctx = void 0;
     for (const check2 of this._def.checks) {
       if (check2.kind === "min") {
@@ -8954,7 +8954,7 @@ var ZodDate = class _ZodDate extends ZodType {
             minimum: check2.value,
             type: "date"
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         if (input.data.getTime() > check2.value) {
@@ -8967,14 +8967,14 @@ var ZodDate = class _ZodDate extends ZodType {
             maximum: check2.value,
             type: "date"
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
     return {
-      status: status.value,
+      status: status2.value,
       value: new Date(input.data.getTime())
     };
   }
@@ -9160,7 +9160,7 @@ ZodVoid.create = (params) => {
 };
 var ZodArray = class _ZodArray extends ZodType {
   _parse(input) {
-    const { ctx, status } = this._processInputParams(input);
+    const { ctx, status: status2 } = this._processInputParams(input);
     const def = this._def;
     if (ctx.parsedType !== ZodParsedType.array) {
       addIssueToContext(ctx, {
@@ -9183,7 +9183,7 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: true,
           message: def.exactLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.minLength !== null) {
@@ -9196,7 +9196,7 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: false,
           message: def.minLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.maxLength !== null) {
@@ -9209,20 +9209,20 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: false,
           message: def.maxLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (ctx.common.async) {
       return Promise.all([...ctx.data].map((item, i) => {
         return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
       })).then((result2) => {
-        return ParseStatus.mergeArray(status, result2);
+        return ParseStatus.mergeArray(status2, result2);
       });
     }
     const result = [...ctx.data].map((item, i) => {
       return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
     });
-    return ParseStatus.mergeArray(status, result);
+    return ParseStatus.mergeArray(status2, result);
   }
   get element() {
     return this._def.type;
@@ -9311,7 +9311,7 @@ var ZodObject = class _ZodObject extends ZodType {
       });
       return INVALID;
     }
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     const { shape, keys: shapeKeys } = this._getCached();
     const extraKeys = [];
     if (!(this._def.catchall instanceof ZodNever && this._def.unknownKeys === "strip")) {
@@ -9346,7 +9346,7 @@ var ZodObject = class _ZodObject extends ZodType {
             code: ZodIssueCode.unrecognized_keys,
             keys: extraKeys
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (unknownKeys === "strip") {
       } else {
@@ -9380,10 +9380,10 @@ var ZodObject = class _ZodObject extends ZodType {
         }
         return syncPairs;
       }).then((syncPairs) => {
-        return ParseStatus.mergeObjectSync(status, syncPairs);
+        return ParseStatus.mergeObjectSync(status2, syncPairs);
       });
     } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
+      return ParseStatus.mergeObjectSync(status2, pairs);
     }
   }
   get shape() {
@@ -9861,7 +9861,7 @@ function mergeValues(a, b) {
 }
 var ZodIntersection = class extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     const handleParsed = (parsedLeft, parsedRight) => {
       if (isAborted(parsedLeft) || isAborted(parsedRight)) {
         return INVALID;
@@ -9874,9 +9874,9 @@ var ZodIntersection = class extends ZodType {
         return INVALID;
       }
       if (isDirty(parsedLeft) || isDirty(parsedRight)) {
-        status.dirty();
+        status2.dirty();
       }
-      return { status: status.value, value: merged.data };
+      return { status: status2.value, value: merged.data };
     };
     if (ctx.common.async) {
       return Promise.all([
@@ -9914,7 +9914,7 @@ ZodIntersection.create = (left, right, params) => {
 };
 var ZodTuple = class _ZodTuple extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.array) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -9942,7 +9942,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         exact: false,
         type: "array"
       });
-      status.dirty();
+      status2.dirty();
     }
     const items = [...ctx.data].map((item, itemIndex) => {
       const schema = this._def.items[itemIndex] || this._def.rest;
@@ -9952,10 +9952,10 @@ var ZodTuple = class _ZodTuple extends ZodType {
     }).filter((x) => !!x);
     if (ctx.common.async) {
       return Promise.all(items).then((results) => {
-        return ParseStatus.mergeArray(status, results);
+        return ParseStatus.mergeArray(status2, results);
       });
     } else {
-      return ParseStatus.mergeArray(status, items);
+      return ParseStatus.mergeArray(status2, items);
     }
   }
   get items() {
@@ -9987,7 +9987,7 @@ var ZodRecord = class _ZodRecord extends ZodType {
     return this._def.valueType;
   }
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.object) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -10007,9 +10007,9 @@ var ZodRecord = class _ZodRecord extends ZodType {
       });
     }
     if (ctx.common.async) {
-      return ParseStatus.mergeObjectAsync(status, pairs);
+      return ParseStatus.mergeObjectAsync(status2, pairs);
     } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
+      return ParseStatus.mergeObjectSync(status2, pairs);
     }
   }
   get element() {
@@ -10040,7 +10040,7 @@ var ZodMap = class extends ZodType {
     return this._def.valueType;
   }
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.map) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -10067,11 +10067,11 @@ var ZodMap = class extends ZodType {
             return INVALID;
           }
           if (key.status === "dirty" || value.status === "dirty") {
-            status.dirty();
+            status2.dirty();
           }
           finalMap.set(key.value, value.value);
         }
-        return { status: status.value, value: finalMap };
+        return { status: status2.value, value: finalMap };
       });
     } else {
       const finalMap = /* @__PURE__ */ new Map();
@@ -10082,11 +10082,11 @@ var ZodMap = class extends ZodType {
           return INVALID;
         }
         if (key.status === "dirty" || value.status === "dirty") {
-          status.dirty();
+          status2.dirty();
         }
         finalMap.set(key.value, value.value);
       }
-      return { status: status.value, value: finalMap };
+      return { status: status2.value, value: finalMap };
     }
   }
 };
@@ -10100,7 +10100,7 @@ ZodMap.create = (keyType, valueType, params) => {
 };
 var ZodSet = class _ZodSet extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.set) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -10120,7 +10120,7 @@ var ZodSet = class _ZodSet extends ZodType {
           exact: false,
           message: def.minSize.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.maxSize !== null) {
@@ -10133,7 +10133,7 @@ var ZodSet = class _ZodSet extends ZodType {
           exact: false,
           message: def.maxSize.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     const valueType = this._def.valueType;
@@ -10143,10 +10143,10 @@ var ZodSet = class _ZodSet extends ZodType {
         if (element.status === "aborted")
           return INVALID;
         if (element.status === "dirty")
-          status.dirty();
+          status2.dirty();
         parsedSet.add(element.value);
       }
-      return { status: status.value, value: parsedSet };
+      return { status: status2.value, value: parsedSet };
     }
     const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
     if (ctx.common.async) {
@@ -10477,15 +10477,15 @@ var ZodEffects = class extends ZodType {
     return this._def.schema._def.typeName === ZodFirstPartyTypeKind.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
   }
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     const effect = this._def.effect || null;
     const checkCtx = {
       addIssue: (arg) => {
         addIssueToContext(ctx, arg);
         if (arg.fatal) {
-          status.abort();
+          status2.abort();
         } else {
-          status.dirty();
+          status2.dirty();
         }
       },
       get path() {
@@ -10497,7 +10497,7 @@ var ZodEffects = class extends ZodType {
       const processed = effect.transform(ctx.data, checkCtx);
       if (ctx.common.async) {
         return Promise.resolve(processed).then(async (processed2) => {
-          if (status.value === "aborted")
+          if (status2.value === "aborted")
             return INVALID;
           const result = await this._def.schema._parseAsync({
             data: processed2,
@@ -10508,12 +10508,12 @@ var ZodEffects = class extends ZodType {
             return INVALID;
           if (result.status === "dirty")
             return DIRTY(result.value);
-          if (status.value === "dirty")
+          if (status2.value === "dirty")
             return DIRTY(result.value);
           return result;
         });
       } else {
-        if (status.value === "aborted")
+        if (status2.value === "aborted")
           return INVALID;
         const result = this._def.schema._parseSync({
           data: processed,
@@ -10524,7 +10524,7 @@ var ZodEffects = class extends ZodType {
           return INVALID;
         if (result.status === "dirty")
           return DIRTY(result.value);
-        if (status.value === "dirty")
+        if (status2.value === "dirty")
           return DIRTY(result.value);
         return result;
       }
@@ -10549,17 +10549,17 @@ var ZodEffects = class extends ZodType {
         if (inner.status === "aborted")
           return INVALID;
         if (inner.status === "dirty")
-          status.dirty();
+          status2.dirty();
         executeRefinement(inner.value);
-        return { status: status.value, value: inner.value };
+        return { status: status2.value, value: inner.value };
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
           if (inner.status === "aborted")
             return INVALID;
           if (inner.status === "dirty")
-            status.dirty();
+            status2.dirty();
           return executeRefinement(inner.value).then(() => {
-            return { status: status.value, value: inner.value };
+            return { status: status2.value, value: inner.value };
           });
         });
       }
@@ -10577,13 +10577,13 @@ var ZodEffects = class extends ZodType {
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
         }
-        return { status: status.value, value: result };
+        return { status: status2.value, value: result };
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
           if (!isValid(base))
             return INVALID;
           return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
-            status: status.value,
+            status: status2.value,
             value: result
           }));
         });
@@ -10762,7 +10762,7 @@ var ZodBranded = class extends ZodType {
 };
 var ZodPipeline = class _ZodPipeline extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.common.async) {
       const handleAsync = async () => {
         const inResult = await this._def.in._parseAsync({
@@ -10773,7 +10773,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
         if (inResult.status === "aborted")
           return INVALID;
         if (inResult.status === "dirty") {
-          status.dirty();
+          status2.dirty();
           return DIRTY(inResult.value);
         } else {
           return this._def.out._parseAsync({
@@ -10793,7 +10793,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
       if (inResult.status === "aborted")
         return INVALID;
       if (inResult.status === "dirty") {
-        status.dirty();
+        status2.dirty();
         return {
           status: "dirty",
           value: inResult.value
@@ -12132,8 +12132,8 @@ var Doc = class {
     const lines = content.split("\n").filter((x) => x);
     const minIndent = Math.min(...lines.map((x) => x.length - x.trimStart().length));
     const dedented = lines.map((x) => x.slice(minIndent)).map((x) => " ".repeat(this.indent * 2) + x);
-    for (const line of dedented) {
-      this.content.push(line);
+    for (const line2 of dedented) {
+      this.content.push(line2);
     }
   }
   compile() {
@@ -12728,38 +12728,38 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     doc.write(`const newResult = {}`);
     for (const key of normalized.keys) {
       if (normalized.optionalKeys.has(key)) {
-        const id = ids[key];
-        doc.write(`const ${id} = ${parseStr(key)};`);
+        const id2 = ids[key];
+        doc.write(`const ${id2} = ${parseStr(key)};`);
         const k = esc(key);
         doc.write(`
-        if (${id}.issues.length) {
+        if (${id2}.issues.length) {
           if (input[${k}] === undefined) {
             if (${k} in input) {
               newResult[${k}] = undefined;
             }
           } else {
             payload.issues = payload.issues.concat(
-              ${id}.issues.map((iss) => ({
+              ${id2}.issues.map((iss) => ({
                 ...iss,
                 path: iss.path ? [${k}, ...iss.path] : [${k}],
               }))
             );
           }
-        } else if (${id}.value === undefined) {
+        } else if (${id2}.value === undefined) {
           if (${k} in input) newResult[${k}] = undefined;
         } else {
-          newResult[${k}] = ${id}.value;
+          newResult[${k}] = ${id2}.value;
         }
         `);
       } else {
-        const id = ids[key];
-        doc.write(`const ${id} = ${parseStr(key)};`);
+        const id2 = ids[key];
+        doc.write(`const ${id2} = ${parseStr(key)};`);
         doc.write(`
-          if (${id}.issues.length) payload.issues = payload.issues.concat(${id}.issues.map(iss => ({
+          if (${id2}.issues.length) payload.issues = payload.issues.concat(${id2}.issues.map(iss => ({
             ...iss,
             path: iss.path ? [${esc(key)}, ...iss.path] : [${esc(key)}]
           })));`);
-        doc.write(`newResult[${esc(key)}] = ${id}.value`);
+        doc.write(`newResult[${esc(key)}] = ${id2}.value`);
       }
     }
     doc.write(`payload.value = newResult;`);
@@ -14492,13 +14492,13 @@ var JSONSchemaGenerator = class {
       const defsSegment = this.target === "draft-2020-12" ? "$defs" : "definitions";
       if (params.external) {
         const externalId = params.external.registry.get(entry[0])?.id;
-        const uriGenerator = params.external.uri ?? ((id2) => id2);
+        const uriGenerator = params.external.uri ?? ((id3) => id3);
         if (externalId) {
           return { ref: uriGenerator(externalId) };
         }
-        const id = entry[1].defId ?? entry[1].schema.id ?? `schema${this.counter++}`;
-        entry[1].defId = id;
-        return { defId: id, ref: `${uriGenerator("__shared")}#/${defsSegment}/${id}` };
+        const id2 = entry[1].defId ?? entry[1].schema.id ?? `schema${this.counter++}`;
+        entry[1].defId = id2;
+        return { defId: id2, ref: `${uriGenerator("__shared")}#/${defsSegment}/${id2}` };
       }
       if (entry[1] === root) {
         return { ref: "#" };
@@ -14546,8 +14546,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
           continue;
         }
       }
-      const id = this.metadataRegistry.get(entry[0])?.id;
-      if (id) {
+      const id2 = this.metadataRegistry.get(entry[0])?.id;
+      if (id2) {
         extractToDef(entry);
         continue;
       }
@@ -14601,10 +14601,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       console.warn(`Invalid target: ${this.target}`);
     }
     if (params.external?.uri) {
-      const id = params.external.registry.get(schema)?.id;
-      if (!id)
+      const id2 = params.external.registry.get(schema)?.id;
+      if (!id2)
         throw new Error("Schema is missing an `id` property");
-      result.$id = params.external.uri(id);
+      result.$id = params.external.uri(id2);
     }
     Object.assign(result, root.def);
     const defs = params.external?.defs ?? {};
@@ -17197,8 +17197,8 @@ var UrlElicitationRequiredError = class extends McpError {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
-function isTerminal(status) {
-  return status === "completed" || status === "failed" || status === "cancelled";
+function isTerminal(status2) {
+  return status2 === "completed" || status2 === "failed" || status2 === "cancelled";
 }
 
 // node_modules/zod-to-json-schema/dist/esm/Options.js
@@ -19417,8 +19417,8 @@ var Protocol = class {
         }
         return task;
       },
-      storeTaskResult: async (taskId, status, result) => {
-        await taskStore.storeTaskResult(taskId, status, result, sessionId);
+      storeTaskResult: async (taskId, status2, result) => {
+        await taskStore.storeTaskResult(taskId, status2, result, sessionId);
         const task = await taskStore.getTask(taskId, sessionId);
         if (task) {
           const notification = TaskStatusNotificationSchema.parse({
@@ -19434,15 +19434,15 @@ var Protocol = class {
       getTaskResult: (taskId) => {
         return taskStore.getTaskResult(taskId, sessionId);
       },
-      updateTaskStatus: async (taskId, status, statusMessage) => {
+      updateTaskStatus: async (taskId, status2, statusMessage) => {
         const task = await taskStore.getTask(taskId, sessionId);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, `Task "${taskId}" not found - it may have been cleaned up`);
         }
         if (isTerminal(task.status)) {
-          throw new McpError(ErrorCode.InvalidParams, `Cannot update task "${taskId}" from terminal status "${task.status}" to "${status}". Terminal states (completed, failed, cancelled) cannot transition to other states.`);
+          throw new McpError(ErrorCode.InvalidParams, `Cannot update task "${taskId}" from terminal status "${task.status}" to "${status2}". Terminal states (completed, failed, cancelled) cannot transition to other states.`);
         }
-        await taskStore.updateTaskStatus(taskId, status, statusMessage, sessionId);
+        await taskStore.updateTaskStatus(taskId, status2, statusMessage, sessionId);
         const updatedTask = await taskStore.getTask(taskId, sessionId);
         if (updatedTask) {
           const notification = TaskStatusNotificationSchema.parse({
@@ -19637,7 +19637,7 @@ var ExperimentalServerTasks = class {
       if (hasPreviousToolUse) {
         const toolUseIds = new Set(previousContent.filter((c) => c.type === "tool_use").map((c) => c.id));
         const toolResultIds = new Set(lastContent.filter((c) => c.type === "tool_result").map((c) => c.toolUseId));
-        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id) => toolResultIds.has(id))) {
+        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id2) => toolResultIds.has(id2))) {
           throw new Error("ids of tool_result blocks and tool_use blocks from previous message do not match");
         }
       }
@@ -20062,7 +20062,7 @@ var Server = class extends Protocol {
       if (hasPreviousToolUse) {
         const toolUseIds = new Set(previousContent.filter((c) => c.type === "tool_use").map((c) => c.id));
         const toolResultIds = new Set(lastContent.filter((c) => c.type === "tool_result").map((c) => c.toolUseId));
-        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id) => toolResultIds.has(id))) {
+        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id2) => toolResultIds.has(id2))) {
           throw new Error("ids of tool_result blocks and tool_use blocks from previous message do not match");
         }
       }
@@ -21072,16 +21072,16 @@ var ReadBuffer = class {
     if (index === -1) {
       return null;
     }
-    const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
+    const line2 = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
     this._buffer = this._buffer.subarray(index + 1);
-    return deserializeMessage(line);
+    return deserializeMessage(line2);
   }
   clear() {
     this._buffer = void 0;
   }
 };
-function deserializeMessage(line) {
-  return JSONRPCMessageSchema.parse(JSON.parse(line));
+function deserializeMessage(line2) {
+  return JSONRPCMessageSchema.parse(JSON.parse(line2));
 }
 function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
@@ -21177,6 +21177,12 @@ function makeNodeKind(raw) {
 function makeSubmapRef(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
 }
+var RANK_MIN = 0;
+var RANK_MAX = 99;
+var RANK_RULE_TEXT = `an integer in ${RANK_MIN}..${RANK_MAX}, 0 = bottom / most primitive`;
+function makeRank(raw) {
+  return Number.isInteger(raw) && raw >= RANK_MIN && raw <= RANK_MAX ? ok(raw) : err({ kind: "invalid-rank", raw, rule: RANK_RULE_TEXT });
+}
 var MAP_KINDS = ["dev", "architecture", "dataflow", "behavior-tree", "sequence"];
 function makeMapKind(raw) {
   return MAP_KINDS.includes(raw) ? ok(raw) : err({ kind: "invalid-map-kind", raw });
@@ -21190,6 +21196,8 @@ function describeMapError(e) {
   switch (e.kind) {
     case "invalid-id":
       return `invalid id "${e.raw}" (rule: ${e.rule})`;
+    case "invalid-rank":
+      return `invalid rank ${e.raw} (rule: ${e.rule})`;
     case "invalid-status":
       return `invalid status "${e.raw}" (expected: ${NODE_STATUSES.join(" | ")})`;
     case "duplicate-layer":
@@ -21210,6 +21218,8 @@ function describeMapError(e) {
       return `node "${e.id}" cannot depend on itself`;
     case "duplicate-group":
       return `group "${e.id}" already exists`;
+    case "id-collision":
+      return `id "${e.id}" already names a ${e.taken} on this map; nodes and groups share one id namespace (both render as boxes, so one id must mean one box) \u2014 rename "${e.id}"`;
     case "unknown-group":
       return `group "${e.id}" does not exist`;
     case "invalid-map-kind":
@@ -21221,23 +21231,23 @@ function describeMapError(e) {
     case "group-layer-mismatch":
       return `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); groups cluster nodes within one band`;
     case "layer-not-empty":
-      return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
+      return `layer "${e.id}" still holds node "${e.occupant}"; move its nodes to another band (moveNode) or remove them (removeNode) first`;
     case "layer-holds-group":
-      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups first`;
+      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups (removeGroup) first`;
     case "edge-not-downward":
       return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; dependencies may only point to a lower layer`;
   }
 }
 
 // src/domain/ops.ts
-function findLayer(map, id) {
-  return map.layers.find((l) => l.id === id);
+function findLayer(map, id2) {
+  return map.layers.find((l) => l.id === id2);
 }
-function findNode(map, id) {
-  return map.nodes.find((n) => n.id === id);
+function findNode(map, id2) {
+  return map.nodes.find((n) => n.id === id2);
 }
-function findGroup(map, id) {
-  return map.groups.find((g) => g.id === id);
+function findGroup(map, id2) {
+  return map.groups.find((g) => g.id === id2);
 }
 function checkMembership(map, node, nodeLayer, group) {
   const g = findGroup(map, group);
@@ -21249,26 +21259,38 @@ function checkMembership(map, node, nodeLayer, group) {
 function hasEdge(map, from, to) {
   return map.edges.some((e) => e.from === from && e.to === to);
 }
+function checkIdSpace(map, id2, declaring) {
+  const taken = declaring === "node" ? map.groups.some((g) => g.id === id2) : map.nodes.some((n) => n.id === id2);
+  return taken ? { kind: "id-collision", id: id2, taken: declaring === "node" ? "group" : "node" } : void 0;
+}
 function setTitle(map, title) {
+  if (title === null || title === void 0) {
+    const { title: _dropped, ...rest } = map;
+    return rest;
+  }
   return { ...map, title };
 }
 function setKind(map, kind) {
   return { ...map, kind };
 }
-function findLane(map, id) {
-  return map.lanes.find((l) => l.id === id);
+function findLane(map, id2) {
+  return map.lanes.find((l) => l.id === id2);
 }
 function declareLane(map, input) {
   if (findLane(map, input.id)) return err({ kind: "duplicate-lane", id: input.id });
   return ok({ ...map, lanes: [...map.lanes, { id: input.id, label: input.label }] });
 }
-function removeLane(map, id) {
-  if (!findLane(map, id)) return err({ kind: "unknown-lane", id });
+function updateLane(map, id2, label) {
+  if (!findLane(map, id2)) return err({ kind: "unknown-lane", id: id2 });
+  return ok({ ...map, lanes: map.lanes.map((l) => l.id === id2 ? { ...l, label } : l) });
+}
+function removeLane(map, id2) {
+  if (!findLane(map, id2)) return err({ kind: "unknown-lane", id: id2 });
   return ok({
     ...map,
-    lanes: map.lanes.filter((l) => l.id !== id),
+    lanes: map.lanes.filter((l) => l.id !== id2),
     nodes: map.nodes.map((n) => {
-      if (n.lane !== id) return n;
+      if (n.lane !== id2) return n;
       const { lane: _dropped, ...rest } = n;
       return rest;
     })
@@ -21280,18 +21302,47 @@ function declareLayer(map, input) {
   if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
   return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
 }
+function updateLayer(map, id2, input) {
+  const layer = findLayer(map, id2);
+  if (!layer) return err({ kind: "unknown-layer", id: id2 });
+  if (input.rank !== void 0 && input.rank !== layer.rank) {
+    const rankHolder = map.layers.find((l) => l.rank === input.rank && l.id !== id2);
+    if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
+    const rankAfter = (nodeId) => {
+      const nodeLayer = findNode(map, nodeId).layer;
+      return nodeLayer === id2 ? input.rank : findLayer(map, nodeLayer).rank;
+    };
+    for (const e of map.edges) {
+      const fromRank = rankAfter(e.from);
+      const toRank = rankAfter(e.to);
+      if (fromRank <= toRank) return err({ kind: "edge-not-downward", from: e.from, fromRank, to: e.to, toRank });
+    }
+  }
+  const updated = {
+    ...layer,
+    ...input.name !== void 0 ? { name: input.name } : {},
+    ...input.rank !== void 0 ? { rank: input.rank } : {}
+  };
+  return ok({ ...map, layers: map.layers.map((l) => l.id === id2 ? updated : l) });
+}
 function declareGroup(map, input) {
   if (findGroup(map, input.id)) return err({ kind: "duplicate-group", id: input.id });
+  const collision = checkIdSpace(map, input.id, "group");
+  if (collision) return err(collision);
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
   return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
 }
-function removeGroup(map, id) {
-  if (!findGroup(map, id)) return err({ kind: "unknown-group", id });
+function updateGroup(map, id2, label) {
+  if (!findGroup(map, id2)) return err({ kind: "unknown-group", id: id2 });
+  return ok({ ...map, groups: map.groups.map((g) => g.id === id2 ? { ...g, label } : g) });
+}
+function removeGroup(map, id2) {
+  if (!findGroup(map, id2)) return err({ kind: "unknown-group", id: id2 });
   return ok({
     ...map,
-    groups: map.groups.filter((g) => g.id !== id),
+    groups: map.groups.filter((g) => g.id !== id2),
     nodes: map.nodes.map((n) => {
-      if (n.group !== id) return n;
+      if (n.group !== id2) return n;
       const { group: _dropped, ...rest } = n;
       return rest;
     })
@@ -21303,11 +21354,13 @@ function aggregateStatus(nodes) {
   if (nodes.length > 0 && nodes.every((n) => n.status === "done")) return "done";
   return "planned";
 }
-function groupStatus(map, id) {
-  return aggregateStatus(map.nodes.filter((n) => n.group === id));
+function groupStatus(map, id2) {
+  return aggregateStatus(map.nodes.filter((n) => n.group === id2));
 }
 function declareNode(map, input) {
   if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
+  const collision = checkIdSpace(map, input.id, "node");
+  if (collision) return err(collision);
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
   if (input.group !== void 0) {
     const bad = checkMembership(map, input.id, input.layer, input.group);
@@ -21319,6 +21372,7 @@ function declareNode(map, input) {
     label: input.label,
     layer: input.layer,
     status: input.status ?? "planned",
+    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
     ...input.detail !== void 0 ? { detail: input.detail } : {},
     ...input.group !== void 0 ? { group: input.group } : {},
     ...input.kind !== void 0 ? { kind: input.kind } : {},
@@ -21339,6 +21393,9 @@ function linkNodes(map, from, to, label) {
   if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
   return ok({ ...map, edges: [...map.edges, { from, to, ...label !== void 0 ? { label } : {} }] });
 }
+function resolveOptional(input, current) {
+  return input === void 0 ? current : input === null ? void 0 : input;
+}
 function updateNode(map, input) {
   const node = findNode(map, input.id);
   if (!node) return err({ kind: "unknown-node", id: input.id });
@@ -21349,43 +21406,115 @@ function updateNode(map, input) {
   if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
     return err({ kind: "unknown-lane", id: input.lane });
   }
-  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
-  const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
-  const nextKind = input.kind === void 0 ? currentKind : input.kind === null ? void 0 : input.kind;
-  const nextLane = input.lane === void 0 ? currentLane : input.lane === null ? void 0 : input.lane;
-  const nextSubmap = input.submap === void 0 ? currentSubmap : input.submap === null ? void 0 : input.submap;
+  const {
+    group: currentGroup,
+    kind: currentKind,
+    lane: currentLane,
+    submap: currentSubmap,
+    evidence: currentEvidence,
+    detail: currentDetail,
+    ...bare
+  } = node;
+  const nextGroup = resolveOptional(input.group, currentGroup);
+  const nextKind = resolveOptional(input.kind, currentKind);
+  const nextLane = resolveOptional(input.lane, currentLane);
+  const nextSubmap = resolveOptional(input.submap, currentSubmap);
+  const nextEvidence = resolveOptional(input.evidence, currentEvidence);
+  const nextDetail = resolveOptional(input.detail, currentDetail);
   const updated = {
     ...bare,
+    ...nextEvidence !== void 0 ? { evidence: nextEvidence } : {},
+    ...nextDetail !== void 0 ? { detail: nextDetail } : {},
     ...nextGroup !== void 0 ? { group: nextGroup } : {},
     ...nextKind !== void 0 ? { kind: nextKind } : {},
     ...nextLane !== void 0 ? { lane: nextLane } : {},
     ...nextSubmap !== void 0 ? { submap: nextSubmap } : {},
     ...input.status !== void 0 ? { status: input.status } : {},
-    ...input.label !== void 0 ? { label: input.label } : {},
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
-    ...input.detail !== void 0 ? { detail: input.detail } : {}
+    ...input.label !== void 0 ? { label: input.label } : {}
   };
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
 }
-function removeNode(map, id) {
-  if (!findNode(map, id)) return err({ kind: "unknown-node", id });
+function moveNode(map, id2, layer) {
+  const node = findNode(map, id2);
+  if (!node) return err({ kind: "unknown-node", id: id2 });
+  const target = findLayer(map, layer);
+  if (!target) return err({ kind: "unknown-layer", id: layer });
+  if (node.group !== void 0) {
+    const bad = checkMembership(map, id2, layer, node.group);
+    if (bad) return err(bad);
+  }
+  const rankAfter = (nodeId) => nodeId === id2 ? target.rank : findLayer(map, findNode(map, nodeId).layer).rank;
+  for (const e of map.edges) {
+    if (e.from !== id2 && e.to !== id2) continue;
+    const fromRank = rankAfter(e.from);
+    const toRank = rankAfter(e.to);
+    if (fromRank <= toRank) return err({ kind: "edge-not-downward", from: e.from, fromRank, to: e.to, toRank });
+  }
+  return ok({ ...map, nodes: map.nodes.map((n) => n.id === id2 ? { ...n, layer } : n) });
+}
+function removeNode(map, id2) {
+  if (!findNode(map, id2)) return err({ kind: "unknown-node", id: id2 });
   return ok({
     ...map,
-    nodes: map.nodes.filter((n) => n.id !== id),
-    edges: map.edges.filter((e) => e.from !== id && e.to !== id)
+    nodes: map.nodes.filter((n) => n.id !== id2),
+    edges: map.edges.filter((e) => e.from !== id2 && e.to !== id2)
   });
 }
 function removeEdge(map, from, to) {
   if (!hasEdge(map, from, to)) return err({ kind: "unknown-edge", from, to });
   return ok({ ...map, edges: map.edges.filter((e) => !(e.from === from && e.to === to)) });
 }
-function removeLayer(map, id) {
-  if (!findLayer(map, id)) return err({ kind: "unknown-layer", id });
-  const occupant = map.nodes.find((n) => n.layer === id);
-  if (occupant) return err({ kind: "layer-not-empty", id, occupant: occupant.id });
-  const groupOccupant = map.groups.find((g) => g.layer === id);
-  if (groupOccupant) return err({ kind: "layer-holds-group", id, occupant: groupOccupant.id });
-  return ok({ ...map, layers: map.layers.filter((l) => l.id !== id) });
+function removeLayer(map, id2) {
+  if (!findLayer(map, id2)) return err({ kind: "unknown-layer", id: id2 });
+  const occupant = map.nodes.find((n) => n.layer === id2);
+  if (occupant) return err({ kind: "layer-not-empty", id: id2, occupant: occupant.id });
+  const groupOccupant = map.groups.find((g) => g.layer === id2);
+  if (groupOccupant) return err({ kind: "layer-holds-group", id: id2, occupant: groupOccupant.id });
+  return ok({ ...map, layers: map.layers.filter((l) => l.id !== id2) });
+}
+
+// src/semantics/vocabulary.ts
+var STATUS_GLYPHS = {
+  planned: ["\xB7", "."],
+  "in-progress": ["\u283F", "*"],
+  done: ["\u25A0", "#"],
+  regressed: ["\u2717", "X"]
+};
+function statusGlyph(status2, unicode) {
+  const [uni, ascii] = STATUS_GLYPHS[status2];
+  return unicode ? uni : ascii;
+}
+var UNVERIFIED_DONE_GLYPHS = ["\u25A1", "o"];
+function unverifiedDoneGlyph(unicode) {
+  const [uni, ascii] = UNVERIFIED_DONE_GLYPHS;
+  return unicode ? uni : ascii;
+}
+var SPINNER_FRAMES = {
+  unicode: ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"],
+  ascii: ["|", "/", "-", "\\"]
+};
+function spinnerGlyph(frame, unicode) {
+  const frames = SPINNER_FRAMES[unicode ? "unicode" : "ascii"];
+  return frames[(frame % frames.length + frames.length) % frames.length];
+}
+var NODE_KIND_GLYPHS = {
+  selector: ["?", "?"],
+  sequence: ["\xBB", ">"],
+  parallel: ["\u2016", "="],
+  decorator: ["\u25CC", "o"],
+  condition: ["\u25C7", "c"],
+  action: ["\xB7", "."],
+  source: ["\u25CB", "o"],
+  transform: ["\u25D0", "%"],
+  sink: ["\u25CF", "*"],
+  service: ["\u25C6", "S"],
+  db: ["\u25A4", "D"],
+  queue: ["\u2263", "Q"],
+  ui: ["\u25A3", "U"]
+};
+function kindGlyph(kind, unicode) {
+  const pair = NODE_KIND_GLYPHS[kind];
+  return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
 }
 
 // src/semantics/semantics.ts
@@ -21442,15 +21571,60 @@ function flipForSequence(map) {
   if (map.kind !== "sequence") return map;
   return {
     ...map,
+    // VIOLATION: state-explicit-in-types - `-l.rank as Rank` produces a value
+    // the Rank brand promises cannot exist: mirroring 0..99 gives -99..0, and
+    // makeRank would refuse every one of them. The alternative is a second
+    // ordered-position type (an unbranded `order` field) threaded through the
+    // renderer's whole layout stage purely so this one derived map can be
+    // typed — a large change to express "these ranks are an order, not a
+    // stored value". What makes it safe is the same thing that makes it
+    // wrong: this map only ever reaches a renderer, which compares ranks and
+    // never writes them (same contract as aggregateMap).
     layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
     edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
   };
 }
 
-// src/render/render.ts
+// src/render/width.ts
 var WIDE_RANGES = [
   [4352, 4447],
   // Hangul Jamo
+  // Wide symbols scattered through the BMP — mostly emoji that predate the
+  // emoji planes (⌚ ⏰ ⚡ ✅ ✨ ❌ ❓ ⭐ ⬛ …).
+  [8986, 8987],
+  [9001, 9002],
+  [9193, 9196],
+  [9200, 9200],
+  [9203, 9203],
+  [9725, 9726],
+  [9748, 9749],
+  [9800, 9811],
+  [9855, 9855],
+  [9875, 9875],
+  [9889, 9889],
+  [9898, 9899],
+  [9917, 9918],
+  [9924, 9925],
+  [9934, 9934],
+  [9940, 9940],
+  [9962, 9962],
+  [9970, 9971],
+  [9973, 9973],
+  [9978, 9978],
+  [9981, 9981],
+  [9989, 9989],
+  [9994, 9995],
+  [10024, 10024],
+  [10060, 10060],
+  [10062, 10062],
+  [10067, 10069],
+  [10071, 10071],
+  [10133, 10135],
+  [10160, 10160],
+  [10175, 10175],
+  [11035, 11036],
+  [11088, 11088],
+  [11093, 11093],
   [11904, 42191],
   // CJK radicals .. Yi (covers CJK Unified Ideographs)
   [43360, 43391],
@@ -21463,14 +21637,41 @@ var WIDE_RANGES = [
   [65280, 65376],
   // fullwidth forms
   [65504, 65510],
+  [127744, 128591],
+  // pictographs, transport, emoticons (🚀 🎯 😀 …)
+  [128640, 128767],
+  [129280, 129535],
+  // supplemental symbols (🤖 🧱 …)
+  [129648, 129791],
+  // symbols extended-A
   [131072, 262141]
   // CJK extension planes
 ];
-function charWidth(cp) {
-  for (const [lo, hi] of WIDE_RANGES) {
-    if (cp >= lo && cp <= hi) return 2;
+var ZERO_WIDTH_RANGES = [
+  [768, 879],
+  // combining diacritical marks (decomposed 'e' + ´)
+  [6832, 6911],
+  [7616, 7679],
+  [8203, 8207],
+  // zero-width space .. RLM, zero-width joiner among them
+  [8400, 8432],
+  // combining marks for symbols
+  [65024, 65039],
+  // variation selectors, VS16 (emoji presentation) included
+  [65056, 65071],
+  // combining half marks
+  [127995, 127999]
+  // emoji skin tone modifiers — always applied to a base
+];
+function inRanges(cp, ranges) {
+  for (const [lo, hi] of ranges) {
+    if (cp >= lo && cp <= hi) return true;
   }
-  return 1;
+  return false;
+}
+function charWidth(cp) {
+  if (inRanges(cp, ZERO_WIDTH_RANGES)) return 0;
+  return inRanges(cp, WIDE_RANGES) ? 2 : 1;
 }
 function displayWidth(text2) {
   let w = 0;
@@ -21491,27 +21692,40 @@ function fitWidth(s, width) {
 }
 function wrapWidth(s, width) {
   const lines = [];
-  let line = "";
+  let line2 = "";
   let w = 0;
   for (const ch of s.replace(/\r/g, "")) {
     if (ch === "\n") {
-      lines.push(line);
-      line = "";
+      lines.push(line2);
+      line2 = "";
       w = 0;
       continue;
     }
     const cw = displayWidth(ch);
     if (w + cw > width) {
-      lines.push(line);
-      line = "";
+      lines.push(line2);
+      line2 = "";
       w = 0;
     }
-    line += ch;
+    line2 += ch;
     w += cw;
   }
-  if (line !== "") lines.push(line);
+  if (line2 !== "") lines.push(line2);
   return lines;
 }
+
+// src/render/canvas.ts
+var SGR = {
+  none: "",
+  dim: "2",
+  amber: "33",
+  green: "32",
+  greenDim: "32;2",
+  // done, but nothing behind the claim: green, not fully lit
+  red: "31",
+  faint: "90"
+};
+var ANSI_RESET = "\x1B[0m";
 var UP = 1;
 var DOWN = 2;
 var LEFT = 4;
@@ -21546,15 +21760,6 @@ function maskChar(mask, heavyHorizontal, unicode) {
   }
   return LIGHT_BY_MASK[mask] ?? "\u253C";
 }
-var SGR = {
-  none: "",
-  dim: "2",
-  amber: "33",
-  green: "32",
-  red: "31",
-  faint: "90"
-};
-var ANSI_RESET = "\x1B[0m";
 var BORDER_JUNCTION = {
   "\u2500": { down: "\u252C", up: "\u2534" },
   "\u254C": { down: "\u252C", up: "\u2534" },
@@ -21580,11 +21785,17 @@ var Canvas = class {
   text(x, y, s, style, bold = false) {
     let cx = x;
     for (const ch of s) {
+      const w = charWidth(ch.codePointAt(0));
+      if (w === 0) {
+        const base = this.cell(Math.max(0, cx - 1), y);
+        const target = base.literal === "" ? this.cell(Math.max(0, cx - 2), y) : base;
+        target.literal = (target.literal ?? "") + ch;
+        continue;
+      }
       const c = this.cell(cx, y);
       c.literal = ch;
       c.style = style;
       c.bold = bold;
-      const w = charWidth(ch.codePointAt(0));
       if (w === 2) {
         const phantom = this.cell(cx + 1, y);
         phantom.literal = "";
@@ -21619,7 +21830,7 @@ var Canvas = class {
     const out = [];
     for (let y = vp.y; y < vp.y + vp.height; y++) {
       const row = this.rows[y] ?? [];
-      let line = "";
+      let line2 = "";
       let open = "";
       const end = Math.min(vp.x + vp.width, row.length);
       for (let x = Math.max(0, vp.x); x < end; x++) {
@@ -21634,13 +21845,13 @@ var Canvas = class {
         }
         const params = ch === " " ? "" : isWire ? c.bright ? "1" : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
         if (opts.color && params !== open) {
-          line += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
+          line2 += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
           open = params;
         }
-        line += ch;
+        line2 += ch;
       }
-      if (opts.color && open !== "") line += ANSI_RESET;
-      out.push(line.replace(/ +$/, ""));
+      if (opts.color && open !== "") line2 += ANSI_RESET;
+      out.push(line2.replace(/ +$/, ""));
     }
     return out;
   }
@@ -21663,61 +21874,12 @@ function drawPath(canvas, points, bright = false) {
     }
   }
 }
-var SPINNER_UNICODE = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
-var SPINNER_ASCII = ["|", "/", "-", "\\"];
-function skinFor(status, unicode) {
-  const style = status === "planned" ? "dim" : status === "in-progress" ? "amber" : status === "done" ? "green" : "red";
-  if (!unicode) {
-    return status === "planned" ? { h: ".", v: ":", corners: ["+", "+", "+", "+"], style } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style };
-  }
-  switch (status) {
-    case "planned":
-      return { h: "\u254C", v: "\u254E", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
-    case "in-progress":
-      return { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
-    case "done":
-    case "regressed":
-      return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
-  }
-}
-function glyphFor(status, opts) {
-  const spinner = opts.unicode ? SPINNER_UNICODE : SPINNER_ASCII;
-  switch (status) {
-    case "planned":
-      return opts.unicode ? "\xB7" : ".";
-    case "in-progress":
-      return spinner[opts.spinnerFrame % spinner.length];
-    case "done":
-      return opts.unicode ? "\u25A0" : "#";
-    case "regressed":
-      return opts.unicode ? "\u2717" : "X";
-  }
-}
-var NODE_KIND_GLYPHS = {
-  selector: ["?", "?"],
-  sequence: ["\xBB", ">"],
-  parallel: ["\u2016", "="],
-  decorator: ["\u25CC", "o"],
-  condition: ["\u25C7", "c"],
-  action: ["\xB7", "."],
-  source: ["\u25CB", "o"],
-  transform: ["\u25D0", "%"],
-  sink: ["\u25CF", "*"],
-  service: ["\u25C6", "S"],
-  db: ["\u25A4", "D"],
-  queue: ["\u2263", "Q"],
-  ui: ["\u25A3", "U"]
-};
-function kindGlyph(kind, unicode) {
-  const pair = NODE_KIND_GLYPHS[kind];
-  return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
-}
-function neutralSkin(unicode) {
-  return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
-}
+
+// src/render/zoom-geometry.ts
 var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
+var BAR_MIN_RUN = 7;
 var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
 var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
@@ -21740,6 +21902,344 @@ function zoomGeometry(zoom) {
       return { mode, scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
+var AGGREGATE_GEO = {
+  mode: "boxes",
+  scale: 1,
+  pad: 0,
+  boxGap: 1,
+  breathe: 0,
+  titleGap: 0,
+  barGap: 1,
+  bandCounts: false
+};
+
+// src/render/routing.ts
+function routeEdges(map, columns) {
+  const { bandIndexOf, bandBoxes, boxOf, contentWidth } = columns;
+  const pending = map.edges.map((e) => {
+    const from = boxOf.get(e.from);
+    const to = boxOf.get(e.to);
+    return {
+      from,
+      to,
+      fromBand: bandIndexOf.get(from.node.layer),
+      toBand: bandIndexOf.get(to.node.layer)
+    };
+  });
+  const gapVerticals = Array.from(
+    { length: Math.max(0, columns.bands.length - 1) },
+    () => /* @__PURE__ */ new Map()
+  );
+  const verticalFree = (gap, x, edge) => {
+    const owner = gapVerticals[gap]?.get(x);
+    return owner === void 0 || owner === edge;
+  };
+  const takeVertical = (gap, x, edge) => {
+    gapVerticals[gap]?.set(x, edge);
+  };
+  const claimedColumns = /* @__PURE__ */ new Map();
+  const isFree = (box, x) => !(claimedColumns.get(box)?.has(x) ?? false);
+  const claim = (box, x) => {
+    let set = claimedColumns.get(box);
+    if (!set) claimedColumns.set(box, set = /* @__PURE__ */ new Set());
+    set.add(x);
+    return x;
+  };
+  for (const r of pending) {
+    if (r.toBand - r.fromBand !== 1) continue;
+    const lo = Math.max(r.from.x + 1, r.to.x + 1);
+    const hi = Math.min(r.from.x + r.from.w - 2, r.to.x + r.to.w - 2);
+    if (lo > hi) continue;
+    const mid = Math.floor((lo + hi) / 2);
+    for (let d = 0; d <= hi - lo && r.straightX === void 0; d++) {
+      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
+        if (x >= lo && x <= hi && isFree(r.from, x) && isFree(r.to, x) && verticalFree(r.fromBand, x, r)) {
+          r.straightX = claim(r.to, claim(r.from, x));
+          takeVertical(r.fromBand, x, r);
+          break;
+        }
+      }
+    }
+  }
+  const bent = pending.filter((r) => r.straightX === void 0);
+  const outgoing = /* @__PURE__ */ new Map();
+  const incoming = /* @__PURE__ */ new Map();
+  for (const r of bent) {
+    outgoing.set(r.from, [...outgoing.get(r.from) ?? [], r]);
+    incoming.set(r.to, [...incoming.get(r.to) ?? [], r]);
+  }
+  const freeSlot = (box, k, n, edge, gap) => {
+    const lo = box.x + 1;
+    const hi = box.x + box.w - 2;
+    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
+    for (let d = 0; d <= hi - lo; d++) {
+      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
+        if (x >= lo && x <= hi && isFree(box, x) && verticalFree(gap, x, edge)) {
+          takeVertical(gap, x, edge);
+          return claim(box, x);
+        }
+      }
+    }
+    return ideal;
+  };
+  for (const r of bent) {
+    const outs = outgoing.get(r.from);
+    const ins = incoming.get(r.to);
+    r.exitX = freeSlot(r.from, outs.indexOf(r), outs.length, r, r.fromBand);
+    r.entryX = freeSlot(r.to, ins.indexOf(r), ins.length, r, r.toBand - 1);
+  }
+  const usedDescent = /* @__PURE__ */ new Set();
+  let fallbackCount = 0;
+  const blockedByBox = (band, x) => bandBoxes[band].some((b) => x >= b.x && x <= b.x + b.w - 1);
+  const descentGapsFree = (r, c) => {
+    for (let g = r.fromBand; g <= r.toBand - 1; g++) {
+      if (!verticalFree(g, c, r)) return false;
+    }
+    return true;
+  };
+  for (const r of bent.filter((e) => e.toBand - e.fromBand > 1)) {
+    const ex = r.entryX;
+    let chosen;
+    for (let d = 0; d <= contentWidth && chosen === void 0; d++) {
+      for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
+        if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
+        if (!descentGapsFree(r, c)) continue;
+        let blocked = false;
+        for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
+        if (!blocked) {
+          chosen = c;
+          break;
+        }
+      }
+    }
+    if (chosen === void 0) chosen = contentWidth + 2 + fallbackCount++ * 2;
+    usedDescent.add(chosen);
+    for (let g = r.fromBand; g <= r.toBand - 1; g++) takeVertical(g, chosen, r);
+    r.descentX = chosen;
+  }
+  const gapCount = Math.max(0, columns.bands.length - 1);
+  const gapSegments = Array.from(
+    { length: gapCount },
+    () => []
+  );
+  for (const r of bent) {
+    const sx = r.exitX;
+    const ex = r.entryX;
+    if (r.descentX === void 0) {
+      gapSegments[r.toBand - 1].push({
+        edge: r,
+        kind: "landing",
+        segment: { lo: Math.min(sx, ex), hi: Math.max(sx, ex) }
+      });
+    } else {
+      const c = r.descentX;
+      gapSegments[r.fromBand].push({ edge: r, kind: "exit", segment: { lo: Math.min(sx, c), hi: Math.max(sx, c) } });
+      gapSegments[r.toBand - 1].push({
+        edge: r,
+        kind: "landing",
+        segment: { lo: Math.min(c, ex), hi: Math.max(c, ex) }
+      });
+    }
+  }
+  const exitRow = /* @__PURE__ */ new Map();
+  const landingRow = /* @__PURE__ */ new Map();
+  const gapRowCount = gapSegments.map((entries) => {
+    const rowEnds = [];
+    for (const e of [...entries].sort((a, b) => a.segment.lo - b.segment.lo)) {
+      let row = rowEnds.findIndex((end) => e.segment.lo > end + 1);
+      if (row === -1) {
+        rowEnds.push(e.segment.hi);
+        row = rowEnds.length - 1;
+      } else {
+        rowEnds[row] = Math.max(rowEnds[row], e.segment.hi);
+      }
+      (e.kind === "exit" ? exitRow : landingRow).set(e.edge, row);
+    }
+    return rowEnds.length;
+  });
+  const edges = pending.map((r) => {
+    const common = { from: r.from, to: r.to, fromBand: r.fromBand, toBand: r.toBand };
+    if (r.straightX !== void 0) return { ...common, kind: "straight", x: r.straightX };
+    if (r.descentX === void 0) {
+      return { ...common, kind: "dogleg", exitX: r.exitX, entryX: r.entryX, landingRow: landingRow.get(r) };
+    }
+    return {
+      ...common,
+      kind: "thread",
+      exitX: r.exitX,
+      entryX: r.entryX,
+      descentX: r.descentX,
+      exitRow: exitRow.get(r),
+      landingRow: landingRow.get(r)
+    };
+  });
+  return { edges, gapRowCount, fallbackCount };
+}
+function edgePolyline(edge, rows) {
+  const from = rows.boxOf.get(edge.from.node.id);
+  const to = rows.boxOf.get(edge.to.node.id);
+  const sy = from.y + from.h - 1;
+  const ey = to.y;
+  if (edge.kind === "straight") {
+    return [
+      [edge.x, sy],
+      [edge.x, ey]
+    ];
+  }
+  const landingY = rows.gapTrackStartY[edge.toBand - 1] + edge.landingRow;
+  if (edge.kind === "dogleg") {
+    return [
+      [edge.exitX, sy],
+      [edge.exitX, landingY],
+      [edge.entryX, landingY],
+      [edge.entryX, ey]
+    ];
+  }
+  const exitY = rows.gapTrackStartY[edge.fromBand] + edge.exitRow;
+  return [
+    [edge.exitX, sy],
+    [edge.exitX, exitY],
+    [edge.descentX, exitY],
+    [edge.descentX, landingY],
+    [edge.entryX, landingY],
+    [edge.entryX, ey]
+  ];
+}
+
+// src/render/skins.ts
+function styleFor(face) {
+  switch (face) {
+    case "planned":
+      return "dim";
+    case "in-progress":
+      return "amber";
+    case "done":
+      return "green";
+    case "done-unverified":
+      return "greenDim";
+    case "regressed":
+      return "red";
+  }
+}
+function skinFor(face, unicode) {
+  const style = styleFor(face);
+  if (!unicode) {
+    return face === "planned" ? { h: ".", v: ":", corners: ["+", "+", "+", "+"], style } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style };
+  }
+  switch (face) {
+    case "planned":
+      return { h: "\u254C", v: "\u254E", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
+    case "in-progress":
+      return { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
+    // an unverified done keeps the heavy border of done — it is the same
+    // claim, told with a hollow glyph and a dimmer green
+    case "done":
+    case "done-unverified":
+    case "regressed":
+      return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
+  }
+}
+function glyphFor(face, opts) {
+  if (face === "in-progress") return spinnerGlyph(opts.spinnerFrame, opts.unicode);
+  return face === "done-unverified" ? unverifiedDoneGlyph(opts.unicode) : statusGlyph(face, opts.unicode);
+}
+function neutralSkin(unicode) {
+  return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
+}
+function neutralGlyph(node, unicode) {
+  return (node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0) ?? (unicode ? "\xB7" : ".");
+}
+function unverifiedDoneIds(declared, drawn) {
+  const out = /* @__PURE__ */ new Set();
+  const declaredById = new Map(declared.nodes.map((n) => [n.id, n]));
+  for (const node of drawn.nodes) {
+    if (node.status !== "done") continue;
+    const own = declaredById.get(node.id);
+    if (own !== void 0) {
+      if (own.evidence === void 0) out.add(node.id);
+    } else if (declared.nodes.some(
+      (m) => m.group === node.id && m.status === "done" && m.evidence === void 0
+    )) {
+      out.add(node.id);
+    }
+  }
+  return out;
+}
+
+// src/render/draw.ts
+function drawTitle(canvas, title) {
+  canvas.text(LEFT_MARGIN, 0, title, "none", true);
+}
+function drawLaneHeaders(canvas, map, columns, rows) {
+  if (rows.laneHeaderY === void 0) return;
+  for (let i = 0; i < map.lanes.length; i++) {
+    const region = columns.lanes[i];
+    const label = fitWidth(map.lanes[i].label, region.w);
+    const cx = region.x + Math.max(0, Math.floor((region.w - displayWidth(label)) / 2));
+    canvas.text(cx, rows.laneHeaderY, label, "faint", true);
+  }
+}
+function drawBands(canvas, columns, rows, wiredWidth, totalWidth) {
+  for (let b = 0; b < columns.bands.length; b++) {
+    const label = columns.bandLabel[b];
+    for (let x = 0; x < wiredWidth; x++) canvas.line(x, rows.barY[b], LEFT | RIGHT, true);
+    canvas.text(totalWidth - displayWidth(label), rows.barY[b], label, "none", true);
+  }
+}
+function drawBox(canvas, box, opts, neutral, face, focused = false) {
+  const { node, x, y, w } = box;
+  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(face, opts.unicode);
+  const slotGlyph = neutral ? neutralGlyph(node, opts.unicode) : glyphFor(face, opts);
+  if (box.borderless) {
+    canvas.text(x + 1, y, slotGlyph, skin.style, true);
+    return;
+  }
+  const inner = w - 2;
+  const pad = box.pad === 1 ? " " : "";
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
+  canvas.text(x, y + 1, skin.v, skin.style, focused);
+  canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
+  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  for (let i = 0; i < box.extra.length; i++) {
+    const row = box.extra[i];
+    const yy = y + 2 + i;
+    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x + 1, yy, row.text, row.style);
+    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+  }
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+}
+function drawEdges(canvas, edges, rows, opts) {
+  for (const edge of edges) {
+    const bright = opts.focus !== void 0 && (edge.from.node.id === opts.focus || edge.to.node.id === opts.focus);
+    drawPath(canvas, edgePolyline(edge, rows), bright);
+  }
+}
+function drawLegend(canvas, map, opts, legendY, neutral, anyUnverified) {
+  let lx = LEFT_MARGIN;
+  if (neutral) {
+    lx = canvas.text(lx, legendY, map.kind, "faint");
+    const seen = /* @__PURE__ */ new Set();
+    for (const n of map.nodes) {
+      const k = n.kind;
+      if (k === void 0 || seen.has(k) || kindGlyph(k, opts.unicode) === void 0) continue;
+      seen.add(k);
+      lx = canvas.text(lx, legendY, "   ", "none");
+      lx = canvas.text(lx, legendY, `${kindGlyph(k, opts.unicode)} ${k}`, "none");
+    }
+    return;
+  }
+  const legendOpts = { ...opts, spinnerFrame: 0 };
+  const faces = ["planned", "in-progress", "done", "regressed"];
+  if (anyUnverified) faces.push("done-unverified");
+  for (const face of faces) {
+    if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
+    const word = face === "done-unverified" ? "done, no evidence" : face;
+    lx = canvas.text(lx, legendY, `${glyphFor(face, legendOpts)} ${word}`, styleFor(face));
+  }
+}
+
+// src/render/layout.ts
 var LABEL_BUDGET_MIN = 4;
 function boxSpec(node, geo, unicode, neutral) {
   const glyph = node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0;
@@ -21781,64 +22281,36 @@ function boxSpec(node, geo, unicode, neutral) {
     extra: []
   };
 }
-function renderMap(map, opts) {
-  const built = buildCanvas(map, opts);
-  return built.canvas.emit(opts);
-}
-var AGGREGATE_GEO = {
-  mode: "boxes",
-  scale: 1,
-  pad: 0,
-  boxGap: 1,
-  breathe: 0,
-  titleGap: 0,
-  barGap: 1,
-  bandCounts: false
-};
-function buildCanvas(map, opts) {
-  const oriented = flipForSequence(map);
-  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
-  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
-  return buildCanvasWith(aggregated ?? oriented, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo);
-}
-function buildCanvasWith(map, opts, geo) {
-  const canvas = new Canvas();
-  const neutral = isNeutralKind(map);
+function layoutColumns(map, geo, unicode, neutral) {
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
-  if (bands.length === 0) {
-    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
-    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return { canvas, hits: [] };
-  }
   const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
-  const boxes = /* @__PURE__ */ new Map();
-  const bandBoxes = bands.map(() => []);
+  const sized = /* @__PURE__ */ new Map();
+  const bandSized = bands.map(() => []);
   for (const node of map.nodes) {
-    const band = bandIndexOf.get(node.layer);
-    const box = { node, ...boxSpec(node, geo, opts.unicode, neutral), x: LEFT_MARGIN, y: 0 };
-    bandBoxes[band].push(box);
-    boxes.set(node.id, box);
+    const spec = { node, ...boxSpec(node, geo, unicode, neutral) };
+    bandSized[bandIndexOf.get(node.layer)].push(spec);
+    sized.set(node.id, spec);
   }
-  const laneCount = map.lanes.length;
-  const laneX = [];
-  const laneW = [];
-  if (laneCount === 0) {
-    for (const row of bandBoxes) {
+  const columnOf = /* @__PURE__ */ new Map();
+  const lanes = [];
+  if (map.lanes.length === 0) {
+    for (const row of bandSized) {
       let x = LEFT_MARGIN;
-      for (const box of row) {
-        box.x = x;
-        x += box.w + geo.boxGap;
+      for (const spec of row) {
+        columnOf.set(spec, x);
+        x += spec.w + geo.boxGap;
       }
     }
   } else {
+    const laneCount = map.lanes.length;
     const laneGap = geo.boxGap + 2;
     const laneIndexOf = new Map(map.lanes.map((l, i) => [l.id, i]));
     const regions = laneCount + 1;
-    const grouped = bandBoxes.map((row) => {
+    const grouped = bandSized.map((row) => {
       const cells = Array.from({ length: regions }, () => []);
-      for (const box of row) {
-        const lane = box.node.lane;
-        cells[lane !== void 0 ? laneIndexOf.get(lane) : regions - 1].push(box);
+      for (const spec of row) {
+        const lane = spec.node.lane;
+        cells[lane !== void 0 ? laneIndexOf.get(lane) : regions - 1].push(spec);
       }
       return cells;
     });
@@ -21852,164 +22324,53 @@ function buildCanvasWith(map, opts, geo) {
     for (let i = 0; i < laneCount; i++) regionW[i] = Math.max(regionW[i], displayWidth(map.lanes[i].label) + 2);
     let x0 = LEFT_MARGIN;
     for (let i = 0; i < regions; i++) {
-      laneX.push(x0);
-      laneW.push(regionW[i]);
+      lanes.push({ x: x0, w: regionW[i] });
       x0 += regionW[i] + laneGap;
     }
     for (const cells of grouped) {
       for (let i = 0; i < regions; i++) {
-        let x = laneX[i];
-        for (const box of cells[i]) {
-          box.x = x;
-          x += box.w + geo.boxGap;
+        let x = lanes[i].x;
+        for (const spec of cells[i]) {
+          columnOf.set(spec, x);
+          x += spec.w + geo.boxGap;
         }
       }
     }
   }
+  const placed = /* @__PURE__ */ new Map();
+  for (const [, spec] of sized) placed.set(spec, { ...spec, x: columnOf.get(spec) ?? LEFT_MARGIN });
+  const bandBoxes = bandSized.map((row) => row.map((spec) => placed.get(spec)));
+  const boxOf = /* @__PURE__ */ new Map();
+  for (const node of map.nodes) boxOf.set(node.id, placed.get(sized.get(node.id)));
   const bandLabel = bands.map((l, i) => {
     const row = bandBoxes[i];
     const done = row.filter((b) => b.node.status === "done").length;
     return geo.bandCounts && row.length > 0 && !neutral ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
   });
-  let contentWidth = LEFT_MARGIN;
-  for (const row of bandBoxes) {
-    const last = row[row.length - 1];
-    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
-  }
-  for (let i = 0; i < laneCount; i++) contentWidth = Math.max(contentWidth, laneX[i] + laneW[i]);
-  for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
-  const routes = map.edges.map((e) => {
-    const fromBox = boxes.get(e.from);
-    const toBox = boxes.get(e.to);
-    return {
-      fromBox,
-      toBox,
-      fromBand: bandIndexOf.get(fromBox.node.layer),
-      toBand: bandIndexOf.get(toBox.node.layer)
-    };
-  });
-  const claimedColumns = /* @__PURE__ */ new Map();
-  const isFree = (box, x) => !(claimedColumns.get(box)?.has(x) ?? false);
-  const claim = (box, x) => {
-    let set = claimedColumns.get(box);
-    if (!set) claimedColumns.set(box, set = /* @__PURE__ */ new Set());
-    set.add(x);
-    return x;
-  };
-  const straightX = /* @__PURE__ */ new Map();
-  for (const r of routes) {
-    if (r.toBand - r.fromBand !== 1) continue;
-    const lo = Math.max(r.fromBox.x + 1, r.toBox.x + 1);
-    const hi = Math.min(r.fromBox.x + r.fromBox.w - 2, r.toBox.x + r.toBox.w - 2);
-    if (lo > hi) continue;
-    const mid = Math.floor((lo + hi) / 2);
-    for (let d = 0; d <= hi - lo && !straightX.has(r); d++) {
-      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
-        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x)) {
-          straightX.set(r, claim(r.toBox, claim(r.fromBox, x)));
-          break;
-        }
-      }
-    }
-  }
-  const bent = routes.filter((r) => !straightX.has(r));
-  const outgoing = /* @__PURE__ */ new Map();
-  const incoming = /* @__PURE__ */ new Map();
-  for (const r of bent) {
-    outgoing.set(r.fromBox, [...outgoing.get(r.fromBox) ?? [], r]);
-    incoming.set(r.toBox, [...incoming.get(r.toBox) ?? [], r]);
-  }
-  const freeSlot = (box, k, n) => {
-    const lo = box.x + 1;
-    const hi = box.x + box.w - 2;
-    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
-    for (let d = 0; d <= hi - lo; d++) {
-      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
-        if (x >= lo && x <= hi && isFree(box, x)) return claim(box, x);
-      }
-    }
-    return ideal;
-  };
-  const attach = /* @__PURE__ */ new Map();
-  for (const r of bent) {
-    const outs = outgoing.get(r.fromBox);
-    const ins = incoming.get(r.toBox);
-    attach.set(r, {
-      sx: freeSlot(r.fromBox, outs.indexOf(r), outs.length),
-      ex: freeSlot(r.toBox, ins.indexOf(r), ins.length)
-    });
-  }
-  const skipRoutes = bent.filter((r) => r.toBand - r.fromBand > 1);
-  const usedDescent = /* @__PURE__ */ new Set();
-  const descentX = /* @__PURE__ */ new Map();
-  let fallbackCount = 0;
-  const blockedByBox = (band, x) => bandBoxes[band].some((b) => x >= b.x && x <= b.x + b.w - 1);
-  for (const r of skipRoutes) {
-    const { ex } = attach.get(r);
-    let chosen;
-    for (let d = 0; d <= contentWidth && chosen === void 0; d++) {
-      for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
-        if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
-        let blocked = false;
-        for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
-        if (!blocked) {
-          chosen = c;
-          break;
-        }
-      }
-    }
-    if (chosen === void 0) chosen = contentWidth + 2 + fallbackCount++ * 2;
-    usedDescent.add(chosen);
-    descentX.set(r, chosen);
-  }
-  const totalWidth = fallbackCount > 0 ? contentWidth + 2 + fallbackCount * 2 : contentWidth;
-  const gapCount = bands.length - 1;
-  const gapSegments = Array.from({ length: gapCount }, () => []);
-  const segmentOf = /* @__PURE__ */ new Map();
-  for (const r of bent) {
-    const { sx, ex } = attach.get(r);
-    if (r.toBand - r.fromBand === 1) {
-      const landing = { route: r, kind: "landing", lo: Math.min(sx, ex), hi: Math.max(sx, ex) };
-      gapSegments[r.toBand - 1].push(landing);
-      segmentOf.set(r, { landing });
-    } else {
-      const c = descentX.get(r);
-      const exit = { route: r, kind: "exit", lo: Math.min(sx, c), hi: Math.max(sx, c) };
-      const landing = { route: r, kind: "landing", lo: Math.min(c, ex), hi: Math.max(c, ex) };
-      gapSegments[r.fromBand].push(exit);
-      gapSegments[r.toBand - 1].push(landing);
-      segmentOf.set(r, { exit, landing });
-    }
-  }
-  const segmentRow = /* @__PURE__ */ new Map();
-  const gapRowCount = gapSegments.map((segments) => {
-    const rowEnds = [];
-    for (const s of [...segments].sort((a, b) => a.lo - b.lo)) {
-      let row = rowEnds.findIndex((end) => s.lo > end + 1);
-      if (row === -1) {
-        rowEnds.push(s.hi);
-        row = rowEnds.length - 1;
-      } else {
-        rowEnds[row] = Math.max(rowEnds[row], s.hi);
-      }
-      segmentRow.set(s, row);
-    }
-    return rowEnds.length;
-  });
+  let contentWidth = LEFT_MARGIN + BAR_MIN_RUN;
+  for (const row of bandBoxes) for (const box of row) contentWidth = Math.max(contentWidth, box.x + box.w);
+  for (const lane of lanes) contentWidth = Math.max(contentWidth, lane.x + lane.w);
+  return { bands, bandIndexOf, bandBoxes, boxOf, lanes, bandLabel, contentWidth };
+}
+function layoutRows(columns, geo, gapRowCount, hasTitle, hasLanes) {
   let y = 0;
-  if (map.title !== void 0) y += 1 + geo.titleGap;
+  if (hasTitle) y += 1 + geo.titleGap;
   let laneHeaderY;
-  if (laneCount > 0) {
+  if (hasLanes) {
     laneHeaderY = y;
     y += 1 + geo.barGap;
   }
   const barY = [];
   const gapTrackStartY = [];
-  for (let b = 0; b < bands.length; b++) {
+  const bandBoxes = [];
+  const placed = /* @__PURE__ */ new Map();
+  const gapCount = columns.bands.length - 1;
+  for (let b = 0; b < columns.bands.length; b++) {
     barY.push(y);
     y += 1 + geo.barGap;
-    const row = bandBoxes[b];
-    for (const box of row) box.y = y;
+    const row = columns.bandBoxes[b];
+    for (const box of row) placed.set(box, { ...box, y });
+    bandBoxes.push(row.map((box) => placed.get(box)));
     y += row.reduce((max, box) => Math.max(max, box.h), geo.mode === "constellation" ? 1 : BOX_H);
     if (b < gapCount) {
       y += geo.breathe;
@@ -22018,97 +22379,47 @@ function buildCanvasWith(map, opts, geo) {
       y += geo.breathe;
     }
   }
-  const legendY = y + 1;
-  const rowYOf = (gap, s) => gapTrackStartY[gap] + segmentRow.get(s);
-  if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none", true);
-  if (laneHeaderY !== void 0) {
-    for (let i = 0; i < laneCount; i++) {
-      const label = fitWidth(map.lanes[i].label, laneW[i]);
-      const cx = laneX[i] + Math.max(0, Math.floor((laneW[i] - displayWidth(label)) / 2));
-      canvas.text(cx, laneHeaderY, label, "faint", true);
-    }
+  const boxOf = /* @__PURE__ */ new Map();
+  for (const [id2, box] of columns.boxOf) boxOf.set(id2, placed.get(box));
+  return { boxOf, bandBoxes, barY, gapTrackStartY, laneHeaderY, legendY: y + 1 };
+}
+
+// src/render/render.ts
+function renderMap(map, opts) {
+  const built = buildCanvas(map, opts);
+  return built.canvas.emit(opts);
+}
+function buildCanvas(map, opts) {
+  const oriented = flipForSequence(map);
+  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
+  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
+  const drawn = aggregated ?? oriented;
+  return paint(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo, unverifiedDoneIds(oriented, drawn));
+}
+function paint(map, opts, geo, unverified) {
+  const canvas = new Canvas();
+  if (map.layers.length === 0) {
+    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
+    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
+    return { canvas, hits: [] };
   }
-  for (let b = 0; b < bands.length; b++) {
-    const label = bandLabel[b];
-    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
-    const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
-    canvas.text(labelStart, barY[b], label, "none", true);
+  const neutral = isNeutralKind(map);
+  const columns = layoutColumns(map, geo, opts.unicode, neutral);
+  const routing = routeEdges(map, columns);
+  const rows = layoutRows(columns, geo, routing.gapRowCount, map.title !== void 0, map.lanes.length > 0);
+  const wiredWidth = routing.fallbackCount > 0 ? columns.contentWidth + 2 + routing.fallbackCount * 2 : columns.contentWidth;
+  const totalWidth = wiredWidth + Math.max(...columns.bandLabel.map(displayWidth));
+  if (map.title !== void 0) drawTitle(canvas, map.title);
+  drawLaneHeaders(canvas, map, columns, rows);
+  drawBands(canvas, columns, rows, wiredWidth, totalWidth);
+  const faceOf = (id2, status2) => unverified.has(id2) ? "done-unverified" : status2;
+  for (const box of rows.boxOf.values()) {
+    const id2 = box.node.id;
+    drawBox(canvas, box, opts, neutral, faceOf(id2, box.node.status), opts.focus !== void 0 && id2 === opts.focus);
   }
-  for (const box of boxes.values()) {
-    drawBox(canvas, box, opts, neutral, opts.focus !== void 0 && box.node.id === opts.focus);
-  }
-  for (const r of routes) {
-    const sy = r.fromBox.y + r.fromBox.h - 1;
-    const ey = r.toBox.y;
-    const bright = opts.focus !== void 0 && (r.fromBox.node.id === opts.focus || r.toBox.node.id === opts.focus);
-    const direct = straightX.get(r);
-    if (direct !== void 0) {
-      drawPath(
-        canvas,
-        [
-          [direct, sy],
-          [direct, ey]
-        ],
-        bright
-      );
-      continue;
-    }
-    const { sx, ex } = attach.get(r);
-    const segments = segmentOf.get(r);
-    const landingY = rowYOf(r.toBand - 1, segments.landing);
-    if (r.toBand - r.fromBand === 1) {
-      drawPath(
-        canvas,
-        [
-          [sx, sy],
-          [sx, landingY],
-          [ex, landingY],
-          [ex, ey]
-        ],
-        bright
-      );
-    } else {
-      const c = descentX.get(r);
-      const exitY = rowYOf(r.fromBand, segments.exit);
-      drawPath(
-        canvas,
-        [
-          [sx, sy],
-          [sx, exitY],
-          [c, exitY],
-          [c, landingY],
-          [ex, landingY],
-          [ex, ey]
-        ],
-        bright
-      );
-    }
-  }
-  let lx = LEFT_MARGIN;
-  if (neutral) {
-    lx = canvas.text(lx, legendY, map.kind, "faint");
-    const seen = /* @__PURE__ */ new Set();
-    for (const n of map.nodes) {
-      const k = n.kind;
-      if (k === void 0 || seen.has(k) || kindGlyph(k, opts.unicode) === void 0) continue;
-      seen.add(k);
-      lx = canvas.text(lx, legendY, "   ", "none");
-      lx = canvas.text(lx, legendY, `${kindGlyph(k, opts.unicode)} ${k}`, "none");
-    }
-  } else {
-    const legendOpts = { ...opts, spinnerFrame: 0 };
-    const legendEntries = [
-      ["planned", "dim"],
-      ["in-progress", "amber"],
-      ["done", "green"],
-      ["regressed", "red"]
-    ];
-    for (const [status, style] of legendEntries) {
-      if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
-      lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
-    }
-  }
-  const hits = [...boxes.values()].map((b) => ({
+  drawEdges(canvas, routing.edges, rows, opts);
+  drawLegend(canvas, map, opts, rows.legendY, neutral, unverified.size > 0);
+  const hits = [...rows.boxOf.values()].map((b) => ({
     id: b.node.id,
     x: b.x,
     y: b.y,
@@ -22116,29 +22427,6 @@ function buildCanvasWith(map, opts, geo) {
     h: b.h
   }));
   return { canvas, hits };
-}
-function drawBox(canvas, box, opts, neutral, focused = false) {
-  const { node, x, y, w } = box;
-  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(node.status, opts.unicode);
-  const slotGlyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, opts.unicode) : void 0) ?? (opts.unicode ? "\xB7" : ".") : glyphFor(node.status, opts);
-  if (box.borderless) {
-    canvas.text(x + 1, y, slotGlyph, skin.style, true);
-    return;
-  }
-  const inner = w - 2;
-  const pad = box.pad === 1 ? " " : "";
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
-  canvas.text(x, y + 1, skin.v, skin.style, focused);
-  canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
-  for (let i = 0; i < box.extra.length; i++) {
-    const row = box.extra[i];
-    const yy = y + 2 + i;
-    canvas.text(x, yy, skin.v, skin.style, focused);
-    canvas.text(x + 1, yy, row.text, row.style);
-    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
-  }
-  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
 }
 
 // src/store/store.ts
@@ -22157,132 +22445,196 @@ function describeStoreError(e) {
       return `map file ${e.path} has an unexpected shape: ${e.detail}`;
     case "invariant-violation":
       return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
+    case "save-failed":
+      return `could not write ${e.path}: ${e.detail}`;
   }
 }
 function isRecord(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
-function asArray(v) {
-  return Array.isArray(v) ? v : [];
+function describeValue(v) {
+  if (v === void 0) return "missing";
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "an array";
+  return `a ${typeof v}`;
 }
-function optionalString(v) {
-  return typeof v === "string" ? v : void 0;
+function badShape(path, where, expected, got) {
+  return err({ kind: "bad-shape", path, detail: `${where} is ${describeValue(got)}, expected ${expected}` });
+}
+function arrayField(raw, key, path, presence) {
+  const v = raw[key];
+  if (Array.isArray(v)) return ok(v);
+  if (v === void 0 && presence === "optional") return ok([]);
+  return badShape(path, `"${key}"`, "an array", v);
+}
+function requiredString(rec, key, where, path) {
+  const v = rec[key];
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
+}
+function optionalString(rec, key, where, path) {
+  const v = rec[key];
+  if (v === void 0) return ok(void 0);
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
   if (raw["version"] !== STATE_FILE_VERSION) {
     return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION}` });
   }
+  const layers = arrayField(raw, "layers", path, "required");
+  if (!layers.ok) return layers;
+  const nodes = arrayField(raw, "nodes", path, "required");
+  if (!nodes.ok) return nodes;
+  const edges = arrayField(raw, "edges", path, "required");
+  if (!edges.ok) return edges;
+  const lanes = arrayField(raw, "lanes", path, "optional");
+  if (!lanes.ok) return lanes;
+  const groups = arrayField(raw, "groups", path, "optional");
+  if (!groups.ok) return groups;
   let map = EMPTY_MAP;
-  const title = optionalString(raw["title"]);
-  if (title !== void 0) map = setTitle(map, title);
-  const rawKind = optionalString(raw["kind"]);
-  if (rawKind !== void 0) {
-    const kind = makeMapKind(rawKind);
+  const title = optionalString(raw, "title", "map", path);
+  if (!title.ok) return title;
+  if (title.value !== void 0) map = setTitle(map, title.value);
+  const rawKind = optionalString(raw, "kind", "map", path);
+  if (!rawKind.ok) return rawKind;
+  if (rawKind.value !== void 0) {
+    const kind = makeMapKind(rawKind.value);
     if (!kind.ok) return err({ kind: "invariant-violation", path, violation: kind.error });
     map = setKind(map, kind.value);
   }
-  for (const [i, rawLayer] of asArray(raw["layers"]).entries()) {
-    if (!isRecord(rawLayer)) return err({ kind: "bad-shape", path, detail: `layers[${i}] is not an object` });
-    const id = makeLayerId(String(rawLayer["id"] ?? ""));
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const name = optionalString(rawLayer["name"]);
-    const rank = rawLayer["rank"];
-    if (name === void 0 || typeof rank !== "number" || !Number.isInteger(rank)) {
-      return err({ kind: "bad-shape", path, detail: `layers[${i}] needs a string name and an integer rank` });
-    }
-    const next = declareLayer(map, { id: id.value, name, rank });
+  for (const [i, rawLayer] of layers.value.entries()) {
+    const where = `layers[${i}]`;
+    if (!isRecord(rawLayer)) return badShape(path, where, "an object", rawLayer);
+    const rawId = requiredString(rawLayer, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id2 = makeLayerId(rawId.value);
+    if (!id2.ok) return err({ kind: "invariant-violation", path, violation: id2.error });
+    const name = requiredString(rawLayer, "name", where, path);
+    if (!name.ok) return name;
+    const rawRank = rawLayer["rank"];
+    if (typeof rawRank !== "number") return badShape(path, `${where}.rank`, "a number", rawRank);
+    const rank2 = makeRank(rawRank);
+    if (!rank2.ok) return err({ kind: "invariant-violation", path, violation: rank2.error });
+    const next = declareLayer(map, { id: id2.value, name: name.value, rank: rank2.value });
     if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
     map = next.value;
   }
-  for (const [i, rawLane] of asArray(raw["lanes"]).entries()) {
-    if (!isRecord(rawLane)) return err({ kind: "bad-shape", path, detail: `lanes[${i}] is not an object` });
-    const id = makeLaneId(String(rawLane["id"] ?? ""));
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const label = optionalString(rawLane["label"]);
-    if (label === void 0) return err({ kind: "bad-shape", path, detail: `lanes[${i}] needs a string label` });
-    const declared = declareLane(map, { id: id.value, label });
+  for (const [i, rawLane] of lanes.value.entries()) {
+    const where = `lanes[${i}]`;
+    if (!isRecord(rawLane)) return badShape(path, where, "an object", rawLane);
+    const rawId = requiredString(rawLane, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id2 = makeLaneId(rawId.value);
+    if (!id2.ok) return err({ kind: "invariant-violation", path, violation: id2.error });
+    const label = requiredString(rawLane, "label", where, path);
+    if (!label.ok) return label;
+    const declared = declareLane(map, { id: id2.value, label: label.value });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
   }
-  for (const [i, rawGroup] of asArray(raw["groups"]).entries()) {
-    if (!isRecord(rawGroup)) return err({ kind: "bad-shape", path, detail: `groups[${i}] is not an object` });
-    const id = makeGroupId(String(rawGroup["id"] ?? ""));
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const layer = makeLayerId(String(rawGroup["layer"] ?? ""));
+  for (const [i, rawGroup] of groups.value.entries()) {
+    const where = `groups[${i}]`;
+    if (!isRecord(rawGroup)) return badShape(path, where, "an object", rawGroup);
+    const rawId = requiredString(rawGroup, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id2 = makeGroupId(rawId.value);
+    if (!id2.ok) return err({ kind: "invariant-violation", path, violation: id2.error });
+    const rawLayer = requiredString(rawGroup, "layer", where, path);
+    if (!rawLayer.ok) return rawLayer;
+    const layer = makeLayerId(rawLayer.value);
     if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
-    const label = optionalString(rawGroup["label"]);
-    if (label === void 0) return err({ kind: "bad-shape", path, detail: `groups[${i}] needs a string label` });
-    const declared = declareGroup(map, { id: id.value, label, layer: layer.value });
+    const label = requiredString(rawGroup, "label", where, path);
+    if (!label.ok) return label;
+    const declared = declareGroup(map, { id: id2.value, label: label.value, layer: layer.value });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
   }
-  for (const [i, rawNode] of asArray(raw["nodes"]).entries()) {
-    if (!isRecord(rawNode)) return err({ kind: "bad-shape", path, detail: `nodes[${i}] is not an object` });
-    const id = makeNodeId(String(rawNode["id"] ?? ""));
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const layer = makeLayerId(String(rawNode["layer"] ?? ""));
+  for (const [i, rawNode] of nodes.value.entries()) {
+    const where = `nodes[${i}]`;
+    if (!isRecord(rawNode)) return badShape(path, where, "an object", rawNode);
+    const rawId = requiredString(rawNode, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id2 = makeNodeId(rawId.value);
+    if (!id2.ok) return err({ kind: "invariant-violation", path, violation: id2.error });
+    const rawLayer = requiredString(rawNode, "layer", where, path);
+    if (!rawLayer.ok) return rawLayer;
+    const layer = makeLayerId(rawLayer.value);
     if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
-    const status = makeNodeStatus(String(rawNode["status"] ?? ""));
-    if (!status.ok) return err({ kind: "invariant-violation", path, violation: status.error });
-    const label = optionalString(rawNode["label"]);
-    if (label === void 0) return err({ kind: "bad-shape", path, detail: `nodes[${i}] needs a string label` });
-    const detail = optionalString(rawNode["detail"]);
-    const rawGroup = optionalString(rawNode["group"]);
+    const rawStatus = requiredString(rawNode, "status", where, path);
+    if (!rawStatus.ok) return rawStatus;
+    const status2 = makeNodeStatus(rawStatus.value);
+    if (!status2.ok) return err({ kind: "invariant-violation", path, violation: status2.error });
+    const label = requiredString(rawNode, "label", where, path);
+    if (!label.ok) return label;
+    const detail = optionalString(rawNode, "detail", where, path);
+    if (!detail.ok) return detail;
+    const rawGroup = optionalString(rawNode, "group", where, path);
+    if (!rawGroup.ok) return rawGroup;
     let group;
-    if (rawGroup !== void 0) {
-      const made = makeGroupId(rawGroup);
+    if (rawGroup.value !== void 0) {
+      const made = makeGroupId(rawGroup.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       group = made.value;
     }
-    const rawNodeKind = optionalString(rawNode["kind"]);
-    let nodeKind;
-    if (rawNodeKind !== void 0) {
-      const made = makeNodeKind(rawNodeKind);
+    const rawNodeKind = optionalString(rawNode, "kind", where, path);
+    if (!rawNodeKind.ok) return rawNodeKind;
+    let nodeKind2;
+    if (rawNodeKind.value !== void 0) {
+      const made = makeNodeKind(rawNodeKind.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
-      nodeKind = made.value;
+      nodeKind2 = made.value;
     }
-    const rawLane = optionalString(rawNode["lane"]);
+    const rawLane = optionalString(rawNode, "lane", where, path);
+    if (!rawLane.ok) return rawLane;
     let lane;
-    if (rawLane !== void 0) {
-      const made = makeLaneId(rawLane);
+    if (rawLane.value !== void 0) {
+      const made = makeLaneId(rawLane.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       lane = made.value;
     }
-    const rawSubmap = optionalString(rawNode["submap"]);
+    const rawSubmap = optionalString(rawNode, "submap", where, path);
+    if (!rawSubmap.ok) return rawSubmap;
     let submap;
-    if (rawSubmap !== void 0) {
-      const made = makeSubmapRef(rawSubmap);
+    if (rawSubmap.value !== void 0) {
+      const made = makeSubmapRef(rawSubmap.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       submap = made.value;
     }
     const declared = declareNode(map, {
-      id: id.value,
-      label,
+      id: id2.value,
+      label: label.value,
       layer: layer.value,
-      status: status.value,
-      ...detail !== void 0 ? { detail } : {},
+      status: status2.value,
+      ...detail.value !== void 0 ? { detail: detail.value } : {},
       ...group !== void 0 ? { group } : {},
-      ...nodeKind !== void 0 ? { kind: nodeKind } : {},
+      ...nodeKind2 !== void 0 ? { kind: nodeKind2 } : {},
       ...lane !== void 0 ? { lane } : {},
       ...submap !== void 0 ? { submap } : {}
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
-    const evidence = optionalString(rawNode["evidence"]);
-    if (evidence !== void 0) {
-      const updated = updateNode(map, { id: id.value, evidence });
+    const evidence = optionalString(rawNode, "evidence", where, path);
+    if (!evidence.ok) return evidence;
+    if (evidence.value !== void 0) {
+      const updated = updateNode(map, { id: id2.value, evidence: evidence.value });
       if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
       map = updated.value;
     }
   }
-  for (const [i, rawEdge] of asArray(raw["edges"]).entries()) {
-    if (!isRecord(rawEdge)) return err({ kind: "bad-shape", path, detail: `edges[${i}] is not an object` });
-    const from = makeNodeId(String(rawEdge["from"] ?? ""));
+  for (const [i, rawEdge] of edges.value.entries()) {
+    const where = `edges[${i}]`;
+    if (!isRecord(rawEdge)) return badShape(path, where, "an object", rawEdge);
+    const rawFrom = requiredString(rawEdge, "from", where, path);
+    if (!rawFrom.ok) return rawFrom;
+    const from = makeNodeId(rawFrom.value);
     if (!from.ok) return err({ kind: "invariant-violation", path, violation: from.error });
-    const to = makeNodeId(String(rawEdge["to"] ?? ""));
+    const rawTo = requiredString(rawEdge, "to", where, path);
+    if (!rawTo.ok) return rawTo;
+    const to = makeNodeId(rawTo.value);
     if (!to.ok) return err({ kind: "invariant-violation", path, violation: to.error });
-    const linked = linkNodes(map, from.value, to.value, optionalString(rawEdge["label"]));
+    const label = optionalString(rawEdge, "label", where, path);
+    if (!label.ok) return label;
+    const linked = linkNodes(map, from.value, to.value, label.value);
     if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
     map = linked.value;
   }
@@ -22303,10 +22655,68 @@ function serializeMap(map) {
 }
 
 // src/store/store.ts
+var RENAME_MAX_ATTEMPTS = 10;
+var RENAME_BACKOFF_STEP_MS = 10;
+var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function discardTemp(tmp) {
+  try {
+    rmSync(tmp, { force: true });
+  } catch {
+  }
+}
+function errnoOf(e) {
+  return e.code ?? e.message;
+}
+function writeFileAtomic(path, contents) {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, contents, "utf8");
+  } catch (e) {
+    discardTemp(tmp);
+    return err({ kind: "save-failed", path, detail: `writing the temp file failed: ${errnoOf(e)}` });
+  }
+  let attempt = 1;
+  for (; ; ) {
+    try {
+      renameSync(tmp, path);
+      return ok(void 0);
+    } catch (e) {
+      const code = errnoOf(e);
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+        discardTemp(tmp);
+        return err({ kind: "save-failed", path, detail: `${code} after ${attempt} attempt(s)` });
+      }
+      sleepSync(attempt * RENAME_BACKOFF_STEP_MS);
+      attempt += 1;
+    }
+  }
+}
 var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
 var PAGES_DIR_NAME = "pages";
-function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+function pageFilePath(defaultFile, page2) {
+  return page2 === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page2}.json`);
+}
+function pageIdOfFile(defaultFile, path) {
+  if (path === defaultFile) return void 0;
+  const name = basename(path);
+  return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+}
+function listPageFiles(defaultFile) {
+  const out = [];
+  if (existsSync(defaultFile)) out.push(defaultFile);
+  let entries = [];
+  try {
+    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+  } catch {
+  }
+  for (const e of entries.sort()) {
+    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+  }
+  return out;
 }
 var CONFIG_FILE_NAME = "config.json";
 var CONFIG_FILE_VERSION = 1;
@@ -22330,6 +22740,9 @@ function describeMappingPolicy(policy) {
 function isRecord2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
+function stripBom(text2) {
+  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
+}
 function loadMappingPolicy(defaultFile) {
   const path = configFilePath(defaultFile);
   let text2;
@@ -22341,7 +22754,7 @@ function loadMappingPolicy(defaultFile) {
   }
   let raw;
   try {
-    raw = JSON.parse(text2);
+    raw = JSON.parse(stripBom(text2));
   } catch (e) {
     return err({ kind: "malformed-json", path, detail: e.message });
   }
@@ -22356,11 +22769,8 @@ function loadMappingPolicy(defaultFile) {
   return policy.ok ? ok(policy.value) : err({ kind: "bad-shape", path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(" | ")}` });
 }
 function saveMappingPolicy(defaultFile, policy) {
-  const path = configFilePath(defaultFile);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n", "utf8");
-  renameSync(tmp, path);
+  const body = JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n";
+  return writeFileAtomic(configFilePath(defaultFile), body);
 }
 var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
@@ -22390,20 +22800,20 @@ function loadMapFile(path) {
   }
   let raw;
   try {
-    raw = JSON.parse(text2);
+    raw = JSON.parse(stripBom(text2));
   } catch (e) {
     return err({ kind: "malformed-json", path, detail: e.message });
   }
   return parseMap(raw, path);
 }
 function saveMapFile(path, map) {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, serializeMap(map), "utf8");
-  renameSync(tmp, path);
+  return writeFileAtomic(path, serializeMap(map));
 }
 
 // src/server/apply.ts
+function refuseSelfDive(where, submap, page2) {
+  return submap === page2 ? `${where}: a node cannot dive into its own page ("${submap}"); a submap links a CHILD page` : void 0;
+}
 function applyDeclare(map, input) {
   let next = input.title !== void 0 ? setTitle(map, input.title) : map;
   if (input.kind !== void 0) {
@@ -22412,38 +22822,40 @@ function applyDeclare(map, input) {
     next = setKind(next, kind.value);
   }
   for (const [i, l] of (input.layers ?? []).entries()) {
-    const id = makeLayerId(l.id);
-    if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
-    const declared = declareLayer(next, { id: id.value, name: l.name, rank: l.rank });
+    const id2 = makeLayerId(l.id);
+    if (!id2.ok) return err(`layers[${i}]: ${describeMapError(id2.error)}`);
+    const rank2 = makeRank(l.rank);
+    if (!rank2.ok) return err(`layers[${i}]: ${describeMapError(rank2.error)}`);
+    const declared = declareLayer(next, { id: id2.value, name: l.name, rank: rank2.value });
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
   for (const [i, l] of (input.lanes ?? []).entries()) {
-    const id = makeLaneId(l.id);
-    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
-    const declared = declareLane(next, { id: id.value, label: l.label });
+    const id2 = makeLaneId(l.id);
+    if (!id2.ok) return err(`lanes[${i}]: ${describeMapError(id2.error)}`);
+    const declared = declareLane(next, { id: id2.value, label: l.label });
     if (!declared.ok) return err(`lanes[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
   for (const [i, g] of (input.groups ?? []).entries()) {
-    const id = makeGroupId(g.id);
-    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    const id2 = makeGroupId(g.id);
+    if (!id2.ok) return err(`groups[${i}]: ${describeMapError(id2.error)}`);
     const layer = makeLayerId(g.layer);
     if (!layer.ok) return err(`groups[${i}]: ${describeMapError(layer.error)}`);
-    const declared = declareGroup(next, { id: id.value, label: g.label, layer: layer.value });
+    const declared = declareGroup(next, { id: id2.value, label: g.label, layer: layer.value });
     if (!declared.ok) return err(`groups[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
   for (const [i, n] of (input.nodes ?? []).entries()) {
-    const id = makeNodeId(n.id);
-    if (!id.ok) return err(`nodes[${i}]: ${describeMapError(id.error)}`);
+    const id2 = makeNodeId(n.id);
+    if (!id2.ok) return err(`nodes[${i}]: ${describeMapError(id2.error)}`);
     const layer = makeLayerId(n.layer);
     if (!layer.ok) return err(`nodes[${i}]: ${describeMapError(layer.error)}`);
-    let status;
+    let status2;
     if (n.status !== void 0) {
       const parsed = makeNodeStatus(n.status);
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
-      status = parsed.value;
+      status2 = parsed.value;
     }
     let group;
     if (n.group !== void 0) {
@@ -22467,13 +22879,16 @@ function applyDeclare(map, input) {
     if (n.submap !== void 0) {
       const parsed = makeSubmapRef(n.submap);
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      const selfDive = refuseSelfDive(`nodes[${i}]`, n.submap, input.page);
+      if (selfDive !== void 0) return err(selfDive);
       submap = parsed.value;
     }
     const declared = declareNode(next, {
-      id: id.value,
+      id: id2.value,
       label: n.label,
       layer: layer.value,
-      ...status !== void 0 ? { status } : {},
+      ...status2 !== void 0 ? { status: status2 } : {},
+      ...n.evidence !== void 0 ? { evidence: n.evidence } : {},
       ...n.detail !== void 0 ? { detail: n.detail } : {},
       ...group !== void 0 ? { group } : {},
       ...kind !== void 0 ? { kind } : {},
@@ -22496,14 +22911,56 @@ function applyDeclare(map, input) {
 }
 function applyUpdate(map, input) {
   let next = map;
-  for (const [i, u] of input.updates.entries()) {
-    const id = makeNodeId(u.id);
-    if (!id.ok) return err(`updates[${i}]: ${describeMapError(id.error)}`);
-    let status;
+  const items = (input.updates?.length ?? 0) + (input.layers?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0);
+  if (items === 0) return err("nothing to revise: pass updates, layers, groups or lanes");
+  for (const [i, l] of (input.layers ?? []).entries()) {
+    const id2 = makeLayerId(l.id);
+    if (!id2.ok) return err(`layers[${i}]: ${describeMapError(id2.error)}`);
+    if (l.name === void 0 && l.rank === void 0) {
+      return err(`layers[${i}]: nothing to change; give a name, a rank, or both`);
+    }
+    let rank2;
+    if (l.rank !== void 0) {
+      const parsed = makeRank(l.rank);
+      if (!parsed.ok) return err(`layers[${i}]: ${describeMapError(parsed.error)}`);
+      rank2 = parsed.value;
+    }
+    const updated = updateLayer(next, id2.value, {
+      ...l.name !== void 0 ? { name: l.name } : {},
+      ...rank2 !== void 0 ? { rank: rank2 } : {}
+    });
+    if (!updated.ok) return err(`layers[${i}]: ${describeMapError(updated.error)}`);
+    next = updated.value;
+  }
+  for (const [i, g] of (input.groups ?? []).entries()) {
+    const id2 = makeGroupId(g.id);
+    if (!id2.ok) return err(`groups[${i}]: ${describeMapError(id2.error)}`);
+    const updated = updateGroup(next, id2.value, g.label);
+    if (!updated.ok) return err(`groups[${i}]: ${describeMapError(updated.error)}`);
+    next = updated.value;
+  }
+  for (const [i, l] of (input.lanes ?? []).entries()) {
+    const id2 = makeLaneId(l.id);
+    if (!id2.ok) return err(`lanes[${i}]: ${describeMapError(id2.error)}`);
+    const updated = updateLane(next, id2.value, l.label);
+    if (!updated.ok) return err(`lanes[${i}]: ${describeMapError(updated.error)}`);
+    next = updated.value;
+  }
+  for (const [i, u] of (input.updates ?? []).entries()) {
+    const id2 = makeNodeId(u.id);
+    if (!id2.ok) return err(`updates[${i}]: ${describeMapError(id2.error)}`);
+    if (u.layer !== void 0) {
+      const layer = makeLayerId(u.layer);
+      if (!layer.ok) return err(`updates[${i}]: ${describeMapError(layer.error)}`);
+      const moved = moveNode(next, id2.value, layer.value);
+      if (!moved.ok) return err(`updates[${i}]: ${describeMapError(moved.error)}`);
+      next = moved.value;
+    }
+    let status2;
     if (u.status !== void 0) {
       const parsed = makeNodeStatus(u.status);
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
-      status = parsed.value;
+      status2 = parsed.value;
     }
     let group;
     if (u.group === null) group = null;
@@ -22531,11 +22988,13 @@ function applyUpdate(map, input) {
     else if (u.submap !== void 0) {
       const parsed = makeSubmapRef(u.submap);
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      const selfDive = refuseSelfDive(`updates[${i}]`, u.submap, input.page);
+      if (selfDive !== void 0) return err(selfDive);
       submap = parsed.value;
     }
     const updated = updateNode(next, {
-      id: id.value,
-      ...status !== void 0 ? { status } : {},
+      id: id2.value,
+      ...status2 !== void 0 ? { status: status2 } : {},
       ...u.label !== void 0 ? { label: u.label } : {},
       ...u.evidence !== void 0 ? { evidence: u.evidence } : {},
       ...u.detail !== void 0 ? { detail: u.detail } : {},
@@ -22561,30 +23020,30 @@ function applyRemove(map, input) {
     next = removed.value;
   }
   for (const [i, rawId] of (input.nodes ?? []).entries()) {
-    const id = makeNodeId(rawId);
-    if (!id.ok) return err(`nodes[${i}]: ${describeMapError(id.error)}`);
-    const removed = removeNode(next, id.value);
+    const id2 = makeNodeId(rawId);
+    if (!id2.ok) return err(`nodes[${i}]: ${describeMapError(id2.error)}`);
+    const removed = removeNode(next, id2.value);
     if (!removed.ok) return err(`nodes[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
   for (const [i, rawId] of (input.groups ?? []).entries()) {
-    const id = makeGroupId(rawId);
-    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
-    const removed = removeGroup(next, id.value);
+    const id2 = makeGroupId(rawId);
+    if (!id2.ok) return err(`groups[${i}]: ${describeMapError(id2.error)}`);
+    const removed = removeGroup(next, id2.value);
     if (!removed.ok) return err(`groups[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
   for (const [i, rawId] of (input.lanes ?? []).entries()) {
-    const id = makeLaneId(rawId);
-    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
-    const removed = removeLane(next, id.value);
+    const id2 = makeLaneId(rawId);
+    if (!id2.ok) return err(`lanes[${i}]: ${describeMapError(id2.error)}`);
+    const removed = removeLane(next, id2.value);
     if (!removed.ok) return err(`lanes[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
   for (const [i, rawId] of (input.layers ?? []).entries()) {
-    const id = makeLayerId(rawId);
-    if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
-    const removed = removeLayer(next, id.value);
+    const id2 = makeLayerId(rawId);
+    if (!id2.ok) return err(`layers[${i}]: ${describeMapError(id2.error)}`);
+    const removed = removeLayer(next, id2.value);
     if (!removed.ok) return err(`layers[${i}]: ${describeMapError(removed.error)}`);
     next = removed.value;
   }
@@ -22593,30 +23052,75 @@ function applyRemove(map, input) {
 function summarize(map) {
   const byStatus = { planned: 0, "in-progress": 0, done: 0, regressed: 0 };
   for (const n of map.nodes) byStatus[n.status]++;
-  const statusPart = Object.entries(byStatus).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`).join(", ");
+  const statusPart = Object.entries(byStatus).filter(([, count]) => count > 0).map(([status2, count]) => `${count} ${status2}`).join(", ");
   return `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` + (statusPart ? ` [${statusPart}]` : "") + (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : "") + (map.lanes.length > 0 ? `, ${map.lanes.length} lane(s)` : "") + `, ${map.edges.length} edge(s)` + (map.kind !== void 0 && map.kind !== "dev" ? ` (${map.kind})` : "");
 }
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
 var SERVER_VERSION = "0.20.1";
-var ID = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "lowercase letters, digits and dashes, 1-64 chars").describe("stable kebab-case identifier");
-var PAGE = ID.optional().describe(
-  "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages."
-);
-var STATUS = external_exports.enum(["planned", "in-progress", "done", "regressed"]).describe("planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken");
-var EDGE = external_exports.object({
-  from: ID.describe("the node that USES the other (must live on a higher layer)"),
-  to: ID.describe("the node being used (must live on a strictly lower layer)")
-});
-var KIND = external_exports.enum(["dev", "architecture", "dataflow", "behavior-tree", "sequence"]).describe(
-  "diagram kind. dev (default) = the live progress ledger with status skins. The rest are documentation diagrams rendered neutrally: architecture (layered components; also fits call graphs and module dependencies), dataflow (source\u2192transform\u2192sink, stages as layers), behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), sequence (classic call/return: rank = time step with rank 0 = EARLIEST, drawn top-down; declare lanes as participants and make every call AND every return its own event node in the acting participant's lane, edges labeled with the message). State machines are unsupported: cycles cannot enter a Mellos map."
-);
-var NODE_KIND = ID.describe(
-  "node kind rendered as a glyph prefix. Known: selector | sequence | parallel | decorator | condition | action (behavior trees); source | transform | sink (dataflow); service | db | queue | ui (architecture). Unknown kinds are kept and shown in the detail panel."
-);
+var TITLE_MAX = 120;
+var LABEL_MAX = 60;
+var DETAIL_MAX = 600;
+var EVIDENCE_MAX = 200;
+var EDGE_LABEL_MAX = 80;
+function id(description) {
+  return external_exports.string().regex(ID_RULE, ID_RULE_TEXT).describe(description);
+}
+var PAGE_DESCRIPTION = "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages.";
+function page() {
+  return id(PAGE_DESCRIPTION).optional();
+}
+var STATUS_VOCABULARY = "planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken";
+function status(note2) {
+  return external_exports.enum(NODE_STATUSES).describe(`${note2}. ${STATUS_VOCABULARY}`);
+}
+function nodeKind() {
+  return id(
+    "node kind rendered as a glyph prefix. Known: selector | sequence | parallel | decorator | condition | action (behavior trees); source | transform | sink (dataflow); service | db | queue | ui (architecture). Unknown kinds are kept and shown in the detail panel."
+  );
+}
+function mapKind() {
+  return external_exports.enum(MAP_KINDS).describe(
+    "diagram kind. dev (default) = the live progress ledger with status skins. The rest are documentation diagrams rendered neutrally: architecture (layered components; also fits call graphs and module dependencies), dataflow (source\u2192transform\u2192sink, stages as layers), behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), sequence (classic call/return: rank = time step with rank 0 = EARLIEST, drawn top-down; declare lanes as participants and make every call AND every return its own event node in the acting participant's lane, edges labeled with the message). State machines are unsupported: cycles cannot enter a Mellos map."
+  );
+}
+function rank() {
+  return external_exports.number().int().min(RANK_MIN).max(RANK_MAX).describe(`${RANK_RULE_TEXT}; must be unique among the map's bands`);
+}
+function edgeEnds() {
+  return {
+    from: id("the node that USES the other (must live on a higher layer)"),
+    to: id("the node being used (must live on a strictly lower layer)")
+  };
+}
+var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
+var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
+function line(max, description) {
+  return external_exports.string().min(1).max(max).regex(NO_CONTROLS, NO_CONTROLS_TEXT).describe(description);
+}
+function note(max, description) {
+  return external_exports.string().min(1).max(max).regex(NO_CONTROLS_BUT_BREAKS, NO_CONTROLS_BUT_BREAKS_TEXT).describe(description);
+}
+function closed(shape) {
+  return external_exports.object(shape).strict();
+}
+var DEFAULT_PAGE_NAME = "(default)";
+var DEFAULT_PAGE_ABSENT = "(default: absent)";
+function pagesLine(stateFile, shown) {
+  const files = listPageFiles(stateFile);
+  const named = files.map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
+  const hasDefault = files.length > named.length;
+  const known = [hasDefault ? DEFAULT_PAGE_NAME : DEFAULT_PAGE_ABSENT, ...named];
+  return `pages: ${known.join(", ")} \u2014 this view: ${shown ?? DEFAULT_PAGE_NAME}`;
+}
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
+}
+function saveFailed(error2) {
+  return text(`save failed, nothing changed (retry): ${describeStoreError(error2)}`, true);
 }
 function loadOrEmpty(stateFile) {
   const loaded = loadMapFile(stateFile);
@@ -22626,15 +23130,16 @@ function loadOrEmpty(stateFile) {
 }
 function buildServer(stateFile) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-  const fileOf = (page) => pageFilePath(stateFile, page);
-  const mutate = (page, apply) => {
-    const file = fileOf(page);
+  const fileOf = (page2) => pageFilePath(stateFile, page2);
+  const mutate = (page2, apply) => {
+    const file = fileOf(page2);
     const current = loadOrEmpty(file);
     if (!current.ok) return text(current.error, true);
     const applied = apply(current.value);
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
-    saveMapFile(file, applied.value);
-    return text(summarize(applied.value) + (page !== void 0 ? ` [page: ${page}]` : ""));
+    const saved = saveMapFile(file, applied.value);
+    if (!saved.ok) return saveFailed(saved.error);
+    return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : ""));
   };
   const setupNudge = () => {
     const policy = loadMappingPolicy(stateFile);
@@ -22647,48 +23152,60 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
     "mmap_declare",
     {
       title: "Declare map structure",
-      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.",
-      inputSchema: {
-        page: PAGE,
-        title: external_exports.string().max(120).optional().describe("map title, e.g. the feature being built"),
-        kind: KIND.optional(),
+      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. The title lives here and only here: pass it again to replace it, or null to remove it. Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.",
+      inputSchema: closed({
+        page: page(),
+        title: line(TITLE_MAX, "map title, e.g. the feature being built; null removes it").nullable().optional(),
+        kind: mapKind().optional(),
         lanes: external_exports.array(
-          external_exports.object({
-            id: ID,
-            label: external_exports.string().min(1).max(60).describe("column name, e.g. a sequence participant")
+          closed({
+            id: id("stable kebab-case identifier of the lane"),
+            label: line(LABEL_MAX, "column name, e.g. a sequence participant")
           })
         ).optional().describe("vertical columns crossing all bands; declaration order = left-to-right"),
         layers: external_exports.array(
-          external_exports.object({
-            id: ID,
-            name: external_exports.string().min(1).max(60).describe("display name of the band"),
-            rank: external_exports.number().int().min(0).max(99).describe("0 = bottom / most primitive; must be unique")
+          closed({
+            id: id("stable kebab-case identifier of the band"),
+            name: line(LABEL_MAX, "display name of the band"),
+            rank: rank()
           })
         ).optional(),
         groups: external_exports.array(
-          external_exports.object({
-            id: ID,
-            label: external_exports.string().min(1).max(60).describe("subsystem name shown at the far zoom"),
-            layer: ID.describe("band this group clusters; members must live on the same band")
+          closed({
+            id: id("stable kebab-case identifier of the group"),
+            label: line(LABEL_MAX, "subsystem name shown at the far zoom"),
+            layer: id("band this group clusters; members must live on the same band")
           })
         ).optional(),
         nodes: external_exports.array(
-          external_exports.object({
-            id: ID,
-            label: external_exports.string().min(1).max(60).describe("display label inside the box"),
-            layer: ID.describe("id of the band this node lives in"),
-            status: STATUS.optional().describe("defaults to planned"),
-            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions"),
-            group: ID.optional().describe("same-band group this node belongs to"),
-            kind: NODE_KIND.optional(),
-            lane: ID.optional().describe("lane (column) this node belongs to"),
-            submap: ID.optional().describe(
+          closed({
+            id: id("stable kebab-case identifier of the node"),
+            label: line(LABEL_MAX, "display label inside the box"),
+            layer: id("id of the band this node lives in"),
+            status: status("defaults to planned").optional(),
+            evidence: line(
+              EVIDENCE_MAX,
+              "how an already-verified node was verified; for regressed: what broke. Declaring a node straight to done needs it as much as updating one does."
+            ).optional(),
+            detail: note(
+              DETAIL_MAX,
+              "design notes shown in the pane detail panel: responsibility, contract, key decisions"
+            ).optional(),
+            group: id("same-band group this node belongs to").optional(),
+            kind: nodeKind().optional(),
+            lane: id("lane (column) this node belongs to").optional(),
+            submap: id(
               "page slug of this node's child map \u2014 the pane badges the node \u229E and double-click dives in. Declare the child page separately. Create a sub-map only when the node's internals genuinely deserve their own picture; most nodes need none."
-            )
+            ).optional()
           })
         ).optional(),
-        edges: external_exports.array(EDGE.extend({ label: external_exports.string().max(80).optional().describe("what flows along the edge") })).optional()
-      }
+        edges: external_exports.array(
+          closed({
+            ...edgeEnds(),
+            label: line(EDGE_LABEL_MAX, "what flows along the edge").optional()
+          })
+        ).optional()
+      })
     },
     (input) => {
       const result = mutate(input.page, (map) => applyDeclare(map, input));
@@ -22700,24 +23217,39 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
   server.registerTool(
     "mmap_update",
     {
-      title: "Record progress on nodes",
-      description: "Update node status/label/evidence. Set in-progress when starting a node (the pane spins), done with evidence when its verification passes, regressed with evidence when a done node breaks. The map is a ledger: report honestly, it never blocks you.",
-      inputSchema: {
-        page: PAGE,
+      title: "Record progress and revise the map",
+      description: "The revision tool, all-or-nothing. Record progress on nodes: in-progress when starting a node (the pane spins), done with evidence when its verification passes, regressed with evidence when a done node breaks. Revise what the ghost design got wrong: move a node to another band, join or leave a group or lane, rename a band (or re-rank it, which reorders the whole map), relabel a group or a lane. Every clearable field takes null to empty it \u2014 that is how a field is cleared, never an empty string. Bands, groups and lanes are applied before the node updates, and within one node update `layer` moves the node before its other fields. The map is a ledger: report honestly, it never blocks you.",
+      inputSchema: closed({
+        page: page(),
         updates: external_exports.array(
-          external_exports.object({
-            id: ID,
-            status: STATUS.optional(),
-            label: external_exports.string().min(1).max(60).optional(),
-            evidence: external_exports.string().max(200).optional().describe("for done: how it was verified; for regressed: what broke"),
-            detail: external_exports.string().max(600).optional().describe("design notes shown in the pane detail panel: responsibility, contract, key decisions"),
-            group: ID.nullable().optional().describe("join this same-band group; null leaves the current group"),
-            kind: NODE_KIND.nullable().optional().describe("set the node kind; null clears it"),
-            lane: ID.nullable().optional().describe("join this lane; null leaves the current lane"),
-            submap: ID.nullable().optional().describe("link a child map page; null unlinks it")
+          closed({
+            id: id("id of the node to update"),
+            status: status("the status to record").optional(),
+            label: line(LABEL_MAX, "new display label inside the box").optional(),
+            evidence: line(EVIDENCE_MAX, "for done: how it was verified; for regressed: what broke; null clears it").nullable().optional(),
+            detail: note(
+              DETAIL_MAX,
+              "design notes shown in the pane detail panel: responsibility, contract, key decisions; null clears them"
+            ).nullable().optional(),
+            layer: id(
+              "move the node to this band; applied before this item's other fields, so a node can move and join a group on the new band in one item. Every edge touching it must still point strictly downward, and a grouped node may only move to its group's band."
+            ).optional(),
+            group: id("join this same-band group; null leaves the current group").nullable().optional(),
+            kind: nodeKind().nullable().optional(),
+            lane: id("join this lane; null leaves the current lane").nullable().optional(),
+            submap: id("link a child map page by slug; null unlinks it").nullable().optional()
           })
-        ).min(1)
-      }
+        ).min(1).optional(),
+        layers: external_exports.array(
+          closed({
+            id: id("id of the band to revise"),
+            name: line(LABEL_MAX, "new display name of the band").optional(),
+            rank: rank().optional()
+          })
+        ).min(1).optional().describe("rename and/or re-rank existing bands; an item must carry a name, a rank, or both"),
+        groups: external_exports.array(closed({ id: id("id of the group to relabel"), label: line(LABEL_MAX, "new subsystem name") })).min(1).optional().describe("relabel existing groups; membership and band are untouched"),
+        lanes: external_exports.array(closed({ id: id("id of the lane to relabel"), label: line(LABEL_MAX, "new column name") })).min(1).optional().describe("relabel existing lanes; order and membership are untouched")
+      })
     },
     (input) => mutate(input.page, (map) => applyUpdate(map, input))
   );
@@ -22726,14 +23258,14 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
     {
       title: "Revise the map",
       description: "Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work.",
-      inputSchema: {
-        page: PAGE,
-        edges: external_exports.array(EDGE).optional(),
-        nodes: external_exports.array(ID).optional(),
-        groups: external_exports.array(ID).optional().describe("groups to remove; members stay, merely ungrouped"),
-        lanes: external_exports.array(ID).optional().describe("lanes to remove; members stay, merely off-lane"),
-        layers: external_exports.array(ID).optional().describe("bands to remove; must be empty of nodes and groups")
-      }
+      inputSchema: closed({
+        page: page(),
+        edges: external_exports.array(closed(edgeEnds())).optional(),
+        nodes: external_exports.array(id("id of the node to remove, with every edge touching it")).optional(),
+        groups: external_exports.array(id("id of the group to remove; members stay, merely ungrouped")).optional(),
+        lanes: external_exports.array(id("id of the lane to remove; members stay, merely off-lane")).optional(),
+        layers: external_exports.array(id("id of the band to remove; it must hold no nodes and no groups")).optional()
+      })
     },
     (input) => mutate(input.page, (map) => applyRemove(map, input))
   );
@@ -22742,14 +23274,15 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
     {
       title: "Configure when maps open",
       description: `Get or set this project's mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it. If it reports "not set", ask the USER to choose (never pick for them): always = ` + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + ". Then call again with their choice to persist it. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.",
-      inputSchema: {
+      inputSchema: closed({
         policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy")
-      }
+      })
     },
     (input) => {
       if (input.policy !== void 0) {
         const policy = input.policy;
-        saveMappingPolicy(stateFile, policy);
+        const saved = saveMappingPolicy(stateFile, policy);
+        if (!saved.ok) return saveFailed(saved.error);
         return text(`mapping policy set: ${policy} \u2014 ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
       }
       const loaded = loadMappingPolicy(stateFile);
@@ -22766,17 +23299,19 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
     "mmap_view",
     {
       title: "View the current map",
-      description: "Render the current Mellos map as monochrome text \u2014 the same picture the split-pane watcher shows live. Use it to check the map state or to show it inline in conversation.",
-      inputSchema: {
-        page: PAGE,
+      description: "Render the current Mellos map as monochrome text \u2014 the same picture the split-pane watcher shows live. Use it to check the map state or to show it inline in conversation. Every response ends with a `pages:` line naming the pages this project actually has and which one you are looking at, so this is also how you discover whether a map exists at all and under which slugs \u2014 never probe the files.",
+      inputSchema: closed({
+        page: page(),
         zoom: external_exports.number().int().min(ZOOM_MIN).max(ZOOM_MAX).optional().describe("zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs")
-      }
+      })
     },
     (input) => {
       const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
-      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n"));
+      const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
+      return text(`${picture}
+${pagesLine(stateFile, input.page)}`);
     }
   );
   return server;
