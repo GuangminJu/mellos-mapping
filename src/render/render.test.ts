@@ -22,6 +22,7 @@ import {
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
+import { aggregateMap } from '../semantics/semantics.js';
 import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -251,6 +252,19 @@ describe('renderMap', () => {
     expect(hits.some((h) => h.id === 'ground')).toBe(true); // the group is hoverable
     expect(hits.some((h) => h.id === 'domain')).toBe(false); // members are inside it
     expect(text).toMatchSnapshot();
+  });
+
+  it('keeps one box per id at the far zoom when groups and loose nodes mix (I10)', () => {
+    // The aggregated view lifts group ids into the node-id space; before the
+    // shared namespace existed a group could carry an ungrouped node's id,
+    // and the overview then lost a box (or threw laying one out).
+    let map = sampleMap();
+    map = must(declareGroup(map, { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+    map = must(updateNode(map, { id: nid('domain'), group: gid('ground') }));
+    const aggregated = aggregateMap(map)!;
+    expect(new Set(aggregated.nodes.map((n) => n.id as string)).size).toBe(aggregated.nodes.length);
+    const { hits } = renderMapWindow(map, { ...MONO, zoom: -4 }, { x: 0, y: 0, width: 0, height: 0 });
+    expect(hits.map((h) => h.id).sort()).toEqual([...new Set(hits.map((h) => h.id))].sort());
   });
 
   it('switches to the glyph constellation only at the far end of the ladder', () => {

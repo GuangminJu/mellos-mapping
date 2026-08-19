@@ -26,6 +26,7 @@ import {
   STATE_FILE_RELATIVE_PATH,
   configFilePath,
   describeMappingPolicy,
+  describeStoreError,
   focusFilePath,
   listPageFiles,
   loadMapFile,
@@ -215,6 +216,23 @@ describe('boundary validation (P1)', () => {
       ),
     );
     expect(e).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'invalid-status' } });
+  });
+
+  it('refuses a hand-edited file whose group id also names a node, naming the id', () => {
+    const e = mustFail(
+      parseMap(
+        {
+          version: 1,
+          layers: [{ id: 'base', name: 'B', rank: 0 }],
+          groups: [{ id: 'core', label: '核心', layer: 'base' }],
+          nodes: [{ id: 'core', label: 'Core', layer: 'base', status: 'planned' }],
+          edges: [],
+        },
+        'x',
+      ),
+    );
+    expect(e).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'id-collision', id: 'core' } });
+    expect(describeStoreError(e)).toContain('"core"');
   });
 
   it('refuses exactly the ranks the domain refuses — one rank rule, not two', () => {

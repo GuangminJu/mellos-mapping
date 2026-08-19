@@ -28,6 +28,13 @@
  *       bands (a sequence participant, a swim lane); lane declaration order
  *       is left-to-right render order.
  *   I9. A node's lane, when set, exists.
+ *  I10. Node ids and group ids share ONE namespace: an id names a node or a
+ *       group, never both. I3 and I6 are per-set and a group is a BOX in
+ *       every view that shows one — the far zoom replaces its members with
+ *       it, and a detail panel resolves a hovered id against groups first.
+ *       Two boxes under one id therefore make the second unreachable and
+ *       the aggregated view ambiguous, which is a structural fault and not
+ *       a rendering accident, so it is refused where ids are declared.
  *
  * The map kind (dev | architecture | dataflow | behavior-tree | sequence) is
  * presentation intent, not structure: every kind shares the same invariants,
@@ -224,6 +231,7 @@ export type MapError =
   | { readonly kind: 'unknown-edge'; readonly from: NodeId; readonly to: NodeId }
   | { readonly kind: 'self-edge'; readonly id: NodeId }
   | { readonly kind: 'duplicate-group'; readonly id: GroupId }
+  | { readonly kind: 'id-collision'; readonly id: NodeId | GroupId; readonly taken: 'node' | 'group' }
   | { readonly kind: 'unknown-group'; readonly id: GroupId }
   | { readonly kind: 'invalid-map-kind'; readonly raw: string }
   | { readonly kind: 'duplicate-lane'; readonly id: LaneId }
@@ -272,6 +280,11 @@ export function describeMapError(e: MapError): string {
       return `node "${e.id}" cannot depend on itself`;
     case 'duplicate-group':
       return `group "${e.id}" already exists`;
+    case 'id-collision':
+      return (
+        `id "${e.id}" already names a ${e.taken} on this map; nodes and groups share one id namespace ` +
+        `(both render as boxes, so one id must mean one box) — rename "${e.id}"`
+      );
     case 'unknown-group':
       return `group "${e.id}" does not exist`;
     case 'invalid-map-kind':

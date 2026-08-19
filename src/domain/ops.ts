@@ -57,6 +57,19 @@ function hasEdge(map: MellosMap, from: NodeId, to: NodeId): boolean {
   return map.edges.some((e) => e.from === from && e.to === to);
 }
 
+/**
+ * Validate that a new id does not already name the OTHER kind of box (I10).
+ * Ids are compared as raw slugs on purpose: the shared namespace is exactly
+ * what the brands cannot express, which is why this check exists.
+ */
+function checkIdSpace(map: MellosMap, id: NodeId | GroupId, declaring: 'node' | 'group'): MapError | undefined {
+  const taken =
+    declaring === 'node'
+      ? map.groups.some((g) => (g.id as string) === (id as string))
+      : map.nodes.some((n) => (n.id as string) === (id as string));
+  return taken ? { kind: 'id-collision', id, taken: declaring === 'node' ? 'group' : 'node' } : undefined;
+}
+
 /** Set or replace the map title. */
 export function setTitle(map: MellosMap, title: string): MellosMap {
   return { ...map, title };
@@ -121,9 +134,11 @@ export interface DeclareGroupInput {
   readonly layer: LayerId;
 }
 
-/** Add a new group to an existing band (I6). */
+/** Add a new group to an existing band (I6), under an id no node holds (I10). */
 export function declareGroup(map: MellosMap, input: DeclareGroupInput): Result<MellosMap, MapError> {
   if (findGroup(map, input.id)) return err({ kind: 'duplicate-group', id: input.id });
+  const collision = checkIdSpace(map, input.id, 'group');
+  if (collision) return err(collision);
   if (!findLayer(map, input.layer)) return err({ kind: 'unknown-layer', id: input.layer });
   return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
 }
@@ -187,11 +202,14 @@ export interface DeclareNodeInput {
 }
 
 /**
- * Add a new node to an existing band (I2, I3), optionally joining a same-band
- * group (I7) and/or an existing lane (I9).
+ * Add a new node to an existing band (I2, I3) under an id no group holds
+ * (I10), optionally joining a same-band group (I7) and/or an existing lane
+ * (I9).
  */
 export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<MellosMap, MapError> {
   if (findNode(map, input.id)) return err({ kind: 'duplicate-node', id: input.id });
+  const collision = checkIdSpace(map, input.id, 'node');
+  if (collision) return err(collision);
   if (!findLayer(map, input.layer)) return err({ kind: 'unknown-layer', id: input.layer });
   if (input.group !== undefined) {
     const bad = checkMembership(map, input.id, input.layer, input.group);

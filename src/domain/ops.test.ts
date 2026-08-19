@@ -290,6 +290,18 @@ describe('groups — band-local labeled clusters (I6, I7)', () => {
     expect(mustFail(declareGroup(map, { id: gid('x'), label: 'X', layer: lid('nowhere') })).kind).toBe('unknown-layer');
   });
 
+  it('refuses an id that already names the other kind of box (I10)', () => {
+    // A group and a node under one id make two boxes answer to one name: the
+    // far zoom keys its boxes by id and a detail panel resolves the group
+    // first, so the node becomes unreachable.
+    const asNode = mustFail(declareNode(grouped(), { id: nid('foundation'), label: 'F', layer: lid('contracts') }));
+    expect(asNode).toMatchObject({ kind: 'id-collision', id: 'foundation', taken: 'group' });
+    expect(describeMapError(asNode)).toContain('"foundation"');
+
+    const asGroup = mustFail(declareGroup(grouped(), { id: gid('c'), label: 'C组', layer: lid('contracts') }));
+    expect(asGroup).toMatchObject({ kind: 'id-collision', id: 'c', taken: 'node' });
+  });
+
   it('refuses membership across bands — a group is band-local cohesion', () => {
     const e = mustFail(
       declareNode(grouped(), { id: nid('x'), label: 'X', layer: lid('contracts'), group: gid('foundation') }),
