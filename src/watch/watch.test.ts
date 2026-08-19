@@ -1,10 +1,15 @@
 /**
- * Spec for the watcher's pure helpers: width fitting/wrapping and the
- * resizable detail panel (node view and map dashboard) with its divider math.
+ * Spec for the watcher's pure helpers: width fitting/wrapping, the resizable
+ * detail panel (node view and map dashboard) with its divider math, and the
+ * fault boundaries that keep a live pane alive.
  * (The interactive shell itself is I/O and stays untested by design.)
  */
 
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, updateNode } from '../domain/ops.js';
 import {
@@ -22,7 +27,8 @@ import {
   type SubmapRef,
 } from '../domain/types.js';
 import { SPINNER_FRAMES, spinnerGlyph, statusGlyph } from '../semantics/semantics.js';
-import { type BoxHit, statusSgr } from '../render/render.js';
+import { type BoxHit, type RenderOptions, type Viewport, renderMapWindow, statusSgr } from '../render/render.js';
+import { serializeMap } from '../store/store.js';
 import {
   type PageTab,
   anchorOffsets,
@@ -51,11 +57,19 @@ import {
   waveHash,
   waveLevel,
   wrapWidth,
+  describePageFault,
+  readPage,
+  renderWindow,
+  terminalRestoreSequence,
 } from './watch.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
   return r.value;
+}
+function mustFail<T, E>(r: Result<T, E>): E {
+  if (r.ok) throw new Error('expected an error, but the operation succeeded');
+  return r.error;
 }
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
@@ -586,5 +600,68 @@ describe('auto-follow', () => {
     expect(ascii).toHaveLength(40);
     expect(ascii).toContain(' ~ ');
     expect(ascii.slice(-11, -1)).toBe(' > follow ');
+  });
+});
+
+describe('fault boundaries — the pane outlives what it is handed', () => {
+  const RENDER_OPTS: RenderOptions = { color: false, unicode: true, spinnerFrame: 0 };
+  const VIEWPORT: Viewport = { x: 0, y: 0, width: 80, height: 24 };
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'mmap-watch-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('reads a page that loads as the map it holds', () => {
+    const file = join(dir, 'map.json');
+    writeFileSync(file, serializeMap(sample()));
+    const read = readPage(file);
+    expect(read.ok).toBe(true);
+    expect(must(read).nodes).toHaveLength(3);
+  });
+
+  it('answers a page file that is a DIRECTORY with an error entry, not an exception', () => {
+    // `pages/x.json/` is a real thing to find on disk; loadMapFile rethrows
+    // EISDIR, and inside setInterval that exception took the pane down.
+    const file = join(dir, 'weird.json');
+    mkdirSync(file);
+    const read = readPage(file);
+    expect(read.ok).toBe(false);
+    expect(mustFail(read)).toEqual({ kind: 'unreadable', path: file, detail: 'EISDIR' });
+    expect(describePageFault(mustFail(read))).toContain(file);
+  });
+
+  it('still answers the store faults as the store models them', () => {
+    const missing = join(dir, 'nope.json');
+    expect(mustFail(readPage(missing))).toEqual({ kind: 'not-found', path: missing });
+    const torn = join(dir, 'torn.json');
+    writeFileSync(torn, '{"version":1,"map":{');
+    expect(mustFail(readPage(torn)).kind).toBe('malformed-json');
+  });
+
+  it('turns a map the renderer refuses into a message, so the frame is lost and not the pane', () => {
+    // an edge to a node that is not there — the store cannot produce it, but
+    // a picture the pane cannot draw must never be the end of the pane
+    const broken = { ...sample(), edges: [{ from: nid('shell'), to: nid('nowhere') }] } as MellosMap;
+    expect(() => renderMapWindow(broken, RENDER_OPTS, VIEWPORT)).toThrow();
+    const drawn = renderWindow(broken, RENDER_OPTS, VIEWPORT);
+    expect(drawn.ok).toBe(false);
+    expect(mustFail(drawn)).toContain('could not be drawn');
+  });
+
+  it('draws the good map through the same boundary', () => {
+    const drawn = renderWindow(sample(), RENDER_OPTS, VIEWPORT);
+    expect(drawn.ok).toBe(true);
+    expect(must(drawn).hits).toHaveLength(3);
+  });
+
+  it('hands the terminal back everything the pane switched on', () => {
+    const withMouse = terminalRestoreSequence(true);
+    expect(withMouse).toContain('\x1b[?1003l'); // any-event tracking off
+    expect(withMouse).toContain('\x1b[?1006l'); // SGR coordinates off
+    expect(withMouse).toContain('\x1b[?25h'); // cursor visible again
+    // a pane that never turned mouse reporting on must not turn it off either
+    expect(terminalRestoreSequence(false)).not.toContain('1003');
+    expect(terminalRestoreSequence(false)).toContain('\x1b[?25h');
   });
 });

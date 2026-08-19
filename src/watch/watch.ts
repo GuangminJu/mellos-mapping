@@ -31,9 +31,15 @@
  * With nothing focused it shows the map dashboard instead. Fixed height —
  * details never float over the map and the layout never jumps.
  *
- * Resilience contract: a torn or half-written file (only possible with
- * foreign writers; our own saves are atomic) must never crash the pane —
- * the last good picture stays up and the next poll retries.
+ * Resilience contract: NOTHING a file or a picture does may take the pane
+ * down. A torn or half-written file (only possible with foreign writers; our
+ * own saves are atomic) leaves the last good picture up and the next poll
+ * retries; a page that cannot be read at all, and a map the renderer refuses
+ * to draw, become a visible error line on an otherwise live pane. The
+ * terminal is handed back — mouse reporting off, cursor shown — however this
+ * process ends, including a fault nobody foresaw: a pane that dies owing the
+ * shell its mouse mode leaves the user with a terminal that reports every
+ * mouse move as garbage until they reset it by hand.
  *
  * Usage: node watch.mjs [--file <path>] [--interval <ms>] [--ascii]
  *                       [--no-color] [--no-mouse] [--page <slug>] [--no-follow]
@@ -44,7 +50,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { mapStatus } from '../domain/ops.js';
-import { type MellosMap, type NodeStatus } from '../domain/types.js';
+import { type MellosMap, type NodeStatus, type Result, err, ok } from '../domain/types.js';
 import {
   type NeighborRef,
   SPINNER_FRAMES,
@@ -56,6 +62,9 @@ import {
 } from '../semantics/semantics.js';
 import {
   type BoxHit,
+  type RenderOptions,
+  type Viewport,
+  type WindowedRender,
   type ZoomStep,
   ZOOM_DEFAULT,
   clampZoom,
@@ -72,6 +81,7 @@ import {
   PAGES_DIR_NAME,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
+  type StoreError,
   describeStoreError,
   listPageFiles,
   loadMapFile,
@@ -138,6 +148,59 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
   return { file, intervalMs, unicode, color, mouse, page, follow };
 }
 
+// ---------------------------------------------------------------------------
+// fault boundaries — the two places a live pane can be handed something it
+// cannot process: a file it cannot read, and a map it cannot draw
+// ---------------------------------------------------------------------------
+
+/** A fault the store does not model: the page file could not be read at all. */
+export interface UnreadablePage {
+  readonly kind: 'unreadable';
+  readonly path: string;
+  readonly detail: string;
+}
+
+/** Everything that can go wrong between a page file and a picture of it. */
+export type PageFault = StoreError | UnreadablePage;
+
+export function describePageFault(fault: PageFault): string {
+  return fault.kind === 'unreadable' ? `cannot read ${fault.path}: ${fault.detail}` : describeStoreError(fault);
+}
+
+/**
+ * Read a page file, turning EVERY fault into a value.
+ *
+ * loadMapFile answers the expected faults (missing file, malformed JSON,
+ * broken invariants) with a Result and rethrows the rest — a page path that
+ * is a DIRECTORY (`pages/x.json/`, EISDIR), one the user may not read
+ * (EACCES), a name the filesystem refuses. Inside the poll timer such an
+ * exception has nowhere to go: it killed the pane and left the terminal in
+ * mouse-reporting mode. A page the watcher cannot read is news to show, not
+ * a reason to stop showing anything.
+ */
+export function readPage(file: string): Result<MellosMap, PageFault> {
+  try {
+    return loadMapFile(file);
+  } catch (e) {
+    return err({ kind: 'unreadable', path: file, detail: (e as NodeJS.ErrnoException).code ?? (e as Error).message });
+  }
+}
+
+/**
+ * renderMapWindow, with a renderer fault turned into a value.
+ *
+ * The picture is pure and total for every map the store admits, but it is
+ * also the longest computation in this process; a fault in it must cost the
+ * frame, not the pane. The caller shows the message where the map would be.
+ */
+export function renderWindow(map: MellosMap, opts: RenderOptions, viewport: Viewport): Result<WindowedRender, string> {
+  try {
+    return ok(renderMapWindow(map, opts, viewport));
+  } catch (e) {
+    return err(`this map could not be drawn: ${(e as Error).message}`);
+  }
+}
+
 /**
  * The map/panel separator row: a full-width bar with the drag grip in the
  * middle and — while auto-follow is on — a right-aligned follow tag, so the
@@ -180,6 +243,16 @@ const ERASE_LINE_END = '\x1b[K';
 const MOUSE_ON = '\x1b[?1003h\x1b[?1006h';
 const MOUSE_OFF = '\x1b[?1003l\x1b[?1006l';
 const RESET = '\x1b[0m';
+
+/**
+ * The escape sequences that hand the terminal back exactly as it was found:
+ * mouse reporting off (only if this pane turned it on), cursor visible,
+ * attributes reset. Written on every exit path there is — a pane that dies
+ * without them leaves the shell reporting every mouse move as garbage.
+ */
+export function terminalRestoreSequence(mouseActive: boolean): string {
+  return (mouseActive ? MOUSE_OFF : '') + SHOW_CURSOR + RESET + '\n';
+}
 
 /** Default detail-panel height; the divider drag adjusts it at runtime. */
 const PANEL_CONTENT_ROWS = 6;
@@ -899,12 +972,20 @@ function main(): void {
   };
 
   process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ''));
-  const restore = (): void => {
-    process.stdout.write((mouseActive ? MOUSE_OFF : '') + SHOW_CURSOR + '\n');
-    process.exit(0);
-  };
-  process.on('SIGINT', restore);
-  process.on('SIGTERM', restore);
+  // ONE cleanup, on the one event every exit path passes through: signals,
+  // the q key, a timer callback that threw, a bug nobody predicted. Handlers
+  // that each restored the terminal themselves covered only the exits their
+  // author thought of, and the pane has more of them than that.
+  process.on('exit', () => process.stdout.write(terminalRestoreSequence(mouseActive)));
+  const quit = (): void => process.exit(0);
+  process.on('SIGINT', quit);
+  process.on('SIGTERM', quit);
+  process.on('uncaughtException', (e: unknown) => {
+    // Nothing here is recoverable — but the terminal is the user's, not ours,
+    // so it goes back before the report does. exit() runs the hook above.
+    process.stderr.write(`\nthe map pane stopped: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}\n`);
+    process.exit(1);
+  });
 
   const paint = (): void => {
     const cols = process.stdout.columns ?? 100;
@@ -918,25 +999,33 @@ function main(): void {
     let panned = '';
     let pannable = false;
     if (map !== undefined) {
-      const windowed = renderMapWindow(
+      const rendered = renderWindow(
         map,
         { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
         { x: offsetX, y: offsetY, width: viewW, height: viewH },
       );
-      // clamp AFTER measuring so a shrinking map pulls the view back in
-      const maxX = Math.max(0, windowed.contentWidth - viewW);
-      const maxY = Math.max(0, windowed.contentHeight - viewH);
-      if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
-        offsetX = Math.min(Math.max(0, offsetX), maxX);
-        offsetY = Math.min(Math.max(0, offsetY), maxY);
-        paint();
-        return;
+      if (!rendered.ok) {
+        // A picture this pane cannot draw is a visible line, never a dead
+        // pane: the tabs, the panel and the keys all keep working.
+        body = ['', fitWidth(`  ! ${rendered.error}`, viewW), ''];
+        lastHits = [];
+      } else {
+        const windowed = rendered.value;
+        // clamp AFTER measuring so a shrinking map pulls the view back in
+        const maxX = Math.max(0, windowed.contentWidth - viewW);
+        const maxY = Math.max(0, windowed.contentHeight - viewH);
+        if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
+          offsetX = Math.min(Math.max(0, offsetX), maxX);
+          offsetY = Math.min(Math.max(0, offsetY), maxY);
+          paint();
+          return;
+        }
+        pannable = maxX > 0 || maxY > 0;
+        body = windowed.lines;
+        lastHits = windowed.hits;
+        lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
+        if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
       }
-      pannable = maxX > 0 || maxY > 0;
-      body = windowed.lines;
-      lastHits = windowed.hits;
-      lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
-      if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
       // No map yet: waiting diagnostics, with the water animation only on a
       // real TTY — a piped run must not stream an animation.
@@ -1081,7 +1170,7 @@ function main(): void {
       }
       const entry = pageData.get(file);
       if (mtimeMs === entry?.mtimeMs) continue;
-      const loaded = loadMapFile(file);
+      const loaded = readPage(file);
       if (loaded.ok) {
         if (!firstScan) changedFiles.push(file);
         // background pages light their tab up; the startup scan is not news
@@ -1103,12 +1192,12 @@ function main(): void {
           map: entry?.map,
           mtimeMs: entry?.mtimeMs ?? -1,
           fresh: entry?.fresh ?? false,
-          error: describeStoreError(loaded.error),
+          error: describePageFault(loaded.error),
         });
-        if (file === activeFile && entry?.map === undefined) notice = describeStoreError(loaded.error);
+        if (file === activeFile && entry?.map === undefined) notice = describePageFault(loaded.error);
       } else {
-        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describeStoreError(loaded.error) });
-        if (file === activeFile) notice = describeStoreError(loaded.error);
+        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describePageFault(loaded.error) });
+        if (file === activeFile) notice = describePageFault(loaded.error);
       }
     }
     // An explicit focus request (--page, or the one-shot focus file) outranks
@@ -1159,7 +1248,7 @@ function main(): void {
       for (const event of parsed.events) {
         switch (event.kind) {
           case 'quit':
-            restore();
+            quit();
             return;
           case 'reset':
             offsetX = 0;
@@ -1192,11 +1281,16 @@ function main(): void {
               hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
             zoom = next;
-            const sized = renderMapWindow(
+            const measured = renderWindow(
               map,
               { color: false, unicode: cfg.unicode, spinnerFrame: 0, zoom },
               { x: 0, y: 0, width: 0, height: 0 },
             );
+            if (!measured.ok) {
+              dirty = true; // the new zoom stands; paint() reports why it is blank
+              break;
+            }
+            const sized = measured.value;
             const after = before === undefined ? undefined : sized.hits.find((h) => h.id === before.id);
             const moved = anchorOffsets(
               before !== undefined && after !== undefined ? { before, after } : undefined,
