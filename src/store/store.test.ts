@@ -3,9 +3,9 @@
  * invariants) and P2 (writes are atomic; round-trips are lossless).
  */
 
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -60,6 +60,14 @@ const nid = (raw: string): NodeId => raw as NodeId;
 const rnk = (n: number): Rank => n as Rank;
 const gid = (raw: string): GroupId => raw as GroupId;
 const laid = (raw: string): LaneId => raw as LaneId;
+
+/** Every .json in a page directory, or nothing when the directory is absent. */
+function pageDirFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((e) => e.endsWith('.json'))
+    .map((e) => join(dir, e));
+}
 
 function sampleMap(): MellosMap {
   let map = setTitle(EMPTY_MAP, '梅勒斯地图');
@@ -246,6 +254,82 @@ describe('boundary validation (P1)', () => {
   it('accepts a file with unknown extra fields (forward compatibility)', () => {
     const raw = { ...(JSON.parse(serializeMap(sampleMap())) as object), futureField: true };
     expect(parseMap(raw, 'x').ok).toBe(true);
+  });
+
+  it('refuses a truncated file instead of reading it as an empty map', () => {
+    // The lenient read was the dangerous one: an empty interpretation is
+    // what the NEXT save writes back, so a file that lost its "nodes" key
+    // would lose its nodes for real.
+    const e = mustFail(parseMap({ version: 1 }, 'x'));
+    expect(e).toMatchObject({ kind: 'bad-shape' });
+    expect(describeStoreError(e)).toContain('"layers" is missing, expected an array');
+  });
+
+  it('refuses a list field that is not a list, naming the key', () => {
+    for (const [key, value] of [
+      ['nodes', { a: 1 }],
+      ['edges', 'none'],
+      ['groups', { g: 1 }],
+      ['lanes', 3],
+    ] as const) {
+      const raw: Record<string, unknown> = { version: 1, layers: [], nodes: [], edges: [] };
+      raw[key] = value;
+      const e = mustFail(parseMap(raw, 'x'));
+      expect(describeStoreError(e)).toContain(`"${key}" is`);
+      expect(describeStoreError(e)).toContain('expected an array');
+    }
+  });
+
+  it('refuses a non-string where a string belongs, naming the field', () => {
+    const withNode = (patch: Record<string, unknown>): unknown => ({
+      version: 1,
+      layers: [{ id: 'base', name: 'B', rank: 0 }],
+      nodes: [{ id: 'n', label: 'N', layer: 'base', status: 'planned', ...patch }],
+      edges: [],
+    });
+    // ids were coerced with String() and optional text was dropped when it
+    // was not a string; both silently rewrote the file's meaning
+    expect(describeStoreError(mustFail(parseMap(withNode({ id: 42 }), 'x')))).toContain('nodes[0].id is a number');
+    expect(describeStoreError(mustFail(parseMap(withNode({ label: 7 }), 'x')))).toContain('nodes[0].label is a number');
+    expect(describeStoreError(mustFail(parseMap(withNode({ detail: 7 }), 'x')))).toContain('nodes[0].detail is a number');
+    expect(describeStoreError(mustFail(parseMap(withNode({ evidence: true }), 'x')))).toContain(
+      'nodes[0].evidence is a boolean',
+    );
+    expect(describeStoreError(mustFail(parseMap(withNode({ status: null }), 'x')))).toContain('nodes[0].status is null');
+    expect(
+      describeStoreError(
+        mustFail(parseMap({ version: 1, layers: [{ id: 'base', name: 9, rank: 0 }], nodes: [], edges: [] }, 'x')),
+      ),
+    ).toContain('layers[0].name is a number');
+    expect(
+      describeStoreError(mustFail(parseMap({ version: 1, title: 3, layers: [], nodes: [], edges: [] }, 'x'))),
+    ).toContain('map.title is a number');
+  });
+
+  it('reads a file a Windows editor saved with a BOM', () => {
+    const path = join(dir, 'bom.json');
+    writeFileSync(path, '﻿' + serializeMap(sampleMap()), 'utf8');
+    expect(must(loadMapFile(path))).toEqual(sampleMap());
+
+    const defaultFile = join(dir, STATE_FILE_RELATIVE_PATH);
+    mkdirSync(dirname(defaultFile), { recursive: true });
+    writeFileSync(configFilePath(defaultFile), '﻿{"version":1,"policy":"always"}', 'utf8');
+    expect(must(loadMappingPolicy(defaultFile))).toBe('always');
+  });
+
+  it("parses this repository's own map pages — the format's living fixture", () => {
+    const root = resolve(import.meta.dirname, '..', '..');
+    const candidates = [
+      join(root, STATE_FILE_RELATIVE_PATH),
+      join(root, '.claude', 'mellos-mapping.json'),
+      ...pageDirFiles(join(root, '.mellos', 'pages')),
+      ...pageDirFiles(join(root, '.claude', 'mellos-mapping.pages')),
+    ].filter((p) => existsSync(p));
+    // A checkout without a store (a published tarball) has nothing to prove.
+    for (const file of candidates) {
+      const loaded = loadMapFile(file);
+      if (!loaded.ok) throw new Error(`${file}: ${describeStoreError(loaded.error)}`);
+    }
   });
 });
 

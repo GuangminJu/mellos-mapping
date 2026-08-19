@@ -193,6 +193,17 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
+ * Drop a leading UTF-8 byte-order mark. Windows editors (Notepad, some
+ * PowerShell redirections) add one when a human edits a state file by hand,
+ * and JSON.parse refuses the result — an invisible character would otherwise
+ * read as "your map is corrupt". The BOM carries no meaning for us: the
+ * files are UTF-8 by contract.
+ */
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/**
  * The configured policy, or ok(undefined) when the project has never been
  * set up (missing file or missing key — both mean "nobody chose yet").
  * A file that exists but does not parse is an error, never silently ignored.
@@ -208,7 +219,7 @@ export function loadMappingPolicy(defaultFile: string): Result<MappingPolicy | u
   }
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = JSON.parse(stripBom(text));
   } catch (e) {
     return err({ kind: 'malformed-json', path, detail: (e as Error).message });
   }
@@ -288,7 +299,7 @@ export function loadMapFile(path: string): Result<MellosMap, StoreError> {
 
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = JSON.parse(stripBom(text));
   } catch (e) {
     // Expected at this boundary: hand-edited files, or a reader racing a
     // non-atomic writer from a foreign tool.
