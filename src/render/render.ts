@@ -91,8 +91,16 @@ export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
   return built.canvas.emit(opts);
 }
 
-/** Where a node's box sits on the full (unwindowed) picture, for hit testing. */
+/** Where a box sits on the full (unwindowed) picture, for hit testing. */
 export interface BoxHit {
+  /**
+   * The box's id — a node id, or a GROUP id on the aggregated far zoom.
+   *
+   * VIOLATION: no-primitive-obsession - raw string where NodeId exists, for
+   * the reason spelled out at focusInfo (../semantics/semantics.ts): which of
+   * the two an id names is what the consumer of a hit calls that function to
+   * find out, so this type cannot promise either.
+   */
   readonly id: string;
   readonly x: number;
   readonly y: number;

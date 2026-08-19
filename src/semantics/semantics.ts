@@ -100,10 +100,17 @@ export function isNeutralKind(map: MellosMap): boolean {
  */
 export function aggregateMap(map: MellosMap): MellosMap | undefined {
   if (map.groups.length === 0) return undefined;
-  // Group ids join the node-id slug space inside this derived value. The ids
-  // stay unique because the domain owns ONE namespace for nodes and groups
-  // (I10); the brands, which only guard PERSISTED maps, are what this cast
-  // steps around, not the uniqueness.
+  // VIOLATION: no-primitive-obsession - a GroupId is written into a NodeId
+  // slot below (`g.id as unknown as NodeId`), and the representative table is
+  // keyed by raw strings because it holds both kinds at once. The honest type
+  // would be a `BoxId = NodeId | GroupId` running through MellosMap, every op
+  // and the file format — a domain-wide change for a value that exists only
+  // between this function and a renderer. It is safe for one reason the
+  // domain guarantees rather than this cast: nodes and groups share ONE id
+  // namespace (I10), so no group id can collide with a node id here. The
+  // brands guard PERSISTED maps; this map is never persisted (see the doc
+  // comment above). Follow-up: introduce BoxId with the next format version,
+  // when the file format has to move anyway.
   const representative = new Map<string, string>();
   for (const n of map.nodes) representative.set(n.id as string, (n.group ?? n.id) as string);
 
@@ -187,6 +194,17 @@ export interface GroupFocus {
  * @param map - the map the focus lives in.
  * @param focusId - node or group id.
  * @returns the focus view, or undefined when the id names neither.
+ *
+ * VIOLATION: no-primitive-obsession - `focusId` is a raw string, not a brand.
+ * It has to be: the caller is a hit test over the picture, and at the far
+ * zoom that picture is the AGGREGATED map, whose boxes are groups. So the id
+ * arriving here is a NodeId or a GroupId and the caller cannot know which —
+ * deciding that is this function's whole job. `NodeId | GroupId` would type
+ * it, but every hit-test path (BoxHit.id, RenderOptions.focus, the pane's
+ * hover/selection state) would then have to carry that union and cast into it
+ * at the same boundary, moving the cast rather than removing it. The value is
+ * validated the only way it can be: an id that names neither answers
+ * undefined.
  */
 export function focusInfo(map: MellosMap, focusId: string): NodeFocus | GroupFocus | undefined {
   const layerNameOf = (layerId: string): string =>
@@ -258,6 +276,18 @@ export function focusInfo(map: MellosMap, focusId: string): NodeFocus | GroupFoc
 // ---------------------------------------------------------------------------
 // page-set semantics — which pages are siblings, and where a dive came from
 // ---------------------------------------------------------------------------
+//
+// VIOLATION: no-primitive-obsession - page slugs cross this section as raw
+// strings (submapRefs, interiorPages, diveParent), never as a brand. This is
+// exactly where the system's TWO brands over one grammar have to meet: a
+// node's `submap` is a SubmapRef (Layer 0, a reference a map declares) and a
+// page identity is a PageId (Layer 1a, what the store calls a file). Typing
+// these parameters as either brand would force every caller on the other side
+// to cast into it — moving the cast, not removing it — and unifying the two
+// would make Layer 0 name a persistence concept. What these functions do with
+// a slug is compare it; none parses or resolves one, and both brands are
+// validated against the same rule where they enter the system (the tool
+// schema and the file format).
 
 /**
  * Page slugs some node of any map dives into — the raw fact only, WITHOUT
@@ -367,6 +397,16 @@ export function diveParent<K>(
  * @param keys - candidate page keys in the caller's fallback order.
  * @param mtimeOf - last-written timestamp of a key, undefined when unknown.
  * @returns the winning key, or undefined for an empty candidate set.
+ *
+ * VIOLATION: prefer-objects - `mtimeOf` is a function parameter, which this
+ * layer otherwise avoids. It is what keeps the rule medium-neutral: the two
+ * callers ask different worlds for the same fact — the pane stats a file, the
+ * browser panel reads an mtime the host already sent over the wire — and
+ * neither timestamp source can be named here without dragging a filesystem or
+ * a transport into a module that must stay free of both. The alternative,
+ * taking `readonly [K, number | undefined][]`, only moves the same lookup to
+ * the caller and makes it allocate a pair per page per tick. The parameter is
+ * a pure query, called once per key, never stored.
  */
 export function mostRecentKey<K>(keys: readonly K[], mtimeOf: (key: K) => number | undefined): K | undefined {
   let best: K | undefined;
@@ -394,9 +434,15 @@ export function flipForSequence(map: MellosMap): MellosMap {
   if (map.kind !== 'sequence') return map;
   return {
     ...map,
-    // Mirrored ranks leave the Rank range on purpose (0..99 becomes -99..0):
-    // the brand guards PERSISTED maps, and this one only ever reaches a
-    // renderer, which reads ranks as an order and never as a stored value.
+    // VIOLATION: state-explicit-in-types - `-l.rank as Rank` produces a value
+    // the Rank brand promises cannot exist: mirroring 0..99 gives -99..0, and
+    // makeRank would refuse every one of them. The alternative is a second
+    // ordered-position type (an unbranded `order` field) threaded through the
+    // renderer's whole layout stage purely so this one derived map can be
+    // typed — a large change to express "these ranks are an order, not a
+    // stored value". What makes it safe is the same thing that makes it
+    // wrong: this map only ever reaches a renderer, which compares ranks and
+    // never writes them (same contract as aggregateMap).
     layers: map.layers.map((l) => ({ ...l, rank: -l.rank as Rank })),
     edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...(e.label !== undefined ? { label: e.label } : {}) })),
   };

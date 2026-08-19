@@ -134,7 +134,7 @@ interface WatchConfig {
 
 export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
   let file = join(cwd, STATE_FILE_RELATIVE_PATH);
-  let intervalMs = 250;
+  let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
   let color = true;
   let mouse = true;
@@ -151,7 +151,7 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
         break;
       }
       case '--interval':
-        intervalMs = Math.max(50, Number(argv[++i]) || intervalMs);
+        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, Number(argv[++i]) || intervalMs);
         break;
       case '--ascii':
         unicode = false;
@@ -256,6 +256,62 @@ const PANEL_CONTENT_ROWS = 6;
 export const PANEL_ROWS_MIN = 2;
 /** The map keeps at least this many body rows however far the divider is pulled. */
 const MAP_ROWS_MIN = 4;
+
+// ---------------------------------------------------------------------------
+// the pane's clock and its fallbacks — every number a reader would ask about
+// ---------------------------------------------------------------------------
+
+/**
+ * How often the store is polled, in ms. A quarter second reads as
+ * "immediately" beside a conversation, and a stat per page at that rate costs
+ * nothing.
+ */
+const POLL_INTERVAL_DEFAULT_MS = 250;
+/**
+ * Floor for `--interval`. Below this the poll costs more than the picture is
+ * worth, and a hand-typed `--interval 0` would spin a core.
+ */
+const POLL_INTERVAL_MIN_MS = 50;
+
+/**
+ * How often the standby screen repaints while no map exists (~12fps). The
+ * water animation is the only moving thing there, and it is decoration.
+ */
+const SPLASH_FRAME_MS = 80;
+
+/**
+ * How long a footer message stays up, in three tiers by how much the reader
+ * has to do about it: a state change they just caused is an acknowledgement;
+ * a state change with a consequence, or a request that could not be served,
+ * needs a beat longer; news from a page they cannot see has to survive a
+ * glance elsewhere.
+ */
+const FLASH_ACK_MS = 2500;
+const FLASH_NOTICE_MS = 3000;
+const FLASH_BACKGROUND_NEWS_MS = 4000;
+
+/**
+ * Two clicks on one node within this window are a double-click (dive). Just
+ * under the ~500ms platform default, because the second click must also land
+ * on the same box, which already rules out most accidents.
+ */
+const DOUBLE_CLICK_MS = 450;
+
+/**
+ * Terminal size to assume when stdout reports none — a pipe, a CI log, a
+ * terminal that answers late. Roughly a classic 100x30 window: wide enough
+ * that the picture is not shredded, small enough that a real terminal will
+ * not clip it later.
+ */
+const FALLBACK_COLUMNS = 100;
+const FALLBACK_ROWS = 30;
+
+/**
+ * What a tab or a breadcrumb calls the DEFAULT page when its map carries no
+ * title. The default page has no slug to fall back on — it is the one page a
+ * node's `submap` cannot name — so it needs a word of its own.
+ */
+const DEFAULT_PAGE_TAB_LABEL = 'main';
 
 /**
  * Usable frame width: one column narrower than the terminal. A glyph written
@@ -822,6 +878,30 @@ export function mapPanel(
   return lines.slice(0, rows);
 }
 
+/**
+ * VIOLATION: single-responsibility, state-control - main() is one ~600-line
+ * closure holding the pane's whole VIEW state (pan, zoom, pin, hover, drag
+ * anchors, panel height, flash, tab scroll, last click) as mutable locals,
+ * with paint() reading all of them and writing to stdout.
+ *
+ * Half of what used to live here is already out: WHICH page is shown and what
+ * is known about the others is a fold over a value (./pane-state.ts), input
+ * is a pure parse (./input.ts), and the picture is pure (../render/). What is
+ * left is genuinely the shell — stdin, stdout, timers, the filesystem — plus
+ * the view, and the view is the half that has not moved yet.
+ *
+ * Why it stays for now: every remaining local is read by paint(), so
+ * extracting them means designing the view VALUE (one per page, parked on
+ * switch, clamped on resize) and a reducer over the same InputEvent stream
+ * pane-state already folds — a change the size of the page-set extraction,
+ * with every interaction of the pane as its blast radius. Landing both in one
+ * pass would have left neither reviewable.
+ *
+ * Follow-up: a PaneView value + reducer beside PaneState, leaving main() with
+ * the I/O and the two folds. Until then this function is specified from the
+ * outside: every pure helper it calls has its own spec, and watch.test.ts
+ * covers the panel, the tab strip, the divider and the standby screen.
+ */
 function main(): void {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
   // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
@@ -897,9 +977,9 @@ function main(): void {
     }
     return false;
   };
-  const viewWidth = (): number => usableColumns(process.stdout.columns ?? 100);
+  const viewWidth = (): number => usableColumns(process.stdout.columns ?? FALLBACK_COLUMNS);
   const viewHeight = (): number =>
-    Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
+    Math.max(1, (process.stdout.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
   /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
   const dividerY = (): number => tabRows() + viewHeight() + 1;
 
@@ -909,7 +989,7 @@ function main(): void {
       const entry = entryOf(pane, f);
       const m = mapOf(entry);
       return {
-        title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
+        title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL),
         status: m !== undefined ? mapStatus(m) : 'planned',
         active: f === pane.activeFile,
         fresh: entry?.fresh ?? false,
@@ -970,7 +1050,7 @@ function main(): void {
     const switched = userSwitch(pane, file);
     pane = switched.state;
     if (switched.followTurnedOff) {
-      flash = { text: 'auto-follow off — press f to re-enable', until: Date.now() + 3000 };
+      flash = { text: 'auto-follow off — press f to re-enable', until: Date.now() + FLASH_NOTICE_MS };
     }
     adoptView(previous);
     adoptPage();
@@ -1004,10 +1084,10 @@ function main(): void {
   });
 
   const paint = (): void => {
-    const cols = process.stdout.columns ?? 100;
+    const cols = process.stdout.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
     // a shrunken terminal may no longer afford the dragged panel height
-    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
+    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
 
@@ -1099,8 +1179,8 @@ function main(): void {
       const parentTitle =
         parentFile !== undefined
           ? (mapOf(entryOf(pane, parentFile))?.title ??
-            ((pageIdOfFile(cfg.file, parentFile) as string | undefined) ?? 'main'))
-          : 'main';
+            ((pageIdOfFile(cfg.file, parentFile) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL))
+          : DEFAULT_PAGE_TAB_LABEL;
       const nodeLabel = origin?.label ?? map?.title ?? '';
       const crumbHead = ` ${cfg.unicode ? '⌫' : '<'} ${parentTitle} ${cfg.unicode ? '▸' : '>'} `;
       const head: TabSegment = { text: crumbHead, sgr: '90', lo: 1, hi: displayWidth(crumbHead), action: { kind: 'back' } };
@@ -1200,7 +1280,7 @@ function main(): void {
     for (const file of scanned.freshened) {
       if (top.includes(file)) continue;
       const title = mapOf(entryOf(pane, file))?.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? '?');
-      flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + 4000 };
+      flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + FLASH_BACKGROUND_NEWS_MS };
     }
 
     // any page spinning keeps the animation alive
@@ -1293,7 +1373,7 @@ function main(): void {
             break;
           case 'mouse-drag':
             if (dividerDrag) {
-              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? 30, tabRows());
+              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
                 dirty = true;
@@ -1338,16 +1418,25 @@ function main(): void {
                 // double-click — dive into its sub-map when it links one.
                 const id = hitTest(event.x, event.y);
                 const now = Date.now();
-                if (id !== undefined && lastClick?.id === id && now - lastClick.at <= 450) {
+                if (id !== undefined && lastClick?.id === id && now - lastClick.at <= DOUBLE_CLICK_MS) {
                   const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
                   if (submap !== undefined && pane.activeFile !== undefined) {
+                    // VIOLATION: no-primitive-obsession - SubmapRef and PageId
+                    // are two brands over ONE grammar (ID_RULE), and this is
+                    // the seam where a map's reference becomes a store
+                    // identity. Neither layer may own the other's brand —
+                    // Layer 0 would then name a persistence concept, and the
+                    // store would name a map field — so the crossing is a
+                    // cast wherever it happens; here it is one line, checked
+                    // against the real page set on the very next statement (a
+                    // slug naming no file only flashes a notice).
                     const target = pageFilePath(cfg.file, submap as unknown as PageId);
                     const files = filesOf(pane);
                     if (files.includes(target) && target !== pane.activeFile) {
                       pane = pushDive(pane, pane.activeFile);
                       handSwitch(target);
                     } else if (!files.includes(target)) {
-                      flash = { text: `submap "${submap as string}" has no page yet`, until: now + 2500 };
+                      flash = { text: `submap "${submap as string}" has no page yet`, until: now + FLASH_ACK_MS };
                     }
                   }
                   lastClick = undefined;
@@ -1389,7 +1478,7 @@ function main(): void {
             break;
           case 'follow-toggle':
             pane = toggleFollow(pane);
-            flash = { text: pane.follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + 2500 };
+            flash = { text: pane.follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + FLASH_ACK_MS };
             dirty = true;
             break;
         }
@@ -1408,7 +1497,7 @@ function main(): void {
       if (map !== undefined) return;
       splashTick++;
       paint();
-    }, 80);
+    }, SPLASH_FRAME_MS);
   }
 }
 

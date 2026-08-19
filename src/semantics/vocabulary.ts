@@ -105,7 +105,17 @@ export const NODE_KIND_GLYPHS: Readonly<Record<string, readonly [string, string]
   ui: ['▣', 'U'],
 };
 
-/** Glyph for a node kind, or undefined for the open vocabulary's unknown kinds. */
+/**
+ * Glyph for a node kind, or undefined for the open vocabulary's unknown kinds.
+ *
+ * VIOLATION: no-primitive-obsession - `kind` is a raw string where NodeKind
+ * exists. NodeKind is an OPEN vocabulary by design (the domain accepts any
+ * slug; this table knows thirteen of them), so the brand carries no
+ * information this function could use — it answers undefined for anything it
+ * does not know, branded or not. Requiring NodeKind would only force every
+ * caller reading `node.kind` to unwrap and re-wrap it, and would not let a
+ * single wrong call through any less.
+ */
 export function kindGlyph(kind: string, unicode: boolean): string | undefined {
   const pair = NODE_KIND_GLYPHS[kind];
   return pair === undefined ? undefined : unicode ? pair[0] : pair[1];

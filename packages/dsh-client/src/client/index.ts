@@ -75,6 +75,17 @@ export async function apply(ctx: ClientContext): Promise<(() => Promise<void>) |
   // live in a child scope declaring `remote.mmap`, so they tear down with the
   // face and cordis's access discipline stays intact.
   ctx.inject(['remote.mmap'], (scoped: ClientContext) => {
+    // VIOLATION: no-exceptions-for-control-flow - the Remote answers a
+    // failed read as a Result ({ok: false}), and this turns it into a throw.
+    // The framework's contract is the reason: `read` is handed to the panel
+    // as a React 19 resource, consumed with `use()`, and that API has exactly
+    // two outcomes — a resolved value, or a rejection routed to the nearest
+    // error boundary. A component cannot `use()` a Result: it would have to
+    // branch on it inside render, which is the branch the boundary exists to
+    // own. Returning the Result and letting MmapView unwrap it would move the
+    // failure path out of the boundary and into the render body, so the
+    // conversion happens here, at the one seam where the two disciplines
+    // meet, and the message keeps the Result's code and text.
     const readFor = (sessionId: SessionId) => async () => {
       const result = await scoped.remote.mmap.read(sessionId)
       if (!result.ok) {

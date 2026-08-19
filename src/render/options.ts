@@ -18,8 +18,15 @@ export interface RenderOptions {
   /** Spinner frame index for in-progress nodes; caller advances it over time. */
   readonly spinnerFrame: number;
   /**
-   * Node id to spotlight: its box border and every wire touching it render
+   * Id of the BOX to spotlight: its border and every wire touching it render
    * bright instead of faint. Color mode only — monochrome output ignores it.
+   *
+   * VIOLATION: no-primitive-obsession - a raw string where NodeId exists,
+   * because at the far zoom the boxes are aggregated GROUPS, so this is a
+   * NodeId or a GroupId and the caller (a hit test) cannot know which. See
+   * focusInfo in ../semantics/semantics.ts, which resolves the same value and
+   * carries the full reasoning; typing it here as a union would only move the
+   * cast to whichever side of the hit test names it first.
    */
   readonly focus?: string | undefined;
   /** Position on the zoom ladder; omitted means ZOOM_DEFAULT (100%). */
