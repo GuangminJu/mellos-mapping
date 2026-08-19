@@ -9,11 +9,27 @@
  *
  *   P2. Writes are atomic: a reader polling the file either sees the previous
  *       complete map or the new complete map, never a torn write. Achieved by
- *       writing a sibling temp file and renaming it over the target.
+ *       writing a PRIVATE sibling temp file and renaming it over the target.
  *
- * Expected failures (missing file, malformed JSON, invariant violations) are
- * Result values. Only truly unexpected I/O faults (permissions, disk) are
- * allowed to propagate as exceptions.
+ * The concurrency model P2 buys, stated plainly:
+ *   - Several writers may target one project at once. Each save is atomic and
+ *     lands whole, so a reader never sees half a map — but there is NO
+ *     lost-update protection: two saves of the same page race, and the last
+ *     rename wins, silently discarding what the other writer computed from an
+ *     older read. Pages are the isolation unit (one effort = one page); two
+ *     sessions that must not clobber each other belong on two pages.
+ *   - The temp file carries the writer's pid and a random suffix, so
+ *     concurrent writers never share one and never install each other's
+ *     half-written content.
+ *   - A rename can transiently fail while a reader holds the target open
+ *     (EPERM/EBUSY on Windows), so it is retried with a short backoff before
+ *     the save is reported as failed.
+ *
+ * Expected failures (missing file, malformed JSON, invariant violations, a
+ * write that would not land) are Result values. A failed save changed
+ * nothing: the previous file content is intact and the caller may retry.
+ * Only truly unexpected I/O faults on the READ path are allowed to propagate
+ * as exceptions.
  *
  * Node consumers import everything from here; the format surface is
  * re-exported so persistence has one import site per runtime.
@@ -34,6 +50,91 @@ export {
   parseMap,
   serializeMap,
 } from './format.js';
+
+// ---------------------------------------------------------------------------
+// atomic writes — the one primitive every save in this module is built on
+// ---------------------------------------------------------------------------
+
+/**
+ * How many times a rename is attempted before the save is reported failed.
+ * A reader's open handle blocks a rename on Windows for as long as it holds
+ * the file; the watcher reads a page in well under a tick, so a handful of
+ * attempts spans far more than any legitimate reader needs.
+ */
+const RENAME_MAX_ATTEMPTS = 10;
+
+/** Backoff granularity: attempt N waits N * this, so ten attempts span ~450ms. */
+const RENAME_BACKOFF_STEP_MS = 10;
+
+/**
+ * errno codes a rename can raise while the target is momentarily unavailable
+ * — a reader holding it open (EPERM/EBUSY/EACCES on Windows) or an
+ * antivirus/indexer briefly owning it (ENOENT between its own operations).
+ * Anything else (ENOSPC, EROFS, ENOTDIR) is a real fault: retrying it only
+ * delays the report.
+ */
+const TRANSIENT_RENAME_CODES: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOENT']);
+
+/**
+ * Block this thread for `ms`. The save path is synchronous by contract (the
+ * MCP tool answers after the file is on disk), so the backoff must be too.
+ */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** The failed write's leftover temp, removed on a best-effort basis. */
+function discardTemp(tmp: string): void {
+  try {
+    rmSync(tmp, { force: true });
+  } catch {
+    // The temp is unreachable for the same reason the write failed; leaving
+    // a stray *.tmp is strictly better than masking the original refusal.
+  }
+}
+
+function errnoOf(e: unknown): string {
+  return (e as NodeJS.ErrnoException).code ?? (e as Error).message;
+}
+
+/**
+ * Write `contents` to `path` atomically (P2).
+ *
+ * Preconditions: none — the parent directory is created if missing.
+ * Postcondition on ok: `path` holds exactly `contents` and no temp file
+ * remains. Postcondition on error: `path` is untouched (it keeps its
+ * previous content, or stays absent) and no temp file remains.
+ *
+ * The temp name is private to this call — `<path>.<pid>.<random>.tmp` — so
+ * two writers racing on one page cannot install each other's partial content
+ * or make each other's rename miss its file.
+ */
+function writeFileAtomic(path: string, contents: string): Result<void, StoreError> {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, contents, 'utf8');
+  } catch (e) {
+    discardTemp(tmp);
+    return err({ kind: 'save-failed', path, detail: `writing the temp file failed: ${errnoOf(e)}` });
+  }
+
+  let attempt = 1;
+  for (;;) {
+    try {
+      renameSync(tmp, path);
+      return ok(undefined);
+    } catch (e) {
+      const code = errnoOf(e);
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+        discardTemp(tmp);
+        return err({ kind: 'save-failed', path, detail: `${code} after ${attempt} attempt(s)` });
+      }
+      sleepSync(attempt * RENAME_BACKOFF_STEP_MS);
+      attempt += 1;
+    }
+  }
+}
 
 /**
  * Project-relative location of the DEFAULT page's state file. The store lives
@@ -236,13 +337,14 @@ export function loadMappingPolicy(defaultFile: string): Result<MappingPolicy | u
     : err({ kind: 'bad-shape', path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(' | ')}` });
 }
 
-/** Persist the policy atomically (P2), same temp-and-rename as the map files. */
-export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): void {
-  const path = configFilePath(defaultFile);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + '.tmp';
-  writeFileSync(tmp, JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + '\n', 'utf8');
-  renameSync(tmp, path);
+/**
+ * Persist the policy atomically (P2), same write as the map files.
+ * @returns ok when the file holds the policy; save-failed leaves the previous
+ *   configuration in place.
+ */
+export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): Result<void, StoreError> {
+  const body = JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + '\n';
+  return writeFileAtomic(configFilePath(defaultFile), body);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,13 +412,12 @@ export function loadMapFile(path: string): Result<MellosMap, StoreError> {
 }
 
 /**
- * Write the map to `path` atomically (P2): serialize to `<path>.tmp` in the
- * same directory, then rename over the target. Creates the parent directory
- * if missing.
+ * Write the map to `path` atomically (P2): serialize to a private sibling
+ * temp file, then rename it over the target, retrying a rename the OS
+ * refuses transiently. Creates the parent directory if missing.
+ * @returns ok when the file holds the new map; save-failed when it does not,
+ *   in which case the previous content is intact and the call may be retried.
  */
-export function saveMapFile(path: string, map: MellosMap): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + '.tmp';
-  writeFileSync(tmp, serializeMap(map), 'utf8');
-  renameSync(tmp, path);
+export function saveMapFile(path: string, map: MellosMap): Result<void, StoreError> {
+  return writeFileAtomic(path, serializeMap(map));
 }

@@ -57,7 +57,9 @@ export type StoreError =
   | { readonly kind: 'not-found'; readonly path: string }
   | { readonly kind: 'malformed-json'; readonly path: string; readonly detail: string }
   | { readonly kind: 'bad-shape'; readonly path: string; readonly detail: string }
-  | { readonly kind: 'invariant-violation'; readonly path: string; readonly violation: MapError };
+  | { readonly kind: 'invariant-violation'; readonly path: string; readonly violation: MapError }
+  /** A write that did not land. The file still holds its previous content. */
+  | { readonly kind: 'save-failed'; readonly path: string; readonly detail: string };
 
 export function describeStoreError(e: StoreError): string {
   switch (e.kind) {
@@ -69,6 +71,8 @@ export function describeStoreError(e: StoreError): string {
       return `map file ${e.path} has an unexpected shape: ${e.detail}`;
     case 'invariant-violation':
       return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
+    case 'save-failed':
+      return `could not write ${e.path}: ${e.detail}`;
   }
 }
 

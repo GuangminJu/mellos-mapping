@@ -465,6 +465,17 @@ describe('atomicity (P2)', () => {
     expect(after).not.toBe(before);
     expect(readdirSync(dir)).toEqual(['map.json']);
   });
+
+  it('reports a write that cannot land as a Result, never as an exception', () => {
+    // A file where the store expects a directory: the tool must answer
+    // "save failed, retry", not throw an errno out of the MCP call.
+    const blocker = join(dir, 'blocker');
+    writeFileSync(blocker, 'not a directory', 'utf8');
+    const e = mustFail(saveMapFile(join(blocker, 'map.json'), sampleMap()));
+    expect(e.kind).toBe('save-failed');
+    expect(describeStoreError(e)).toContain('blocker');
+    expect(readFileSync(blocker, 'utf8')).toBe('not a directory');
+  });
 });
 
 describe('legacy store migration (.claude -> .mellos)', () => {

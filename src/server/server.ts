@@ -119,7 +119,8 @@ export function buildServer(stateFile: string): McpServer {
     if (!current.ok) return text(current.error, true);
     const applied = apply(current.value);
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
-    saveMapFile(file, applied.value);
+    const saved = saveMapFile(file, applied.value);
+    if (!saved.ok) return text(`save failed, nothing changed (retry): ${describeStoreError(saved.error)}`, true);
     return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
@@ -314,7 +315,8 @@ export function buildServer(stateFile: string): McpServer {
       if (input.policy !== undefined) {
         // zod enforced the enum; the cast at this boundary cannot widen it
         const policy = input.policy as MappingPolicy;
-        saveMappingPolicy(stateFile, policy);
+        const saved = saveMappingPolicy(stateFile, policy);
+        if (!saved.ok) return text(`save failed, nothing changed (retry): ${describeStoreError(saved.error)}`, true);
         return text(`mapping policy set: ${policy} — ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
       }
       const loaded = loadMappingPolicy(stateFile);
