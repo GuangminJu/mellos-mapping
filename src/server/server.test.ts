@@ -201,6 +201,16 @@ describe('revising a live map over the wire', () => {
     expect(onDisk()).not.toHaveProperty('title');
   });
 
+  it('refuses a node that dives into the page the call targets', async () => {
+    const refused = await callText('mmap_declare', {
+      page: 'alpha',
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', submap: 'alpha' }],
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('own page');
+  });
+
   it('refuses a revision that revises nothing', async () => {
     await callText('mmap_declare', GHOST);
     const empty = await callText('mmap_update', {});

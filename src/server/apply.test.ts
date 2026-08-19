@@ -334,6 +334,39 @@ describe('applyUpdate — revising what the ghost design got wrong', () => {
   });
 });
 
+describe('sub-map links', () => {
+  const base = { layers: [{ id: 'base', name: 'Base', rank: 0 }] };
+
+  it('refuses a node that dives into its own page — a page is not its own child', () => {
+    const refused = applyDeclare(EMPTY_MAP, {
+      page: 'alpha',
+      ...base,
+      nodes: [{ id: 'n', label: 'N', layer: 'base', submap: 'alpha' }],
+    });
+    expect(mustFail(refused)).toContain('nodes[0]');
+    expect(mustFail(refused)).toContain('own page');
+
+    const linked = must(
+      applyDeclare(EMPTY_MAP, {
+        page: 'alpha',
+        ...base,
+        nodes: [{ id: 'n', label: 'N', layer: 'base', submap: 'beta' }],
+      }),
+    );
+    expect(linked.nodes[0]?.submap).toBe('beta');
+    expect(mustFail(applyUpdate(linked, { page: 'alpha', updates: [{ id: 'n', submap: 'alpha' }] }))).toContain(
+      'own page',
+    );
+  });
+
+  it('lets the default page link anything, having no slug a node could name', () => {
+    const map = must(
+      applyDeclare(EMPTY_MAP, { ...base, nodes: [{ id: 'n', label: 'N', layer: 'base', submap: 'alpha' }] }),
+    );
+    expect(map.nodes[0]?.submap).toBe('alpha');
+  });
+});
+
 describe('the map title lives on declare', () => {
   it('replaces the title, and removes it with null', () => {
     const retitled = must(applyDeclare(ghostMap(), { title: '新标题' }));

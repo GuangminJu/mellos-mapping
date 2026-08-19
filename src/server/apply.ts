@@ -53,9 +53,24 @@ import {
   ok,
 } from '../domain/types.js';
 
+/**
+ * A node may not dive into the page it lives on. Pages are the one structure
+ * outside Layer 0 (the domain has no notion of a page at all), so the rule
+ * lands here, on the batch's own `page` field: a submap is a CHILD map, and
+ * a page that is its own child is a loop with no bottom — the page-level
+ * form of the self-edge linkNodes already refuses.
+ */
+function refuseSelfDive(where: string, submap: string, page: string | undefined): string | undefined {
+  return submap === page
+    ? `${where}: a node cannot dive into its own page ("${submap}"); a submap links a CHILD page`
+    : undefined;
+}
+
 // The `| undefined` on every optional field keeps these assignable from
 // zod-inferred tool inputs under exactOptionalPropertyTypes.
 export interface DeclareInput {
+  /** The page this batch targets (undefined = the default page); see refuseSelfDive. */
+  readonly page?: string | undefined;
   /** Text sets the title; null removes it (the map keeps everything else). */
   readonly title?: string | null | undefined;
   /** Diagram kind (dev | architecture | dataflow | behavior-tree | sequence). */
@@ -91,6 +106,8 @@ export interface DeclareInput {
  * had happened.
  */
 export interface UpdateInput {
+  /** The page this batch targets (undefined = the default page); see refuseSelfDive. */
+  readonly page?: string | undefined;
   readonly updates?:
     | ReadonlyArray<{
         readonly id: string;
@@ -202,6 +219,8 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
     if (n.submap !== undefined) {
       const parsed = makeSubmapRef(n.submap);
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      const selfDive = refuseSelfDive(`nodes[${i}]`, n.submap, input.page);
+      if (selfDive !== undefined) return err(selfDive);
       submap = parsed.value;
     }
     const declared = declareNode(next, {
@@ -333,6 +352,8 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
     else if (u.submap !== undefined) {
       const parsed = makeSubmapRef(u.submap);
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      const selfDive = refuseSelfDive(`updates[${i}]`, u.submap, input.page);
+      if (selfDive !== undefined) return err(selfDive);
       submap = parsed.value;
     }
     const updated = updateNode(next, {
