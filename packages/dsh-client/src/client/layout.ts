@@ -18,8 +18,15 @@
  */
 
 import type { MapNode, MellosMap } from 'mellos-mapping/domain/types'
-import { type ZoomStep, aggregateMap, flipForSequence, isNeutralKind, zoomMode } from 'mellos-mapping/semantics'
-import { kindGlyph } from 'mellos-mapping/render'
+import {
+  type ZoomStep,
+  aggregateMap,
+  flipForSequence,
+  isNeutralKind,
+  kindGlyph,
+  statusGlyph,
+  zoomMode,
+} from 'mellos-mapping/semantics'
 
 /** Pixel geometry constants at the view's base font size. */
 const LINE_H = 17
@@ -226,18 +233,15 @@ export function wrapChars(text: string, budget: number): string[] {
   return out
 }
 
-/** Status glyphs of the terminal pane's glyphFor, the spinner held at ◐. */
-const STATUS_GLYPHS: Readonly<Record<string, string>> = {
-  'planned': '·', 'in-progress': '◐', 'done': '■', 'regressed': '✗',
-}
-
 /** The text lines one node box carries at this zoom step. */
 function boxLines(node: MapNode, zoom: ZoomStep, neutral: boolean): BoxLine[] {
   // Dev pages give the glyph slot to the status; documentation kinds keep
   // their kind glyph — the status skin means nothing there.
+  // The glyph table is the library's (mellos-mapping/semantics), so this view
+  // and the terminal pane can never show one status as two different things.
   const glyph = neutral
     ? (node.kind !== undefined ? kindGlyph(node.kind as string, true) : undefined)
-    : STATUS_GLYPHS[node.status]
+    : statusGlyph(node.status, true)
   const label = glyph !== undefined ? `${glyph} ${node.label}` : node.label
   const lines: BoxLine[] = [{ text: label, role: 'label' }]
   if (zoomMode(zoom) !== 'detail') return lines

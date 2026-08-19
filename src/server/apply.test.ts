@@ -118,6 +118,14 @@ describe('applyDeclare', () => {
     );
   });
 
+  it('rejects a rank outside the band range at the boundary', () => {
+    for (const rank of [1.5, -1, 100, Number.NaN]) {
+      expect(mustFail(applyDeclare(EMPTY_MAP, { layers: [{ id: 'base', name: 'x', rank }] }))).toContain(
+        'invalid rank',
+      );
+    }
+  });
+
   it('grows an existing map without touching what is already there', () => {
     const grown = must(
       applyDeclare(ghostMap(), {

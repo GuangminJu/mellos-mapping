@@ -26,7 +26,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { EMPTY_MAP, type MellosMap, type Result } from '../domain/types.js';
+import { EMPTY_MAP, type MellosMap, RANK_MAX, RANK_MIN, type Result } from '../domain/types.js';
 import { ZOOM_MAX, ZOOM_MIN, clampZoom, renderMap } from '../render/render.js';
 import {
   MAPPING_POLICIES,
@@ -119,7 +119,8 @@ export function buildServer(stateFile: string): McpServer {
     if (!current.ok) return text(current.error, true);
     const applied = apply(current.value);
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
-    saveMapFile(file, applied.value);
+    const saved = saveMapFile(file, applied.value);
+    if (!saved.ok) return text(`save failed, nothing changed (retry): ${describeStoreError(saved.error)}`, true);
     return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
@@ -170,7 +171,15 @@ export function buildServer(stateFile: string): McpServer {
             z.object({
               id: ID,
               name: z.string().min(1).max(60).describe('display name of the band'),
-              rank: z.number().int().min(0).max(99).describe('0 = bottom / most primitive; must be unique'),
+              // Range and integrality come from the domain (makeRank), which
+              // refuses anything this schema lets through anyway; the schema
+              // only lets the client see the rule before it calls.
+              rank: z
+                .number()
+                .int()
+                .min(RANK_MIN)
+                .max(RANK_MAX)
+                .describe(`${RANK_MIN} = bottom / most primitive, up to ${RANK_MAX}; must be unique`),
             }),
           )
           .optional(),
@@ -306,7 +315,8 @@ export function buildServer(stateFile: string): McpServer {
       if (input.policy !== undefined) {
         // zod enforced the enum; the cast at this boundary cannot widen it
         const policy = input.policy as MappingPolicy;
-        saveMappingPolicy(stateFile, policy);
+        const saved = saveMappingPolicy(stateFile, policy);
+        if (!saved.ok) return text(`save failed, nothing changed (retry): ${describeStoreError(saved.error)}`, true);
         return text(`mapping policy set: ${policy} — ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
       }
       const loaded = loadMappingPolicy(stateFile);

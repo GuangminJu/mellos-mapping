@@ -49,11 +49,33 @@
  */
 
 import type { MapNode, MellosMap, NodeStatus } from '../domain/types.js';
-import { type ZoomStep, ZOOM_DEFAULT, aggregateMap, flipForSequence, isNeutralKind, zoomMode } from '../semantics/semantics.js';
+import {
+  type ZoomStep,
+  ZOOM_DEFAULT,
+  aggregateMap,
+  flipForSequence,
+  isNeutralKind,
+  kindGlyph,
+  spinnerGlyph,
+  statusGlyph,
+  zoomMode,
+} from '../semantics/semantics.js';
 
-// The view-semantics vocabulary (zoom ladder, neutral-kind rule) is defined in
-// ../semantics and re-exported here so terminal consumers keep one import site.
-export { type ZoomStep, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, clampZoom, isNeutralKind, zoomLabel } from '../semantics/semantics.js';
+// The medium-neutral vocabulary (zoom ladder, neutral-kind rule, status and
+// node-kind glyphs) is defined in ../semantics and re-exported here so
+// terminal consumers keep one import site.
+export {
+  type ZoomStep,
+  ZOOM_DEFAULT,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  clampZoom,
+  isNeutralKind,
+  kindGlyph,
+  spinnerGlyph,
+  statusGlyph,
+  zoomLabel,
+} from '../semantics/semantics.js';
 
 export interface RenderOptions {
   /** Emit ANSI color codes. */
@@ -356,11 +378,11 @@ function drawPath(canvas: Canvas, points: ReadonlyArray<readonly [number, number
 }
 
 // ---------------------------------------------------------------------------
-// status vocabulary -> visual vocabulary
+// status vocabulary -> terminal skins
 // ---------------------------------------------------------------------------
-
-const SPINNER_UNICODE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
-const SPINNER_ASCII = ['|', '/', '-', '\\'] as const;
+//
+// The GLYPHS are the map's shared alphabet and live in ../semantics; only
+// what this medium owns — border repertoire and SGR color — is decided here.
 
 interface BoxSkin {
   readonly h: string;
@@ -369,9 +391,22 @@ interface BoxSkin {
   readonly style: Style;
 }
 
+/** The color role a status wears in a terminal. */
+function styleFor(status: NodeStatus): Style {
+  return status === 'planned' ? 'dim' : status === 'in-progress' ? 'amber' : status === 'done' ? 'green' : 'red';
+}
+
+/**
+ * SGR parameters of a status' skin, for terminal chrome painted outside the
+ * canvas (a tab strip, a panel header). The pane's chrome and the picture's
+ * boxes therefore wear one palette by construction, not by a second table.
+ */
+export function statusSgr(status: NodeStatus): string {
+  return SGR[styleFor(status)];
+}
+
 function skinFor(status: NodeStatus, unicode: boolean): BoxSkin {
-  const style: Style =
-    status === 'planned' ? 'dim' : status === 'in-progress' ? 'amber' : status === 'done' ? 'green' : 'red';
+  const style = styleFor(status);
   if (!unicode) {
     return status === 'planned'
       ? { h: '.', v: ':', corners: ['+', '+', '+', '+'], style }
@@ -388,45 +423,15 @@ function skinFor(status: NodeStatus, unicode: boolean): BoxSkin {
   }
 }
 
-function glyphFor(status: NodeStatus, opts: RenderOptions): string {
-  const spinner = opts.unicode ? SPINNER_UNICODE : SPINNER_ASCII;
-  switch (status) {
-    case 'planned':
-      return opts.unicode ? '·' : '.';
-    case 'in-progress':
-      return spinner[opts.spinnerFrame % spinner.length]!;
-    case 'done':
-      return opts.unicode ? '■' : '#';
-    case 'regressed':
-      return opts.unicode ? '✗' : 'X';
-  }
-}
-
 /**
- * Known node kinds -> [unicode, ascii] glyphs (all display width 1).
- * Behavior trees, dataflow and architecture vocabularies; an unknown kind
- * renders without a glyph and stays readable in the detail panel.
+ * The glyph a node shows for its status. A terminal box CAN animate, so
+ * in-progress spins through the shared frames; every other status is the
+ * shared static glyph.
  */
-const NODE_KIND_GLYPHS: Readonly<Record<string, readonly [string, string]>> = {
-  selector: ['?', '?'],
-  sequence: ['»', '>'],
-  parallel: ['‖', '='],
-  decorator: ['◌', 'o'],
-  condition: ['◇', 'c'],
-  action: ['·', '.'],
-  source: ['○', 'o'],
-  transform: ['◐', '%'],
-  sink: ['●', '*'],
-  service: ['◆', 'S'],
-  db: ['▤', 'D'],
-  queue: ['≣', 'Q'],
-  ui: ['▣', 'U'],
-};
-
-/** Glyph for a node kind, or undefined for unknown kinds. Shared with the watcher's panel. */
-export function kindGlyph(kind: string, unicode: boolean): string | undefined {
-  const pair = NODE_KIND_GLYPHS[kind];
-  return pair === undefined ? undefined : unicode ? pair[0] : pair[1];
+function glyphFor(status: NodeStatus, opts: RenderOptions): string {
+  return status === 'in-progress'
+    ? spinnerGlyph(opts.spinnerFrame, opts.unicode)
+    : statusGlyph(status, opts.unicode);
 }
 
 /** Plain solid box for documentation diagrams — presence, not progress. */

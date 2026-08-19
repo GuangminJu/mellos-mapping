@@ -1,11 +1,16 @@
 /**
  * Gate: the library's browser-safe entry points must stay free of Node
  * builtins, transitively. These are the modules the package exports for
- * browser consumption (a web map panel imports format + semantics + domain);
- * a `node:*` import anywhere in their closure would break that consumer at
- * bundle time. ./store and ./render are deliberately absent: store is the
- * Node half by contract, and the terminal renderer is Node-flavored only by
- * audience, not imports — keep the promise scoped to what browsers need.
+ * browser consumption (a web map panel imports format + semantics + domain,
+ * and the shared glyph vocabulary through the semantics entry); a `node:*`
+ * import anywhere in their closure would break that consumer at bundle time.
+ *
+ * ./store and ./render are deliberately absent. store is the Node half by
+ * contract. The terminal renderer imports no node builtins today either, but
+ * nothing browser-side depends on it any more — the vocabulary a browser
+ * shares with the pane lives in ./semantics — so the promise stays scoped to
+ * what browsers actually need, and render keeps the freedom to reach for a
+ * builtin (a TTY query, an env probe) if the terminal ever asks for one.
  */
 
 import { readFileSync } from 'node:fs';

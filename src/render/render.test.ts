@@ -18,9 +18,11 @@ import {
   type MellosMap,
   type NodeId,
   type NodeKind,
+  type Rank,
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
+import { aggregateMap } from '../semantics/semantics.js';
 import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -29,6 +31,8 @@ function must<T, E>(r: Result<T, E>): T {
 }
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
+/** Ranks in specs are known-good literals; the brand is asserted, not re-validated. */
+const rnk = (n: number): Rank => n as Rank;
 const gid = (s: string): GroupId => s as GroupId;
 const laid = (s: string): LaneId => s as LaneId;
 
@@ -37,9 +41,9 @@ const MONO = { color: false, unicode: true, spinnerFrame: 0 } as const;
 /** The map of this very plugin, mid-development — the canonical sample. */
 function sampleMap(): MellosMap {
   let map = setTitle(EMPTY_MAP, '梅勒斯地图 · mellos-mapping 插件');
-  map = must(declareLayer(map, { id: lid('primitives'), name: '原语层', rank: 0 }));
-  map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: 1 }));
-  map = must(declareLayer(map, { id: lid('orchestration'), name: '编排层', rank: 2 }));
+  map = must(declareLayer(map, { id: lid('primitives'), name: '原语层', rank: rnk(0) }));
+  map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: rnk(1) }));
+  map = must(declareLayer(map, { id: lid('orchestration'), name: '编排层', rank: rnk(2) }));
   map = must(declareNode(map, { id: nid('domain'), label: '图领域模型', layer: lid('primitives'), status: 'done' }));
   map = must(declareNode(map, { id: nid('render'), label: 'ASCII渲染', layer: lid('primitives'), status: 'in-progress' }));
   map = must(declareNode(map, { id: nid('store'), label: '状态存储', layer: lid('contracts'), status: 'done' }));
@@ -166,8 +170,8 @@ describe('renderMap', () => {
 
   it('draws a straight vertical when the two boxes overlap — no pointless dogleg', () => {
     let map = EMPTY_MAP;
-    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: rnk(1) }));
     map = must(declareNode(map, { id: nid('core'), label: 'CoreModule', layer: lid('base'), status: 'done' }));
     map = must(declareNode(map, { id: nid('shell'), label: 'Shell', layer: lid('top'), status: 'done' }));
     map = must(linkNodes(map, nid('shell'), nid('core')));
@@ -180,8 +184,8 @@ describe('renderMap', () => {
 
   it('gives parallel edges between overlapping boxes distinct columns', () => {
     let map = EMPTY_MAP;
-    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: rnk(1) }));
     map = must(declareNode(map, { id: nid('wide'), label: 'WideFoundation', layer: lid('base'), status: 'done' }));
     map = must(declareNode(map, { id: nid('a'), label: 'A', layer: lid('top'), status: 'done' }));
     map = must(declareNode(map, { id: nid('b'), label: 'B', layer: lid('top'), status: 'done' }));
@@ -248,6 +252,19 @@ describe('renderMap', () => {
     expect(hits.some((h) => h.id === 'ground')).toBe(true); // the group is hoverable
     expect(hits.some((h) => h.id === 'domain')).toBe(false); // members are inside it
     expect(text).toMatchSnapshot();
+  });
+
+  it('keeps one box per id at the far zoom when groups and loose nodes mix (I10)', () => {
+    // The aggregated view lifts group ids into the node-id space; before the
+    // shared namespace existed a group could carry an ungrouped node's id,
+    // and the overview then lost a box (or threw laying one out).
+    let map = sampleMap();
+    map = must(declareGroup(map, { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+    map = must(updateNode(map, { id: nid('domain'), group: gid('ground') }));
+    const aggregated = aggregateMap(map)!;
+    expect(new Set(aggregated.nodes.map((n) => n.id as string)).size).toBe(aggregated.nodes.length);
+    const { hits } = renderMapWindow(map, { ...MONO, zoom: -4 }, { x: 0, y: 0, width: 0, height: 0 });
+    expect(hits.map((h) => h.id).sort()).toEqual([...new Set(hits.map((h) => h.id))].sort());
   });
 
   it('switches to the glyph constellation only at the far end of the ladder', () => {
@@ -325,8 +342,8 @@ describe('diagram kinds', () => {
   function behaviorTree(): MellosMap {
     let map = setTitle(EMPTY_MAP, '巡逻行为树');
     map = setKind(map, 'behavior-tree' as MapKind);
-    map = must(declareLayer(map, { id: lid('leaves'), name: '叶子', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('root'), name: '根', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('leaves'), name: '叶子', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('root'), name: '根', rank: rnk(1) }));
     map = must(declareNode(map, { id: nid('walk'), label: '走向路点', layer: lid('leaves'), kind: 'action' as NodeKind }));
     map = must(declareNode(map, { id: nid('rest'), label: '原地休息', layer: lid('leaves'), kind: 'action' as NodeKind }));
     map = must(declareNode(map, { id: nid('pick'), label: '选择', layer: lid('root'), kind: 'selector' as NodeKind }));
@@ -355,8 +372,8 @@ describe('diagram kinds', () => {
   it('lanes align members under their column across bands and draw headers', () => {
     let map = setTitle(EMPTY_MAP, '登录时序');
     map = setKind(map, 'sequence' as MapKind);
-    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: rnk(1) }));
     map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
     map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
     map = must(declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: laid('client') }));
@@ -387,7 +404,7 @@ describe('diagram kinds', () => {
 
   it('a node linking a sub-map wears the ⊞ badge, surviving label truncation', () => {
     let map = setTitle(EMPTY_MAP, 'demo');
-    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: rnk(0) }));
     map = must(
       declareNode(map, {
         id: nid('store'),

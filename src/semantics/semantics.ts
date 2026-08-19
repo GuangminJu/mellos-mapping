@@ -4,13 +4,26 @@
  * Every renderer (the terminal pane, a web panel, a future editor view) must
  * agree on what a zoom step MEANS, when a map aggregates into its groups,
  * how sequence time is oriented, and which map kinds render neutrally.
- * Those rules live here, pure of any medium: no cells, no glyphs, no DOM,
+ * Those rules live here, pure of any medium: no cells, no colors, no DOM,
  * no I/O. Geometry — how a mode maps onto character cells or pixels — stays
  * private to each renderer.
+ *
+ * The shared ALPHABET (status glyphs, spinner frames, node-kind glyphs) is
+ * medium-neutral for the same reason and lives beside this file in
+ * ./vocabulary.js, re-exported here so consumers keep one import site.
  */
 
 import { groupStatus } from '../domain/ops.js';
-import type { DepEdge, MapGroup, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
+import type { DepEdge, MapGroup, MapNode, MellosMap, NodeId, NodeStatus, Rank } from '../domain/types.js';
+
+export {
+  NODE_KIND_GLYPHS,
+  SPINNER_FRAMES,
+  STATUS_GLYPHS,
+  kindGlyph,
+  spinnerGlyph,
+  statusGlyph,
+} from './vocabulary.js';
 
 // ---------------------------------------------------------------------------
 // zoom ladder
@@ -85,8 +98,10 @@ export function isNeutralKind(map: MellosMap): boolean {
  */
 export function aggregateMap(map: MellosMap): MellosMap | undefined {
   if (map.groups.length === 0) return undefined;
-  // Group ids join the node-id slug space inside this derived value; the
-  // brands only guard PERSISTED maps, and this one never leaves rendering.
+  // Group ids join the node-id slug space inside this derived value. The ids
+  // stay unique because the domain owns ONE namespace for nodes and groups
+  // (I10); the brands, which only guard PERSISTED maps, are what this cast
+  // steps around, not the uniqueness.
   const representative = new Map<string, string>();
   for (const n of map.nodes) representative.set(n.id as string, (n.group ?? n.id) as string);
 
@@ -165,6 +180,8 @@ export interface GroupFocus {
  * when the far zoom's aggregated boxes are what the pointer is over. Pure
  * data: every renderer picks its own glyphs, colors, and words (a sequence
  * page reads uses/usedBy as after/before; that is the caller's vocabulary).
+ * Groups are resolved first, which is unambiguous: one id names one box on
+ * the map (I10), so no node can be shadowed by a group of the same name.
  * @param map - the map the focus lives in.
  * @param focusId - node or group id.
  * @returns the focus view, or undefined when the id names neither.
@@ -309,7 +326,10 @@ export function flipForSequence(map: MellosMap): MellosMap {
   if (map.kind !== 'sequence') return map;
   return {
     ...map,
-    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    // Mirrored ranks leave the Rank range on purpose (0..99 becomes -99..0):
+    // the brand guards PERSISTED maps, and this one only ever reaches a
+    // renderer, which reads ranks as an order and never as a stored value.
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank as Rank })),
     edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...(e.label !== undefined ? { label: e.label } : {}) })),
   };
 }
