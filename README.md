@@ -266,7 +266,7 @@ strip and detail panel, and any other client reading the same store:
 | Unicode | ASCII | Meaning |
 | --- | --- | --- |
 | `·` | `.` | planned — declared, not started |
-| `⠿` (spinning) | `*` (spinning) | in-progress; `⠿` is the spinner at rest, for surfaces that cannot animate |
+| `⠿` | `*` | in-progress, at rest — a box that can animate spins through the braille frames (`⠋⠙⠹…`) instead, or a four-bar cycle in ASCII |
 | `■` | `#` | done, with evidence |
 | `□` | `o` | done, with **no** evidence recorded — same claim, nothing behind it |
 | `✗` | `X` | regressed: was done, now broken |
@@ -322,7 +322,7 @@ State lives in the tool-owned `.mellos/` directory at the project root:
 | `.mellos/pages/<slug>.json` | one file per named page |
 | `.mellos/config.json` | the project's mapping policy (see [Setup](#setup-choose-when-maps-open)) |
 | `.mellos/focus` | one-shot "show this page" request from a launcher to a running pane; the pane consumes it and deletes it within a poll tick |
-| `.mellos/*.tmp` | a save in flight — never survives one; a leftover means a write failed and was reported |
+| `<any of the above>.<pid>.<random>.tmp` | a save in flight; it is renamed over its target or removed. A leftover means a write failed (and was reported) and even its cleanup could not run |
 
 The map files are plain JSON, safe to commit if you want the maps' history in
 git.
