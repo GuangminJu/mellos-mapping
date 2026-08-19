@@ -9,6 +9,15 @@
  * reads its own file and none of them can read another's. This script is the
  * single place that knows the full list, so a release cannot bump four spots
  * and forget the fifth. Commit, merge and tag remain manual on purpose.
+ *
+ * Publishing is manual too, and stays that way: `npm publish` from a laptop
+ * cannot attach a provenance attestation — `--provenance` needs a supported
+ * CI's OIDC identity (on GitHub, a workflow with `id-token: write`) and fails
+ * outright anywhere else. Adding the flag here would break every release. A
+ * repo that wants signed provenance has to move the publish itself into a
+ * workflow first; until then the honest statement is that releases are
+ * unattested. `.github/workflows/publish-mcp-registry.yml` already proves the
+ * OIDC half works, so that move is a workflow away, not a redesign.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';

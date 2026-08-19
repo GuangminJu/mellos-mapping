@@ -1,6 +1,11 @@
 # Typecheck + tests + build on the three OSes users actually run, plus a
 # guard that the committed dist/ really is the build of the committed src/
 # (plugin installs clone the repo and run nothing, so dist drift would ship).
+#
+# `npm run verify` ends in `check:package`, which packs the tarball through
+# the real prepack lifecycle and fails if any `exports`/`bin` target is
+# missing from it — the npm half of the same "what ships is what was built"
+# guarantee the dist diff gives the plugin half.
 name: CI
 
 on:
