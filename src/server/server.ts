@@ -47,10 +47,12 @@ import {
   configFilePath,
   describeMappingPolicy,
   describeStoreError,
+  listPageFiles,
   migrateLegacyStore,
   loadMapFile,
   loadMappingPolicy,
   pageFilePath,
+  pageIdOfFile,
   saveMapFile,
   saveMappingPolicy,
 } from '../store/store.js';
@@ -206,6 +208,34 @@ function closed<T extends z.ZodRawShape>(shape: T): z.ZodObject<T, 'strict'> {
   return z.object(shape).strict();
 }
 
+/**
+ * How the default page is named in the page-set line. Parenthesized on
+ * purpose: a NAMED page may legitimately be called "default", and the two
+ * must never read alike.
+ */
+const DEFAULT_PAGE_NAME = '(default)';
+/** The same name when the default page has no file yet — a project whose work lives on named pages. */
+const DEFAULT_PAGE_ABSENT = '(default: absent)';
+
+/**
+ * The page-set line every view carries: which pages this project HAS, and
+ * which one the response is showing.
+ *
+ * Page discovery had no tool at all — a caller that did not already know a
+ * slug could only guess, and the empty-map hint looked identical whether the
+ * project had no map or five pages of one. One line answers both, cheaply
+ * enough to append to every view.
+ * @param stateFile - the default page's file path (the store's base).
+ * @param shown - the page this response rendered; undefined = the default page.
+ */
+function pagesLine(stateFile: string, shown: string | undefined): string {
+  const files = listPageFiles(stateFile);
+  const named = files.map((f) => pageIdOfFile(stateFile, f)).filter((p): p is PageId => p !== undefined);
+  const hasDefault = files.length > named.length;
+  const known = [hasDefault ? DEFAULT_PAGE_NAME : DEFAULT_PAGE_ABSENT, ...named];
+  return `pages: ${known.join(', ')} — this view: ${shown ?? DEFAULT_PAGE_NAME}`;
+}
+
 interface ToolText {
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;
@@ -271,10 +301,14 @@ export function buildServer(stateFile: string): McpServer {
         'roughly five or more nodes in that band; a group must be a strict subset of its band, ' +
         'and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the ' +
         'whole ghost design up front, then grow it as understanding deepens. Edges must point ' +
-        'strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.',
+        'strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. ' +
+        'The title lives here and only here: pass it again to replace it, or null to remove it. ' +
+        'Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.',
       inputSchema: closed({
         page: page(),
-        title: line(TITLE_MAX, 'map title, e.g. the feature being built').optional(),
+        title: line(TITLE_MAX, 'map title, e.g. the feature being built; null removes it')
+          .nullable()
+          .optional(),
         kind: mapKind().optional(),
         lanes: z
           .array(
@@ -351,11 +385,16 @@ export function buildServer(stateFile: string): McpServer {
   server.registerTool(
     'mmap_update',
     {
-      title: 'Record progress on nodes',
+      title: 'Record progress and revise the map',
       description:
-        'Update node status/label/evidence. Set in-progress when starting a node (the pane spins), ' +
-        'done with evidence when its verification passes, regressed with evidence when a done ' +
-        'node breaks. The map is a ledger: report honestly, it never blocks you.',
+        'The revision tool, all-or-nothing. Record progress on nodes: in-progress when starting a ' +
+        'node (the pane spins), done with evidence when its verification passes, regressed with ' +
+        'evidence when a done node breaks. Revise what the ghost design got wrong: move a node to ' +
+        'another band, join or leave a group or lane, rename a band (or re-rank it, which reorders ' +
+        'the whole map), relabel a group or a lane. Every clearable field takes null to empty it — ' +
+        'that is how a field is cleared, never an empty string. Bands, groups and lanes are applied ' +
+        'before the node updates, and within one node update `layer` moves the node before its ' +
+        'other fields. The map is a ledger: report honestly, it never blocks you.',
       inputSchema: closed({
         page: page(),
         updates: z
@@ -364,10 +403,20 @@ export function buildServer(stateFile: string): McpServer {
               id: id('id of the node to update'),
               status: status('the status to record').optional(),
               label: line(LABEL_MAX, 'new display label inside the box').optional(),
-              evidence: line(EVIDENCE_MAX, 'for done: how it was verified; for regressed: what broke').optional(),
+              evidence: line(EVIDENCE_MAX, 'for done: how it was verified; for regressed: what broke; null clears it')
+                .nullable()
+                .optional(),
               detail: note(
                 DETAIL_MAX,
-                'design notes shown in the pane detail panel: responsibility, contract, key decisions',
+                'design notes shown in the pane detail panel: responsibility, contract, key decisions; ' +
+                  'null clears them',
+              )
+                .nullable()
+                .optional(),
+              layer: id(
+                "move the node to this band; applied before this item's other fields, so a node can " +
+                  'move and join a group on the new band in one item. Every edge touching it must still ' +
+                  "point strictly downward, and a grouped node may only move to its group's band.",
               ).optional(),
               group: id('join this same-band group; null leaves the current group').nullable().optional(),
               kind: nodeKind().nullable().optional(),
@@ -375,7 +424,29 @@ export function buildServer(stateFile: string): McpServer {
               submap: id('link a child map page by slug; null unlinks it').nullable().optional(),
             }),
           )
-          .min(1),
+          .min(1)
+          .optional(),
+        layers: z
+          .array(
+            closed({
+              id: id('id of the band to revise'),
+              name: line(LABEL_MAX, 'new display name of the band').optional(),
+              rank: rank().optional(),
+            }),
+          )
+          .min(1)
+          .optional()
+          .describe('rename and/or re-rank existing bands; an item must carry a name, a rank, or both'),
+        groups: z
+          .array(closed({ id: id('id of the group to relabel'), label: line(LABEL_MAX, 'new subsystem name') }))
+          .min(1)
+          .optional()
+          .describe('relabel existing groups; membership and band are untouched'),
+        lanes: z
+          .array(closed({ id: id('id of the lane to relabel'), label: line(LABEL_MAX, 'new column name') }))
+          .min(1)
+          .optional()
+          .describe('relabel existing lanes; order and membership are untouched'),
       }),
     },
     (input) => mutate(input.page, (map) => applyUpdate(map, input)),
@@ -451,7 +522,10 @@ export function buildServer(stateFile: string): McpServer {
       title: 'View the current map',
       description:
         'Render the current Mellos map as monochrome text — the same picture the split-pane ' +
-        'watcher shows live. Use it to check the map state or to show it inline in conversation.',
+        'watcher shows live. Use it to check the map state or to show it inline in conversation. ' +
+        'Every response ends with a `pages:` line naming the pages this project actually has and ' +
+        'which one you are looking at, so this is also how you discover whether a map exists at ' +
+        'all and under which slugs — never probe the files.',
       inputSchema: closed({
         page: page(),
         zoom: z
@@ -467,7 +541,8 @@ export function buildServer(stateFile: string): McpServer {
       const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
-      return text(renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n'));
+      const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n');
+      return text(`${picture}\n${pagesLine(stateFile, input.page)}`);
     },
   );
 

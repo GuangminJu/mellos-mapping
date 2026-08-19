@@ -152,6 +152,83 @@ describe('mellos-mapping MCP server', () => {
   });
 });
 
+describe('revising a live map over the wire', () => {
+  const GHOST = {
+    layers: [
+      { id: 'base', name: 'Base', rank: 0 },
+      { id: 'top', name: 'Top', rank: 10 },
+    ],
+    lanes: [{ id: 'l', label: 'Lane' }],
+    groups: [{ id: 'g', label: 'Group', layer: 'base' }],
+    nodes: [
+      { id: 'core', label: 'Core', layer: 'base' },
+      { id: 'shell', label: 'Shell', layer: 'top' },
+    ],
+  };
+  const onDisk = (): { title?: string; layers: Array<{ id: string; name: string }>; nodes: Array<Record<string, string>> } =>
+    JSON.parse(readFileSync(stateFile, 'utf8'));
+
+  it('moves a node to another band and persists it', async () => {
+    await callText('mmap_declare', GHOST);
+    const moved = await callText('mmap_update', { updates: [{ id: 'core', layer: 'top' }] });
+    expect(moved.isError).toBe(false);
+    expect(onDisk().nodes.find((n) => n['id'] === 'core')?.['layer']).toBe('top');
+  });
+
+  it('renames a band, a group and a lane in one call', async () => {
+    await callText('mmap_declare', GHOST);
+    const renamed = await callText('mmap_update', {
+      layers: [{ id: 'base', name: '原语层', rank: 1 }],
+      groups: [{ id: 'g', label: '新子系统' }],
+      lanes: [{ id: 'l', label: '新泳道' }],
+    });
+    expect(renamed.isError).toBe(false);
+    const view = await callText('mmap_view', {});
+    expect(view.text).toContain('原语层');
+    expect(onDisk().layers.find((l) => l.id === 'base')).toMatchObject({ name: '原语层', rank: 1 });
+  });
+
+  it('clears evidence and the title with null, leaving absent keys behind', async () => {
+    await callText('mmap_declare', { ...GHOST, title: '演示' });
+    await callText('mmap_update', { updates: [{ id: 'core', status: 'done', evidence: 'spec green' }] });
+    expect(onDisk().nodes.find((n) => n['id'] === 'core')?.['evidence']).toBe('spec green');
+
+    const cleared = await callText('mmap_update', { updates: [{ id: 'core', evidence: null }] });
+    expect(cleared.isError).toBe(false);
+    expect(onDisk().nodes.find((n) => n['id'] === 'core')).not.toHaveProperty('evidence');
+
+    expect((await callText('mmap_declare', { title: null })).isError).toBe(false);
+    expect(onDisk()).not.toHaveProperty('title');
+  });
+
+  it('refuses a revision that revises nothing', async () => {
+    await callText('mmap_declare', GHOST);
+    const empty = await callText('mmap_update', {});
+    expect(empty.isError).toBe(true);
+    expect(empty.text).toContain('nothing to revise');
+  });
+});
+
+describe('mmap_view answers "which pages does this project have?"', () => {
+  it('names the default page as present or absent, plus every named page and the one shown', async () => {
+    const emptyProject = await callText('mmap_view', {});
+    expect(emptyProject.text).toContain('pages: (default: absent) — this view: (default)');
+
+    await callText('mmap_declare', {
+      page: 'alpha',
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
+    });
+    // a project whose work lives on named pages: discoverable without the default file
+    const stillNoDefault = await callText('mmap_view', {});
+    expect(stillNoDefault.text).toContain('pages: (default: absent), alpha — this view: (default)');
+
+    await callText('mmap_declare', { layers: [{ id: 'base', name: 'Base', rank: 0 }] });
+    const viewingAlpha = await callText('mmap_view', { page: 'alpha' });
+    expect(viewingAlpha.text).toContain('pages: (default), alpha — this view: alpha');
+  });
+});
+
 /**
  * The advertised schema is the only documentation a model reads before it
  * calls, so it is specified as strictly as the behavior behind it.
