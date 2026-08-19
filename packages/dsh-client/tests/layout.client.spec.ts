@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MellosMap } from 'mellos-mapping/domain/types'
+import { statusGlyph } from 'mellos-mapping/semantics'
 import {
   SCALE_DEFAULT, SCALE_MAX, SCALE_MIN, clampScale, computeLayout, stepForScale, wrapChars,
 } from 'mellos-mapping-dsh-client/src/client/layout.ts'
@@ -80,7 +81,9 @@ describe('computeLayout', () => {
     const lineOf = (id: string): string | undefined =>
       dev.boxes.find(b => (b.node.id as string) === id)?.lines[0]?.text
     expect(lineOf('a')).toBe('■ Alpha')
-    expect(lineOf('up')).toBe('◐ Upper')
+    // The in-progress glyph comes from the shared vocabulary (one source for
+    // terminal and browser), so the spec asserts the vocabulary, not a literal.
+    expect(lineOf('up')).toBe(`${statusGlyph('in-progress', true)} Upper`)
     const doc = computeLayout({
       ...MAP,
       kind: 'architecture',
