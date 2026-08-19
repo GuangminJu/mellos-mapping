@@ -227,6 +227,64 @@ describe('the advertised tool schemas', () => {
   });
 });
 
+/**
+ * Everything the tools accept is eventually drawn into a terminal, so the
+ * boundary keeps escape sequences out of the store rather than trusting each
+ * renderer to defuse them later.
+ */
+describe('control characters at the tool boundary', () => {
+  // Built from code points rather than written as escapes, so that reading
+  // this file (or grepping it) shows exactly which character is under test.
+  const ESC = String.fromCharCode(0x1b);
+  const BEL = String.fromCharCode(0x07);
+  const NEWLINE = String.fromCharCode(0x0a);
+  const BASE = { layers: [{ id: 'base', name: 'Base', rank: 0 }] };
+
+  it('refuses an ESC sequence in a label — a map may not repaint the terminal', async () => {
+    const attack = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: `${ESC}[2JCore`, layer: 'base' }],
+    });
+    expect(attack.isError).toBe(true);
+    expect(attack.text).toContain('control characters');
+  });
+
+  it('refuses a newline in a label — it would break the box the label sits in', async () => {
+    const broken = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: `Core${NEWLINE}and more`, layer: 'base' }],
+    });
+    expect(broken.isError).toBe(true);
+  });
+
+  it('refuses control characters in a title and in evidence too', async () => {
+    expect((await callText('mmap_declare', { title: `${ESC}]0;pwned` })).isError).toBe(true);
+    await callText('mmap_declare', { ...BASE, nodes: [{ id: 'core', label: 'Core', layer: 'base' }] });
+    const evidence = await callText('mmap_update', {
+      updates: [{ id: 'core', status: 'done', evidence: `passed${BEL}` }],
+    });
+    expect(evidence.isError).toBe(true);
+  });
+
+  it('accepts newlines in detail — a design note is written in paragraphs', async () => {
+    const declared = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', detail: `Responsibility.${NEWLINE}Contract.` }],
+    });
+    expect(declared.isError).toBe(false);
+    const onDisk = JSON.parse(readFileSync(stateFile, 'utf8')) as { nodes: Array<{ detail?: string }> };
+    expect(onDisk.nodes[0]?.detail).toBe(`Responsibility.${NEWLINE}Contract.`);
+  });
+
+  it('refuses a BEL in detail — newline and tab are the only controls a note may carry', async () => {
+    const noisy = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', detail: `Ready${BEL}` }],
+    });
+    expect(noisy.isError).toBe(true);
+  });
+});
+
 describe('mapping policy setup — the flow enforces itself over the wire', () => {
   const DECLARE = {
     layers: [{ id: 'base', name: 'Base', rank: 0 }],

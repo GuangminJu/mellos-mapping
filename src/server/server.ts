@@ -149,18 +149,47 @@ function edgeEnds(): { from: z.ZodString; to: z.ZodString } {
 }
 
 /**
+ * Control characters are refused where free text ENTERS the map, because
+ * every reader of a map draws its text into something: a character grid, a
+ * detail panel, a log line. An ESC sequence stored in a label would let a
+ * map repaint — or clear — the terminal of everyone who ever opens it, and a
+ * bare newline breaks the box its value sits in. Refusing them at the one
+ * boundary they can come through is cheaper and far more honest than asking
+ * every renderer to sanitize what it was handed.
+ *
+ * The refused set is C0, DEL and C1 — the characters that drive a terminal,
+ * and nothing else. Format characters (U+200D and friends) stay legal on
+ * purpose: real labels contain them and they steer no cursor. The ranges are
+ * spelled out rather than written `\p{Cc}` because this pattern is ALSO
+ * published in the tool's JSON Schema, where a Unicode property escape means
+ * something else entirely to a validator that compiles it without the `u`
+ * flag (there, `\p{Cc}` bans the letter c).
+ */
+const NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+const NO_CONTROLS_TEXT = 'one line of text; control characters (ESC, newline, tab) are not allowed';
+
+/**
+ * Newlines and tabs are how a note is written, so those two are carved out
+ * of the same set; everything else — ESC, BEL, and a lone CR that would
+ * overwrite the line just drawn — is still refused. Line breaks are \n.
+ */
+const NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+const NO_CONTROLS_BUT_BREAKS_TEXT =
+  'text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed';
+
+/**
  * One line of free text — a title, a label, a band name, an evidence note.
  * An empty string is refused: an optional field is cleared with null (the
  * domain's rule for every clearable field), never with a blank that renders
  * as an anonymous box nobody can tell from a real one.
  */
 function line(max: number, description: string): z.ZodString {
-  return z.string().min(1).max(max).describe(description);
+  return z.string().min(1).max(max).regex(NO_CONTROLS, NO_CONTROLS_TEXT).describe(description);
 }
 
 /** A multi-line note, wrapped and re-indented by whatever panel shows it. */
 function note(max: number, description: string): z.ZodString {
-  return z.string().min(1).max(max).describe(description);
+  return z.string().min(1).max(max).regex(NO_CONTROLS_BUT_BREAKS, NO_CONTROLS_BUT_BREAKS_TEXT).describe(description);
 }
 
 /**
