@@ -43,7 +43,7 @@ session, call `mmap_setup` (no arguments) to learn the policy:
 If the reply says the policy is not set, ask the USER to choose — present the
 three options, never pick for them — then persist the answer with
 `mmap_setup {policy}`. Ask once per project: the choice is saved in
-`.claude/mellos-mapping.config.json`, and `/mmap setup` reruns the question
+`.mellos/config.json`, and `/mmap setup` reruns the question
 whenever the user wants to change it. Until they answer, act as `complex`.
 Two things always outrank the policy: an explicit user request for a map
 wins under any policy, and a map that is already open keeps getting honest

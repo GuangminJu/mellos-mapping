@@ -824,7 +824,7 @@ export function mapPanel(
 
 function main(): void {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
-  // One-time move of a pre-0.19 `.claude` store into `.mellos` (store.ts).
+  // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
   // Announce it on stderr before the alternate screen opens, so the move is
   // not something the user only discovers from `git status`.
   if (migrateLegacyStore(cfg.file)) console.error('mellos-mapping: moved the legacy .claude map store to .mellos/ — commit the move.');

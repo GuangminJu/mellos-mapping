@@ -60,7 +60,10 @@ Follow the platform-appropriate route:
    user prefers the map separate from the chat (second monitor, small
    screens). `--ascii` for fonts without box-drawing characters. `--force`
    opens another pane even though a watcher for this project is already
-   running (default is to skip).
+   running (default is to skip). The remaining watcher flags are forwarded
+   verbatim: `--no-color`, `--no-mouse`, `--interval <ms>` (default 250,
+   floored at 50). An unknown flag is a usage error, never dropped in
+   silence — relay the message rather than retrying blind.
 
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
@@ -73,7 +76,8 @@ Follow the platform-appropriate route:
 
 If launching fails (e.g. no graphical session), fall back to route 3. After
 the pane is up, confirm briefly; only when neither the default file nor any
-page file exists does the pane show "waiting for <file>", until the first
-`mmap_declare`.
+page file exists does the pane sit on its standby screen ("waiting for the
+first mmap_declare ...", or "waiting for &lt;file&gt; ..." when `--page` named a
+page that does not exist yet), until the first `mmap_declare`.
 
 $ARGUMENTS

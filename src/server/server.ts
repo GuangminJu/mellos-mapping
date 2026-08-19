@@ -569,7 +569,7 @@ export function resolveStateFile(env: NodeJS.ProcessEnv, cwd: string): string {
 
 async function main(): Promise<void> {
   const stateFile = resolveStateFile(process.env, process.cwd());
-  // One-time move of a pre-0.19 `.claude` store into `.mellos` (store.ts).
+  // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
   // Say so on stderr — stdout is the MCP protocol — or the move looks like the
   // server deleting a tracked directory behind the user's back.
   if (migrateLegacyStore(stateFile)) console.error('mellos-mapping: moved the legacy .claude map store to .mellos/ — commit the move.');
