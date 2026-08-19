@@ -451,13 +451,18 @@ describe('mapping policy — project setup choice', () => {
   });
 });
 
-describe('atomicity (P2)', () => {
-  it('a reader mid-overwrite sees the old complete map (rename replaces in one step)', () => {
+/**
+ * What P2 looks like against a REAL filesystem: an overwrite lands whole and
+ * leaves nothing behind, and a write that cannot land is a value, never an
+ * exception. The other half of the promise — that a reader mid-overwrite
+ * never sees a torn file — cannot be observed from here, because it needs the
+ * rename intercepted mid-save; ./atomic-save.test.ts observes it there.
+ */
+describe('saving against a real filesystem (P2)', () => {
+  it('overwrites with the new map in full and leaves no temp file behind', () => {
     const path = join(dir, 'map.json');
     saveMapFile(path, sampleMap());
     const before = readFileSync(path, 'utf8');
-    // The observable contract on one machine: after save the content is the
-    // new serialization in full; the temp file never lingers.
     const next = setTitle(sampleMap(), 'v2');
     saveMapFile(path, next);
     const after = readFileSync(path, 'utf8');
