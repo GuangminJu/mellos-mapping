@@ -8,7 +8,9 @@
  *
  * Structural invariants owned by this layer (and only these — the map is a
  * ledger, not a judge; it records work honestly and never polices workflow):
- *   I1. Layer ids are unique; layer ranks are unique (bands are totally ordered).
+ *   I1. Layer ids are unique; layer ranks are unique (bands are totally
+ *       ordered). A rank is a Rank — a branded integer in a closed range, so
+ *       "unique" and "strictly lower" are decidable; see makeRank.
  *   I2. Every node belongs to exactly one existing layer.
  *   I3. Node ids are unique.
  *   I4. An edge `from -> to` means "from USES to" and requires
@@ -87,6 +89,36 @@ export function makeSubmapRef(raw: string): Result<SubmapRef, InvalidId> {
 }
 
 /**
+ * A band's position on the vertical order — a branded integer, never a raw
+ * number. The brand is what makes I1 and I4 hold: `===` dedupe (I1) and
+ * `fromRank > toRank` (I4) are both silently false for NaN, so a NaN rank
+ * would admit same-band and reciprocal edges and lose acyclicity. The closed
+ * range is the same one every surface (tool schema, file format) states, so
+ * a rank the domain accepts always survives a save/reload round trip.
+ */
+export type Rank = number & { readonly __brand: 'Rank' };
+
+/** Bottom band — "primitives are the ground". */
+export const RANK_MIN = 0;
+/** Highest band. A map deeper than a hundred bands is a different problem. */
+export const RANK_MAX = 99;
+export const RANK_RULE_TEXT = `an integer in ${RANK_MIN}..${RANK_MAX}, 0 = bottom / most primitive`;
+
+export type InvalidRank = { readonly kind: 'invalid-rank'; readonly raw: number; readonly rule: string };
+
+/**
+ * The only way to obtain a Rank.
+ * @param raw - a candidate rank; NaN, Infinity, fractions and out-of-range
+ *   integers are refused.
+ * @returns the branded rank, or the refusal as a value.
+ */
+export function makeRank(raw: number): Result<Rank, InvalidRank> {
+  return Number.isInteger(raw) && raw >= RANK_MIN && raw <= RANK_MAX
+    ? ok(raw as Rank)
+    : err({ kind: 'invalid-rank', raw, rule: RANK_RULE_TEXT });
+}
+
+/**
  * Closed vocabulary of map kinds — the diagram's presentation intent.
  * 'dev' (the default) is the progress ledger; the rest are documentation
  * diagrams rendered with neutral skins. Structure is identical for all.
@@ -112,7 +144,7 @@ export function makeNodeStatus(raw: string): Result<NodeStatus, { kind: 'invalid
 export interface MapLayer {
   readonly id: LayerId;
   readonly name: string;
-  readonly rank: number;
+  readonly rank: Rank;
 }
 
 /**
@@ -181,9 +213,10 @@ export const EMPTY_MAP: MellosMap = { layers: [], groups: [], lanes: [], nodes: 
 /** Every way an operation can be refused, as data. */
 export type MapError =
   | InvalidId
+  | InvalidRank
   | { readonly kind: 'invalid-status'; readonly raw: string }
   | { readonly kind: 'duplicate-layer'; readonly id: LayerId }
-  | { readonly kind: 'duplicate-rank'; readonly rank: number; readonly existing: LayerId }
+  | { readonly kind: 'duplicate-rank'; readonly rank: Rank; readonly existing: LayerId }
   | { readonly kind: 'duplicate-node'; readonly id: NodeId }
   | { readonly kind: 'unknown-layer'; readonly id: LayerId }
   | { readonly kind: 'unknown-node'; readonly id: NodeId }
@@ -207,9 +240,9 @@ export type MapError =
   | {
       readonly kind: 'edge-not-downward';
       readonly from: NodeId;
-      readonly fromRank: number;
+      readonly fromRank: Rank;
       readonly to: NodeId;
-      readonly toRank: number;
+      readonly toRank: Rank;
     };
 
 /** Human-readable rendering of a MapError, for tool results and logs. */
@@ -217,6 +250,8 @@ export function describeMapError(e: MapError): string {
   switch (e.kind) {
     case 'invalid-id':
       return `invalid id "${e.raw}" (rule: ${e.rule})`;
+    case 'invalid-rank':
+      return `invalid rank ${e.raw} (rule: ${e.rule})`;
     case 'invalid-status':
       return `invalid status "${e.raw}" (expected: ${NODE_STATUSES.join(' | ')})`;
     case 'duplicate-layer':

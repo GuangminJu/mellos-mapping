@@ -10,7 +10,7 @@
  */
 
 import { groupStatus } from '../domain/ops.js';
-import type { DepEdge, MapGroup, MapNode, MellosMap, NodeId, NodeStatus } from '../domain/types.js';
+import type { DepEdge, MapGroup, MapNode, MellosMap, NodeId, NodeStatus, Rank } from '../domain/types.js';
 
 // ---------------------------------------------------------------------------
 // zoom ladder
@@ -309,7 +309,10 @@ export function flipForSequence(map: MellosMap): MellosMap {
   if (map.kind !== 'sequence') return map;
   return {
     ...map,
-    layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
+    // Mirrored ranks leave the Rank range on purpose (0..99 becomes -99..0):
+    // the brand guards PERSISTED maps, and this one only ever reaches a
+    // renderer, which reads ranks as an order and never as a stored value.
+    layers: map.layers.map((l) => ({ ...l, rank: -l.rank as Rank })),
     edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...(e.label !== undefined ? { label: e.label } : {}) })),
   };
 }

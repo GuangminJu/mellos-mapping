@@ -43,6 +43,7 @@ import {
   makeNodeId,
   makeNodeKind,
   makeNodeStatus,
+  makeRank,
   makeSubmapRef,
   ok,
 } from '../domain/types.js';
@@ -114,7 +115,9 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
   for (const [i, l] of (input.layers ?? []).entries()) {
     const id = makeLayerId(l.id);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
-    const declared = declareLayer(next, { id: id.value, name: l.name, rank: l.rank });
+    const rank = makeRank(l.rank);
+    if (!rank.ok) return err(`layers[${i}]: ${describeMapError(rank.error)}`);
+    const declared = declareLayer(next, { id: id.value, name: l.name, rank: rank.value });
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }

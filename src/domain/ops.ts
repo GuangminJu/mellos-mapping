@@ -25,6 +25,7 @@ import {
   type NodeId,
   type NodeKind,
   type NodeStatus,
+  type Rank,
   type Result,
   type SubmapRef,
   err,
@@ -102,7 +103,7 @@ export function removeLane(map: MellosMap, id: LaneId): Result<MellosMap, MapErr
 export interface DeclareLayerInput {
   readonly id: LayerId;
   readonly name: string;
-  readonly rank: number;
+  readonly rank: Rank;
 }
 
 /** Add a new band. Refuses duplicate ids and duplicate ranks (I1). */

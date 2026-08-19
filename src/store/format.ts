@@ -34,6 +34,7 @@ import {
   makeNodeId,
   makeNodeKind,
   makeNodeStatus,
+  makeRank,
   makeSubmapRef,
   ok,
 } from '../domain/types.js';
@@ -105,11 +106,16 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     const id = makeLayerId(String(rawLayer['id'] ?? ''));
     if (!id.ok) return err({ kind: 'invariant-violation', path, violation: id.error });
     const name = optionalString(rawLayer['name']);
-    const rank = rawLayer['rank'];
-    if (name === undefined || typeof rank !== 'number' || !Number.isInteger(rank)) {
-      return err({ kind: 'bad-shape', path, detail: `layers[${i}] needs a string name and an integer rank` });
+    const rawRank = rawLayer['rank'];
+    if (name === undefined || typeof rawRank !== 'number') {
+      return err({ kind: 'bad-shape', path, detail: `layers[${i}] needs a string name and a numeric rank` });
     }
-    const next = declareLayer(map, { id: id.value, name, rank });
+    // The RANGE and integrality of a rank are the domain's rule (makeRank),
+    // never restated here: a file the format accepted but the domain refuses
+    // is exactly the drift this boundary exists to prevent.
+    const rank = makeRank(rawRank);
+    if (!rank.ok) return err({ kind: 'invariant-violation', path, violation: rank.error });
+    const next = declareLayer(map, { id: id.value, name, rank: rank.value });
     if (!next.ok) return err({ kind: 'invariant-violation', path, violation: next.error });
     map = next.value;
   }

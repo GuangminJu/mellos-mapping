@@ -33,8 +33,12 @@ import {
   type MellosMap,
   type NodeId,
   type NodeKind,
+  RANK_MAX,
+  RANK_MIN,
+  type Rank,
   type Result,
   type SubmapRef,
+  describeMapError,
   makeGroupId,
   makeLaneId,
   makeLayerId,
@@ -42,6 +46,7 @@ import {
   makeNodeId,
   makeNodeKind,
   makeNodeStatus,
+  makeRank,
 } from './types.js';
 
 /** Test helper: unwrap a Result that the spec expects to succeed. */
@@ -61,12 +66,13 @@ const nid = (raw: string): NodeId => must(makeNodeId(raw));
 const gid = (raw: string): GroupId => must(makeGroupId(raw));
 const laid = (raw: string): LaneId => must(makeLaneId(raw));
 const nkind = (raw: string): NodeKind => must(makeNodeKind(raw));
+const rnk = (raw: number): Rank => must(makeRank(raw));
 
 /** A three-band map: primitives(0) < contracts(1) < orchestration(2). */
 function threeBands(): MellosMap {
-  let map = must(declareLayer(EMPTY_MAP, { id: lid('primitives'), name: '原语层', rank: 0 }));
-  map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: 1 }));
-  map = must(declareLayer(map, { id: lid('orchestration'), name: '编排层', rank: 2 }));
+  let map = must(declareLayer(EMPTY_MAP, { id: lid('primitives'), name: '原语层', rank: rnk(0) }));
+  map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: rnk(1) }));
+  map = must(declareLayer(map, { id: lid('orchestration'), name: '编排层', rank: rnk(2) }));
   return map;
 }
 
@@ -90,6 +96,28 @@ describe('ids and status vocabulary (I5)', () => {
   });
 });
 
+describe('rank vocabulary (I1)', () => {
+  it('accepts integers inside the band range and nothing else', () => {
+    expect(makeRank(RANK_MIN).ok).toBe(true);
+    expect(makeRank(RANK_MAX).ok).toBe(true);
+    expect(makeRank(7).ok).toBe(true);
+    // NaN would defeat both I1 (=== dedupe) and I4 (fromRank > toRank),
+    // admitting same-band and reciprocal edges; a fraction is refused by the
+    // file format on reload, so the domain must refuse it at declaration.
+    expect(mustFail(makeRank(Number.NaN)).kind).toBe('invalid-rank');
+    expect(mustFail(makeRank(Number.POSITIVE_INFINITY)).kind).toBe('invalid-rank');
+    expect(mustFail(makeRank(1.5)).kind).toBe('invalid-rank');
+    expect(mustFail(makeRank(-1)).kind).toBe('invalid-rank');
+    expect(mustFail(makeRank(RANK_MAX + 1)).kind).toBe('invalid-rank');
+  });
+
+  it('describes a refused rank with the rule it broke', () => {
+    const described = describeMapError(mustFail(makeRank(1.5)));
+    expect(described).toContain('invalid rank 1.5');
+    expect(described).toContain(`${RANK_MIN}..${RANK_MAX}`);
+  });
+});
+
 describe('layers (I1)', () => {
   it('declares bands with unique ids and unique ranks', () => {
     const map = threeBands();
@@ -97,12 +125,12 @@ describe('layers (I1)', () => {
   });
 
   it('rejects a duplicate layer id', () => {
-    const e = mustFail(declareLayer(threeBands(), { id: lid('contracts'), name: 'again', rank: 9 }));
+    const e = mustFail(declareLayer(threeBands(), { id: lid('contracts'), name: 'again', rank: rnk(9) }));
     expect(e.kind).toBe('duplicate-layer');
   });
 
   it('rejects a duplicate rank — bands are totally ordered', () => {
-    const e = mustFail(declareLayer(threeBands(), { id: lid('extra'), name: 'extra', rank: 1 }));
+    const e = mustFail(declareLayer(threeBands(), { id: lid('extra'), name: 'extra', rank: rnk(1) }));
     expect(e).toMatchObject({ kind: 'duplicate-rank', rank: 1, existing: 'contracts' });
   });
 
@@ -402,7 +430,7 @@ describe('operations are pure', () => {
   it('never mutates the input map', () => {
     const before = threeBands();
     const frozen = JSON.stringify(before);
-    void declareLayer(before, { id: lid('extra'), name: 'extra', rank: 3 });
+    void declareLayer(before, { id: lid('extra'), name: 'extra', rank: rnk(3) });
     void declareNode(before, { id: nid('n'), label: 'N', layer: lid('primitives') });
     void setTitle(before, 'renamed');
     expect(JSON.stringify(before)).toBe(frozen);

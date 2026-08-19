@@ -18,6 +18,7 @@ import {
   type MellosMap,
   type NodeId,
   type NodeKind,
+  type Rank,
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
@@ -54,13 +55,15 @@ function mustFail<T, E>(r: Result<T, E>): E {
 /** Ids in specs are known-good literals; brands are asserted, not re-validated. */
 const lid = (raw: string): LayerId => raw as LayerId;
 const nid = (raw: string): NodeId => raw as NodeId;
+/** Ranks in specs are known-good literals; the brand is asserted, not re-validated. */
+const rnk = (n: number): Rank => n as Rank;
 const gid = (raw: string): GroupId => raw as GroupId;
 const laid = (raw: string): LaneId => raw as LaneId;
 
 function sampleMap(): MellosMap {
   let map = setTitle(EMPTY_MAP, '梅勒斯地图');
-  map = must(declareLayer(map, { id: lid('primitives'), name: '原语层', rank: 0 }));
-  map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: 1 }));
+  map = must(declareLayer(map, { id: lid('primitives'), name: '原语层', rank: rnk(0) }));
+  map = must(declareLayer(map, { id: lid('contracts'), name: '契约层', rank: rnk(1) }));
   map = must(declareGroup(map, { id: gid('base'), label: '地基', layer: lid('primitives') }));
   map = must(
     declareNode(map, {
@@ -136,7 +139,7 @@ describe('boundary validation (P1)', () => {
 
   it('omits the groups/lanes/kind keys entirely when unused (stable old files)', () => {
     let map = setTitle(EMPTY_MAP, 't');
-    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: 0 }));
+    map = must(declareLayer(map, { id: lid('base'), name: 'Base', rank: rnk(0) }));
     const text = serializeMap(map);
     expect(text).not.toContain('"groups"');
     expect(text).not.toContain('"lanes"');
@@ -146,8 +149,8 @@ describe('boundary validation (P1)', () => {
 
   it('round-trips kind, lanes, node kind/lane and edge labels', () => {
     let map = setKind(setTitle(EMPTY_MAP, '登录时序'), 'sequence');
-    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: rnk(1) }));
     map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
     map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
     map = must(
@@ -212,6 +215,14 @@ describe('boundary validation (P1)', () => {
       ),
     );
     expect(e).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'invalid-status' } });
+  });
+
+  it('refuses exactly the ranks the domain refuses — one rank rule, not two', () => {
+    for (const rank of [1.5, -1, 100, Number.NaN]) {
+      expect(
+        mustFail(parseMap({ version: 1, layers: [{ id: 'base', name: 'B', rank }], nodes: [], edges: [] }, 'x')),
+      ).toMatchObject({ kind: 'invariant-violation', violation: { kind: 'invalid-rank' } });
+    }
   });
 
   it('accepts a file with unknown extra fields (forward compatibility)', () => {

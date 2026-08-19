@@ -16,6 +16,7 @@ import {
   type MellosMap,
   type NodeId,
   type NodeKind,
+  type Rank,
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
@@ -56,12 +57,14 @@ function must<T, E>(r: Result<T, E>): T {
 }
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
+/** Ranks in specs are known-good literals; the brand is asserted, not re-validated. */
+const rnk = (n: number): Rank => n as Rank;
 const gid = (s: string): GroupId => s as GroupId;
 
 function sample(): MellosMap {
   let map = EMPTY_MAP;
-  map = must(declareLayer(map, { id: lid('base'), name: '原语层', rank: 0 }));
-  map = must(declareLayer(map, { id: lid('top'), name: '编排层', rank: 1 }));
+  map = must(declareLayer(map, { id: lid('base'), name: '原语层', rank: rnk(0) }));
+  map = must(declareLayer(map, { id: lid('top'), name: '编排层', rank: rnk(1) }));
   map = must(
     declareNode(map, {
       id: nid('core'),
@@ -202,8 +205,8 @@ describe('diagram kinds in the panel', () => {
   /** A two-step sequence page: client asks, server checks. */
   function sequencePage(): MellosMap {
     let map = setKind(EMPTY_MAP, 'sequence' as MapKind);
-    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: rnk(1) }));
     map = must(declareLane(map, { id: 'client' as LaneId, label: '客户端' }));
     map = must(
       declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: 'client' as LaneId, kind: 'action' as NodeKind }),
