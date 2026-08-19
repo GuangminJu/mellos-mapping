@@ -2,7 +2,9 @@
 /**
  * Open the live map pane in the RIGHT Windows Terminal window.
  *
- *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--ascii] [--force]
+ *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--force]
+ *                              [--ascii] [--no-color] [--no-mouse] [--no-follow]
+ *                              [--interval <ms>]
  *
  * Why this exists: the agent's shell runs on a hidden console (no WT_SESSION),
  * so a bare `wt -w 0 sp` targets the MOST RECENTLY USED terminal window — with
@@ -38,77 +40,147 @@
  * whatever page the store lists first). With a watcher already running it
  * writes the one-shot focus file instead — the existing pane retargets within
  * a poll tick — so re-running with --page is also how you steer an open pane.
+ * Every other flag belongs to the WATCHER and is forwarded verbatim; an
+ * unknown flag is a usage error, never a silently dropped intention.
+ *
+ * Store layout (where the map lives, what the focus channel is called, what a
+ * page slug may look like) is NOT restated here: this script runs on plain
+ * node and cannot import the TypeScript sources, so the build emits those
+ * constants as dist/store-paths.mjs and this script reads them from there.
+ * A second copy of a filename is how the focus request came to be written to
+ * a name no watcher ever read.
+ *
+ * Pure helpers are exported for the spec; the launcher runs only as an entry
+ * point, so importing this file is inert.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const USAGE = 'usage: node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--ascii] [--force]';
+export const USAGE =
+  'usage: node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--force]' +
+  ' [--ascii] [--no-color] [--no-mouse] [--no-follow] [--interval <ms>]';
 
-const argv = process.argv.slice(2);
-const flags = new Set();
-const positional = [];
-let pageSlug;
-for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
-  if (a === '--page') pageSlug = argv[++i];
-  else if (a.startsWith('--')) flags.add(a);
-  else positional.push(a);
+/**
+ * Watcher flags forwarded verbatim to dist/watch.mjs — the full boolean set
+ * parseArgs (src/watch/watch.ts) understands, minus the two this launcher
+ * owns itself (--file, --page). Forwarding the whole set is one rule the
+ * caller can hold in their head; a curated subset silently ate --no-follow.
+ */
+export const WATCHER_BOOLEAN_FLAGS = ['--ascii', '--no-color', '--no-mouse', '--no-follow'];
+/** Watcher flags that consume the next argument as their value. */
+export const WATCHER_VALUE_FLAGS = ['--interval'];
+/** Flags this launcher consumes itself; they never reach the watcher. */
+export const PANE_FLAGS = ['--window', '--force'];
+
+/** How the pane is placed: beside the conversation, or in its own window. */
+export const PANE_MODE = { split: 'split', window: 'window' };
+
+/**
+ * Parse the launcher's command line.
+ *
+ * @param argv - arguments after the script path.
+ * @param idRule - the store's page-slug grammar (ID_RULE), passed in rather
+ *   than restated, so this parser cannot drift from the ids the store accepts.
+ * @returns ok(config) or err(message) — a bad command line is an expected
+ *   outcome of a hand-typed line, not an exception.
+ */
+export function parsePaneArgs(argv, idRule) {
+  const positional = [];
+  const watcherFlags = [];
+  let pageSlug;
+  let mode = PANE_MODE.split;
+  let force = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--page') {
+      pageSlug = argv[++i];
+      if (pageSlug === undefined) return { ok: false, error: `--page needs a slug\n${USAGE}` };
+    } else if (WATCHER_BOOLEAN_FLAGS.includes(a)) {
+      watcherFlags.push(a);
+    } else if (WATCHER_VALUE_FLAGS.includes(a)) {
+      const value = argv[++i];
+      if (value === undefined || !Number.isFinite(Number(value))) {
+        return { ok: false, error: `${a} needs a number\n${USAGE}` };
+      }
+      watcherFlags.push(a, value);
+    } else if (a === '--window') {
+      mode = PANE_MODE.window;
+    } else if (a === '--force') {
+      force = true;
+    } else if (a.startsWith('--')) {
+      return { ok: false, error: `unknown flag "${a}"\n${USAGE}` };
+    } else {
+      positional.push(a);
+    }
+  }
+  if (positional.length !== 1) return { ok: false, error: USAGE };
+  if (pageSlug !== undefined && !idRule.test(pageSlug)) {
+    return { ok: false, error: `--page needs a kebab-case slug (got "${pageSlug}")\n${USAGE}` };
+  }
+  return { ok: true, value: { projectDir: resolve(positional[0]), pageSlug, mode, force, watcherFlags } };
 }
 
-if (positional.length !== 1) {
-  console.error(USAGE);
-  process.exit(1);
-}
-// Mirrors ID_RULE in src/domain/types.ts — this script runs standalone and
-// cannot import the TypeScript sources.
-if (pageSlug !== undefined && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pageSlug)) {
-  console.error(`--page needs a kebab-case slug (got "${pageSlug}")\n${USAGE}`);
-  process.exit(1);
-}
-if (process.platform !== 'win32') {
-  console.error('open-pane.mjs is Windows Terminal-only — use the tmux/manual route from the command doc.');
-  process.exit(1);
+/** The `wt` payload that runs the watcher: the pane's title, cwd and command. */
+export function paneCommand(cfg, watchPath, mapFile) {
+  const cmd = ['--title', 'mellos map', '-d', cfg.projectDir, 'node', watchPath, '--file', mapFile, ...cfg.watcherFlags];
+  if (cfg.pageSlug !== undefined) cmd.push('--page', cfg.pageSlug);
+  return cmd;
 }
 
-const projectDir = resolve(positional[0]);
-if (!existsSync(projectDir)) {
-  console.error(`project directory does not exist: ${projectDir}`);
-  process.exit(1);
+/** Quote one value into a PowerShell single-quoted string literal. */
+export function powerShellQuote(value) {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
-const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const watchPath = join(pluginRoot, 'dist', 'watch.mjs');
-if (!existsSync(watchPath)) {
-  console.error(`watcher not found (is the plugin built?): ${watchPath}`);
-  process.exit(1);
-}
-const mapFile = join(projectDir, '.mellos', 'map.json');
-
-function runPowerShell(script) {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  const r = spawnSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-    { encoding: 'utf8', timeout: 30_000, windowsHide: true },
-  );
-  return r.stdout ?? '';
-}
-
-// One watcher per map file is enough — watch.mjs redraws on change for every
-// viewer of the same file, and piling up panes on repeated /mmap is noise.
-// Matches only watchers this script started (they carry --file <mapFile> on
-// their command line); --force bypasses.
-function watcherAlreadyRunning() {
-  const token = mapFile.replace(/'/g, "''");
-  const out = runPowerShell(
+/**
+ * Script that counts running watchers of `mapFile`.
+ *
+ * String.IndexOf, not `-like`: a wildcard match treats `[`, `]`, `?` and `*`
+ * in the path as pattern syntax, so a project under `C:\work\[wip]\app` never
+ * matched its own watcher and every /mmap opened another pane. Ordinal
+ * case-insensitive keeps the old matching behavior for Windows paths that
+ * differ only in case.
+ */
+export function watcherProbeScript(mapFile) {
+  return (
     `$ErrorActionPreference = 'SilentlyContinue'\n` +
-    `$w = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*watch.mjs*' -and $_.CommandLine -like '*${token}*' })\n` +
-    `Write-Output "WATCHERS=$($w.Count)"`,
+    `$needle = ${powerShellQuote(mapFile)}\n` +
+    `$w = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {\n` +
+    `  $_.CommandLine -and\n` +
+    `  $_.CommandLine.IndexOf('watch.mjs', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and\n` +
+    `  $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0\n` +
+    `})\n` +
+    `Write-Output "WATCHERS=$($w.Count)"`
   );
-  const m = out.match(/WATCHERS=(\d+)/);
-  return m !== null && Number(m[1]) > 0;
+}
+
+/**
+ * Name written by 0.20.0/0.20.1 launchers for the focus channel. No watcher
+ * ever read it, so every steered pane left one behind in the user's project;
+ * writing a request now sweeps the orphan away.
+ */
+const ORPHANED_FOCUS_FILE_NAME = 'mellos-mapping.focus';
+
+/**
+ * Write the one-shot focus request that a RUNNING watcher consumes (see
+ * takeFocusRequest in src/store/store.ts).
+ *
+ * @param focusFile - the store's own focus path for this map file; never
+ *   assembled here, so the writer and the reader can only ever agree.
+ * Temp + rename because the watcher polls: a torn read would be swept as
+ * junk, silently losing the request.
+ */
+export function writeFocusRequest(focusFile, pageSlug) {
+  mkdirSync(dirname(focusFile), { recursive: true });
+  writeFileSync(`${focusFile}.tmp`, JSON.stringify({ page: pageSlug }));
+  renameSync(`${focusFile}.tmp`, focusFile);
+  try {
+    rmSync(join(dirname(focusFile), ORPHANED_FOCUS_FILE_NAME), { force: true });
+  } catch {
+    // sweeping a dead file is a courtesy; the request itself already landed
+  }
 }
 
 // Prints IDENT=<hwnd|0> and, when identified, FOCUS=<1|0>.
@@ -220,11 +292,23 @@ if (-not $focused) {
 Write-Output "FOCUS=$(if ($focused) { 1 } else { 0 })"
 `;
 
-function paneCommand() {
-  const cmd = ['--title', 'mellos map', '-d', projectDir, 'node', watchPath, '--file', mapFile];
-  if (flags.has('--ascii')) cmd.push('--ascii');
-  if (pageSlug !== undefined) cmd.push('--page', pageSlug);
-  return cmd;
+function runPowerShell(script) {
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const r = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+    { encoding: 'utf8', timeout: 30_000, windowsHide: true },
+  );
+  return r.stdout ?? '';
+}
+
+// One watcher per map file is enough — watch.mjs redraws on change for every
+// viewer of the same file, and piling up panes on repeated /mmap is noise.
+// Matches only watchers this script started (they carry --file <mapFile> on
+// their command line); --force bypasses.
+function watcherAlreadyRunning(mapFile) {
+  const m = runPowerShell(watcherProbeScript(mapFile)).match(/WATCHERS=(\d+)/);
+  return m !== null && Number(m[1]) > 0;
 }
 
 function openWt(args, what) {
@@ -235,49 +319,87 @@ function openWt(args, what) {
   }
 }
 
-function openDedicatedWindow(reason) {
-  openWt(['-w', 'mellos-mapping', 'nt', ...paneCommand()], 'open the dedicated window');
-  console.log(`MMAP_PANE mode=window name=mellos-mapping reason=${reason}`);
-  console.log('Map opened in the dedicated "mellos-mapping" window.');
-}
-
-if (!flags.has('--force') && watcherAlreadyRunning()) {
-  if (pageSlug !== undefined) {
-    // One-shot focus request (see takeFocusRequest in src/store/store.ts):
-    // the running watcher consumes and deletes it within a poll tick. Temp +
-    // rename because the watcher polls: a torn read would be swept as junk,
-    // silently losing the request.
-    mkdirSync(dirname(mapFile), { recursive: true });
-    const focusFile = join(dirname(mapFile), 'mellos-mapping.focus');
-    writeFileSync(`${focusFile}.tmp`, JSON.stringify({ page: pageSlug }));
-    renameSync(`${focusFile}.tmp`, focusFile);
-    console.log(`MMAP_PANE already-open refocused=${pageSlug}`);
-    console.log(`A watcher for ${mapFile} is already running — asked it to show page "${pageSlug}".`);
-  } else {
-    console.log('MMAP_PANE already-open');
-    console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
+async function main() {
+  const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const pathsModule = join(pluginRoot, 'dist', 'store-paths.mjs');
+  const watchPath = join(pluginRoot, 'dist', 'watch.mjs');
+  if (!existsSync(pathsModule) || !existsSync(watchPath)) {
+    console.error(`the plugin is not built — run "npm run build" (missing ${existsSync(watchPath) ? pathsModule : watchPath})`);
+    process.exit(1);
   }
-  process.exit(0);
+  const store = await import(pathToFileURL(pathsModule).href);
+
+  const parsed = parsePaneArgs(process.argv.slice(2), store.ID_RULE);
+  if (!parsed.ok) {
+    console.error(parsed.error);
+    process.exit(1);
+  }
+  const cfg = parsed.value;
+  if (!existsSync(cfg.projectDir)) {
+    console.error(`project directory does not exist: ${cfg.projectDir}`);
+    process.exit(1);
+  }
+  if (process.platform !== 'win32') {
+    console.error('open-pane.mjs is Windows Terminal-only — use the tmux/manual route from the command doc.');
+    process.exit(1);
+  }
+
+  const mapFile = join(cfg.projectDir, store.STATE_FILE_RELATIVE_PATH);
+  const openDedicatedWindow = (reason) => {
+    openWt(['-w', 'mellos-mapping', 'nt', ...paneCommand(cfg, watchPath, mapFile)], 'open the dedicated window');
+    console.log(`MMAP_PANE mode=window name=mellos-mapping reason=${reason}`);
+    console.log('Map opened in the dedicated "mellos-mapping" window.');
+  };
+
+  if (!cfg.force && watcherAlreadyRunning(mapFile)) {
+    if (cfg.pageSlug !== undefined) {
+      writeFocusRequest(store.focusFilePath(mapFile), cfg.pageSlug);
+      console.log(`MMAP_PANE already-open refocused=${cfg.pageSlug}`);
+      console.log(`A watcher for ${mapFile} is already running — asked it to show page "${cfg.pageSlug}".`);
+    } else {
+      console.log('MMAP_PANE already-open');
+      console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
+    }
+    process.exit(0);
+  }
+
+  if (cfg.mode === PANE_MODE.window) {
+    openDedicatedWindow('requested');
+    process.exit(0);
+  }
+
+  const nonce = `MMAP-NONCE-${process.pid}`;
+  const out = runPowerShell(IDENTIFY_AND_FOCUS.replaceAll('__NONCE__', nonce));
+  const ident = out.match(/IDENT=(\d+)/)?.[1] ?? '0';
+  const focused = /FOCUS=1/.test(out);
+
+  if (ident === '0') {
+    openDedicatedWindow('session-window-not-identified');
+  } else if (!focused) {
+    openDedicatedWindow('session-window-focus-denied');
+  } else {
+    // The identified window is foreground right now, so "most recently used"
+    // is deterministically it (see the race note in the header).
+    openWt(['-w', '0', 'sp', '-V', '--size', '0.42', ...paneCommand(cfg, watchPath, mapFile)], 'split the session window');
+    console.log(`MMAP_PANE mode=split hwnd=${ident}`);
+    console.log('Map opened beside this conversation (vertical split).');
+  }
 }
 
-if (flags.has('--window')) {
-  openDedicatedWindow('requested');
-  process.exit(0);
+/**
+ * Run only as an entry point, so the spec can import the helpers above
+ * without launching a terminal. Each script in this directory carries its own
+ * copy: package.json ships them file-by-file, so a shared scripts/ module
+ * would simply be missing from an npm install.
+ */
+function launchedAsEntry() {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
-const nonce = `MMAP-NONCE-${process.pid}`;
-const out = runPowerShell(IDENTIFY_AND_FOCUS.replaceAll('__NONCE__', nonce));
-const ident = out.match(/IDENT=(\d+)/)?.[1] ?? '0';
-const focused = /FOCUS=1/.test(out);
-
-if (ident === '0') {
-  openDedicatedWindow('session-window-not-identified');
-} else if (!focused) {
-  openDedicatedWindow('session-window-focus-denied');
-} else {
-  // The identified window is foreground right now, so "most recently used"
-  // is deterministically it (see the race note in the header).
-  openWt(['-w', '0', 'sp', '-V', '--size', '0.42', ...paneCommand()], 'split the session window');
-  console.log(`MMAP_PANE mode=split hwnd=${ident}`);
-  console.log('Map opened beside this conversation (vertical split).');
-}
+if (launchedAsEntry()) await main();
