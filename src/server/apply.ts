@@ -65,6 +65,7 @@ export interface DeclareInput {
         readonly label: string;
         readonly layer: string;
         readonly status?: string | undefined;
+        readonly evidence?: string | undefined;
         readonly detail?: string | undefined;
         readonly group?: string | undefined;
         readonly kind?: string | undefined;
@@ -180,6 +181,7 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       label: n.label,
       layer: layer.value,
       ...(status !== undefined ? { status } : {}),
+      ...(n.evidence !== undefined ? { evidence: n.evidence } : {}),
       ...(n.detail !== undefined ? { detail: n.detail } : {}),
       ...(group !== undefined ? { group } : {}),
       ...(kind !== undefined ? { kind } : {}),

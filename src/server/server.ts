@@ -26,7 +26,18 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { EMPTY_MAP, type MellosMap, RANK_MAX, RANK_MIN, type Result } from '../domain/types.js';
+import {
+  EMPTY_MAP,
+  ID_RULE,
+  ID_RULE_TEXT,
+  MAP_KINDS,
+  type MellosMap,
+  NODE_STATUSES,
+  RANK_MAX,
+  RANK_MIN,
+  RANK_RULE_TEXT,
+  type Result,
+} from '../domain/types.js';
 import { ZOOM_MAX, ZOOM_MIN, clampZoom, renderMap } from '../render/render.js';
 import {
   MAPPING_POLICIES,
@@ -48,44 +59,123 @@ import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 export const SERVER_NAME = 'mellos-mapping';
 export const SERVER_VERSION = '0.20.1';
 
-const ID = z
-  .string()
-  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'lowercase letters, digits and dashes, 1-64 chars')
-  .describe('stable kebab-case identifier');
+// ---------------------------------------------------------------------------
+// the advertised schema — what a model reads BEFORE it calls
+// ---------------------------------------------------------------------------
+//
+// Every rule stated here is the domain's rule, imported rather than retyped:
+// a schema that accepts what the domain refuses (or refuses what it accepts)
+// teaches the caller a grammar the ledger does not have.
+//
+// Every field builds its OWN schema instance, which is not a style choice.
+// The SDK converts these shapes with zod-to-json-schema, which dedupes
+// identical instances into `$ref` pointers back to the first occurrence. One
+// shared id instance therefore advertised sixteen id fields as pointers to
+// `page` — a node id documented to the model as "the page this call targets".
+// Factories cost one object per field and keep every description on the field
+// it describes.
 
-const PAGE = ID.optional().describe(
+/** Length budgets of the free-text fields, in one place so no two surfaces drift. */
+const TITLE_MAX = 120;
+const LABEL_MAX = 60;
+const DETAIL_MAX = 600;
+const EVIDENCE_MAX = 200;
+const EDGE_LABEL_MAX = 80;
+
+/** A slug field — the shared id grammar of the whole system, with this field's own words. */
+function id(description: string): z.ZodString {
+  return z.string().regex(ID_RULE, ID_RULE_TEXT).describe(description);
+}
+
+const PAGE_DESCRIPTION =
   'page (parallel map) this call targets; omit for the default page. ' +
-    'One effort = one page: start a NEW effort on its own page named after the effort, ' +
-    'so concurrent sessions never write over each other and the pane can switch between pages.',
-);
+  'One effort = one page: start a NEW effort on its own page named after the effort, ' +
+  'so concurrent sessions never write over each other and the pane can switch between pages.';
 
-const STATUS = z
-  .enum(['planned', 'in-progress', 'done', 'regressed'])
-  .describe('planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken');
+function page(): z.ZodOptional<z.ZodString> {
+  return id(PAGE_DESCRIPTION).optional();
+}
 
-const EDGE = z.object({
-  from: ID.describe('the node that USES the other (must live on a higher layer)'),
-  to: ID.describe('the node being used (must live on a strictly lower layer)'),
-});
+const STATUS_VOCABULARY =
+  'planned = ghost on the map; in-progress = spinner; done = verified; regressed = was done, now broken';
 
-const KIND = z
-  .enum(['dev', 'architecture', 'dataflow', 'behavior-tree', 'sequence'])
-  .describe(
-    'diagram kind. dev (default) = the live progress ledger with status skins. ' +
-      'The rest are documentation diagrams rendered neutrally: architecture (layered components; ' +
-      'also fits call graphs and module dependencies), dataflow (source→transform→sink, stages as layers), ' +
-      'behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), ' +
-      'sequence (classic call/return: rank = time step with rank 0 = EARLIEST, drawn top-down; ' +
-      'declare lanes as participants and make every call AND every return its own event node in ' +
-      "the acting participant's lane, edges labeled with the message). " +
-      'State machines are unsupported: cycles cannot enter a Mellos map.',
+/** @param note - what this particular field does with the shared vocabulary. */
+function status(note: string) {
+  return z.enum(NODE_STATUSES).describe(`${note}. ${STATUS_VOCABULARY}`);
+}
+
+function nodeKind(): z.ZodString {
+  return id(
+    'node kind rendered as a glyph prefix. Known: selector | sequence | parallel | decorator | ' +
+      'condition | action (behavior trees); source | transform | sink (dataflow); ' +
+      'service | db | queue | ui (architecture). Unknown kinds are kept and shown in the detail panel.',
   );
+}
 
-const NODE_KIND = ID.describe(
-  'node kind rendered as a glyph prefix. Known: selector | sequence | parallel | decorator | ' +
-    'condition | action (behavior trees); source | transform | sink (dataflow); ' +
-    'service | db | queue | ui (architecture). Unknown kinds are kept and shown in the detail panel.',
-);
+function mapKind() {
+  return z
+    .enum(MAP_KINDS)
+    .describe(
+      'diagram kind. dev (default) = the live progress ledger with status skins. ' +
+        'The rest are documentation diagrams rendered neutrally: architecture (layered components; ' +
+        'also fits call graphs and module dependencies), dataflow (source→transform→sink, stages as layers), ' +
+        'behavior-tree (root on top, leaves at the bottom; also fits mind maps and WBS), ' +
+        'sequence (classic call/return: rank = time step with rank 0 = EARLIEST, drawn top-down; ' +
+        'declare lanes as participants and make every call AND every return its own event node in ' +
+        "the acting participant's lane, edges labeled with the message). " +
+        'State machines are unsupported: cycles cannot enter a Mellos map.',
+    );
+}
+
+/**
+ * A band's position. Range and integrality come from the domain (makeRank),
+ * which refuses anything this schema lets through anyway; the schema only
+ * lets the caller see the rule before it calls.
+ */
+function rank(): z.ZodNumber {
+  return z
+    .number()
+    .int()
+    .min(RANK_MIN)
+    .max(RANK_MAX)
+    .describe(`${RANK_RULE_TEXT}; must be unique among the map's bands`);
+}
+
+function edgeEnds(): { from: z.ZodString; to: z.ZodString } {
+  return {
+    from: id('the node that USES the other (must live on a higher layer)'),
+    to: id('the node being used (must live on a strictly lower layer)'),
+  };
+}
+
+/**
+ * One line of free text — a title, a label, a band name, an evidence note.
+ * An empty string is refused: an optional field is cleared with null (the
+ * domain's rule for every clearable field), never with a blank that renders
+ * as an anonymous box nobody can tell from a real one.
+ */
+function line(max: number, description: string): z.ZodString {
+  return z.string().min(1).max(max).describe(description);
+}
+
+/** A multi-line note, wrapped and re-indented by whatever panel shows it. */
+function note(max: number, description: string): z.ZodString {
+  return z.string().min(1).max(max).describe(description);
+}
+
+/**
+ * An object that REFUSES unknown keys instead of silently dropping them.
+ *
+ * The advertised JSON Schema prints `additionalProperties: false` for every
+ * object in this surface, but a raw shape is wrapped by the SDK in a
+ * STRIPPING z.object — so a misspelled `evidance` used to vanish without a
+ * word, and the ledger recorded a `done` with no evidence on it. Strict
+ * objects make the runtime keep the promise the schema prints, and the
+ * refusal names the offending key.
+ */
+function closed<T extends z.ZodRawShape>(shape: T): z.ZodObject<T, 'strict'> {
+  return z.object(shape).strict();
+}
 
 interface ToolText {
   [key: string]: unknown;
@@ -153,72 +243,73 @@ export function buildServer(stateFile: string): McpServer {
         'and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the ' +
         'whole ghost design up front, then grow it as understanding deepens. Edges must point ' +
         'strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing.',
-      inputSchema: {
-        page: PAGE,
-        title: z.string().max(120).optional().describe('map title, e.g. the feature being built'),
-        kind: KIND.optional(),
+      inputSchema: closed({
+        page: page(),
+        title: line(TITLE_MAX, 'map title, e.g. the feature being built').optional(),
+        kind: mapKind().optional(),
         lanes: z
           .array(
-            z.object({
-              id: ID,
-              label: z.string().min(1).max(60).describe('column name, e.g. a sequence participant'),
+            closed({
+              id: id('stable kebab-case identifier of the lane'),
+              label: line(LABEL_MAX, 'column name, e.g. a sequence participant'),
             }),
           )
           .optional()
           .describe('vertical columns crossing all bands; declaration order = left-to-right'),
         layers: z
           .array(
-            z.object({
-              id: ID,
-              name: z.string().min(1).max(60).describe('display name of the band'),
-              // Range and integrality come from the domain (makeRank), which
-              // refuses anything this schema lets through anyway; the schema
-              // only lets the client see the rule before it calls.
-              rank: z
-                .number()
-                .int()
-                .min(RANK_MIN)
-                .max(RANK_MAX)
-                .describe(`${RANK_MIN} = bottom / most primitive, up to ${RANK_MAX}; must be unique`),
+            closed({
+              id: id('stable kebab-case identifier of the band'),
+              name: line(LABEL_MAX, 'display name of the band'),
+              rank: rank(),
             }),
           )
           .optional(),
         groups: z
           .array(
-            z.object({
-              id: ID,
-              label: z.string().min(1).max(60).describe('subsystem name shown at the far zoom'),
-              layer: ID.describe('band this group clusters; members must live on the same band'),
+            closed({
+              id: id('stable kebab-case identifier of the group'),
+              label: line(LABEL_MAX, 'subsystem name shown at the far zoom'),
+              layer: id('band this group clusters; members must live on the same band'),
             }),
           )
           .optional(),
         nodes: z
           .array(
-            z.object({
-              id: ID,
-              label: z.string().min(1).max(60).describe('display label inside the box'),
-              layer: ID.describe('id of the band this node lives in'),
-              status: STATUS.optional().describe('defaults to planned'),
-              detail: z
-                .string()
-                .max(600)
-                .optional()
-                .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
-              group: ID.optional().describe('same-band group this node belongs to'),
-              kind: NODE_KIND.optional(),
-              lane: ID.optional().describe('lane (column) this node belongs to'),
-              submap: ID.optional().describe(
+            closed({
+              id: id('stable kebab-case identifier of the node'),
+              label: line(LABEL_MAX, 'display label inside the box'),
+              layer: id('id of the band this node lives in'),
+              status: status('defaults to planned').optional(),
+              evidence: line(
+                EVIDENCE_MAX,
+                'how an already-verified node was verified; for regressed: what broke. ' +
+                  'Declaring a node straight to done needs it as much as updating one does.',
+              ).optional(),
+              detail: note(
+                DETAIL_MAX,
+                'design notes shown in the pane detail panel: responsibility, contract, key decisions',
+              ).optional(),
+              group: id('same-band group this node belongs to').optional(),
+              kind: nodeKind().optional(),
+              lane: id('lane (column) this node belongs to').optional(),
+              submap: id(
                 'page slug of this node\'s child map — the pane badges the node ⊞ and double-click ' +
                   'dives in. Declare the child page separately. Create a sub-map only when the ' +
                   "node's internals genuinely deserve their own picture; most nodes need none.",
-              ),
+              ).optional(),
             }),
           )
           .optional(),
         edges: z
-          .array(EDGE.extend({ label: z.string().max(80).optional().describe('what flows along the edge') }))
+          .array(
+            closed({
+              ...edgeEnds(),
+              label: line(EDGE_LABEL_MAX, 'what flows along the edge').optional(),
+            }),
+          )
           .optional(),
-      },
+      }),
     },
     (input) => {
       const result = mutate(input.page, (map) => applyDeclare(map, input));
@@ -236,34 +327,27 @@ export function buildServer(stateFile: string): McpServer {
         'Update node status/label/evidence. Set in-progress when starting a node (the pane spins), ' +
         'done with evidence when its verification passes, regressed with evidence when a done ' +
         'node breaks. The map is a ledger: report honestly, it never blocks you.',
-      inputSchema: {
-        page: PAGE,
+      inputSchema: closed({
+        page: page(),
         updates: z
           .array(
-            z.object({
-              id: ID,
-              status: STATUS.optional(),
-              label: z.string().min(1).max(60).optional(),
-              evidence: z
-                .string()
-                .max(200)
-                .optional()
-                .describe('for done: how it was verified; for regressed: what broke'),
-              detail: z
-                .string()
-                .max(600)
-                .optional()
-                .describe('design notes shown in the pane detail panel: responsibility, contract, key decisions'),
-              group: ID.nullable()
-                .optional()
-                .describe('join this same-band group; null leaves the current group'),
-              kind: NODE_KIND.nullable().optional().describe('set the node kind; null clears it'),
-              lane: ID.nullable().optional().describe('join this lane; null leaves the current lane'),
-              submap: ID.nullable().optional().describe('link a child map page; null unlinks it'),
+            closed({
+              id: id('id of the node to update'),
+              status: status('the status to record').optional(),
+              label: line(LABEL_MAX, 'new display label inside the box').optional(),
+              evidence: line(EVIDENCE_MAX, 'for done: how it was verified; for regressed: what broke').optional(),
+              detail: note(
+                DETAIL_MAX,
+                'design notes shown in the pane detail panel: responsibility, contract, key decisions',
+              ).optional(),
+              group: id('join this same-band group; null leaves the current group').nullable().optional(),
+              kind: nodeKind().nullable().optional(),
+              lane: id('join this lane; null leaves the current lane').nullable().optional(),
+              submap: id('link a child map page by slug; null unlinks it').nullable().optional(),
             }),
           )
           .min(1),
-      },
+      }),
     },
     (input) => mutate(input.page, (map) => applyUpdate(map, input)),
   );
@@ -277,14 +361,14 @@ export function buildServer(stateFile: string): McpServer {
         'Removing a node also removes every edge touching it; removing a group merely ungroups ' +
         'its members. Use when the ghost design turns out wrong — the map is a hypothesis, ' +
         'revising it is honest work.',
-      inputSchema: {
-        page: PAGE,
-        edges: z.array(EDGE).optional(),
-        nodes: z.array(ID).optional(),
-        groups: z.array(ID).optional().describe('groups to remove; members stay, merely ungrouped'),
-        lanes: z.array(ID).optional().describe('lanes to remove; members stay, merely off-lane'),
-        layers: z.array(ID).optional().describe('bands to remove; must be empty of nodes and groups'),
-      },
+      inputSchema: closed({
+        page: page(),
+        edges: z.array(closed(edgeEnds())).optional(),
+        nodes: z.array(id('id of the node to remove, with every edge touching it')).optional(),
+        groups: z.array(id('id of the group to remove; members stay, merely ungrouped')).optional(),
+        lanes: z.array(id('id of the lane to remove; members stay, merely off-lane')).optional(),
+        layers: z.array(id('id of the band to remove; it must hold no nodes and no groups')).optional(),
+      }),
     },
     (input) => mutate(input.page, (map) => applyRemove(map, input)),
   );
@@ -304,12 +388,12 @@ export function buildServer(stateFile: string): McpServer {
         describeMappingPolicy('on-request') +
         '. Then call again with their choice to persist it. The policy guides you; it never ' +
         'blocks the tools, and an explicit user request for a map always wins.',
-      inputSchema: {
+      inputSchema: closed({
         policy: z
           .enum(MAPPING_POLICIES)
           .optional()
           .describe("the user's choice to persist; omit to read the current policy"),
-      },
+      }),
     },
     (input) => {
       if (input.policy !== undefined) {
@@ -339,8 +423,8 @@ export function buildServer(stateFile: string): McpServer {
       description:
         'Render the current Mellos map as monochrome text — the same picture the split-pane ' +
         'watcher shows live. Use it to check the map state or to show it inline in conversation.',
-      inputSchema: {
-        page: PAGE,
+      inputSchema: closed({
+        page: page(),
         zoom: z
           .number()
           .int()
@@ -348,7 +432,7 @@ export function buildServer(stateFile: string): McpServer {
           .max(ZOOM_MAX)
           .optional()
           .describe('zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs'),
-      },
+      }),
     },
     (input) => {
       const current = loadOrEmpty(fileOf(input.page));
