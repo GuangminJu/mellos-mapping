@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "build.mjs"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "build.mjs"]
 }

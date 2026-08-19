@@ -12,11 +12,19 @@
  * root — under this repo's own package names.
  *
  * This script is the whole bridge, so a refresh cannot half-happen: it copies
- * `src/` and `lib/` of both packages and rewrites the dsh-internal package
- * names to the published ones in every copied text file — including the
- * client bundle's baked module id, which the dsh web loader must see equal to
- * the installed package name. Manifests, patch layer, and READMEs are owned
+ * `src/`, `lib/` and `tests/` of both packages and rewrites the dsh-internal
+ * package names to the published ones in every copied text file — including
+ * the client bundle's baked module id, which the dsh web loader must see equal
+ * to the installed package name. Manifests, patch layer, and READMEs are owned
  * by this repo and never touched.
+ *
+ * `tests/` comes across for the same reason `src/` does: the specs ARE the
+ * spec of ~1.8k lines of pure logic (layout routing, the page-set model, the
+ * scale Schmitt trigger, store-path validation). Leaving them upstream meant
+ * the published copy could drift from its own contract with nothing here to
+ * notice. Not every spec can run in this repo — the ones that need the
+ * @deepseek-ai framework or a DOM cannot — so vitest.config.ts selects, and
+ * names, the ones that can.
  */
 import { cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -45,19 +53,33 @@ const RENAMES = [
 /** Workspace files that stay behind: dsh gate scaffolding and build state. */
 const EXCLUDED = [/(^|[\\/])invariant\.(ts|js|d\.ts)(\.map)?$/, /tsbuildinfo$/];
 
+/** Directories copied verbatim from each workspace package. */
+const PARTS = ['src', 'lib', 'tests'];
+
+// Validate → prepare → commit: resolve and check EVERY source before deleting
+// anything. The previous shape deleted each target immediately before copying
+// it, so a workspace missing one part (an unbuilt `lib/`, a package whose
+// specs had moved) exited with some targets already wiped and others intact —
+// a half-applied sync that git then had to undo by hand.
+const transfers = PACKAGES.flatMap(({ from, to }) =>
+  PARTS.map((part) => ({
+    source: join(dshRoot, from, part),
+    target: join(root, to, part),
+  })),
+);
+
+const absent = transfers.filter(({ source }) => !existsSync(source)).map(({ source }) => source);
+if (absent.length > 0) {
+  console.error('missing in the dsh workspace — build it first (npm run build:lib) and re-run:');
+  for (const source of absent) console.error(`  ${source}`);
+  process.exit(1);
+}
+
 const copied = [];
-for (const { from, to } of PACKAGES) {
-  for (const part of ['src', 'lib']) {
-    const source = join(dshRoot, from, part);
-    const target = join(root, to, part);
-    if (!existsSync(source)) {
-      console.error(`missing ${source} — build the dsh workspace first (npm run build:lib).`);
-      process.exit(1);
-    }
-    rmSync(target, { recursive: true, force: true });
-    cpSync(source, target, { recursive: true });
-    copied.push(target);
-  }
+for (const { source, target } of transfers) {
+  rmSync(target, { recursive: true, force: true });
+  cpSync(source, target, { recursive: true });
+  copied.push(target);
 }
 
 /** Recursively rewrite names in every copied text file. */

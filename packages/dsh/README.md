@@ -60,5 +60,20 @@ package's committed `dist/`. Refresh both packages with:
 node scripts/sync-dsh-plugin.mjs <path-to-deepseek-harness-checkout>
 ```
 
-which copies `src/` + `lib/` and rewrites the dsh-internal package names —
-including the client bundle's baked module id — to the published ones.
+which copies `src/` + `lib/` + `tests/` and rewrites the dsh-internal package
+names — including the client bundle's baked module id — to the published ones.
+It resolves and checks every source before deleting any target, so a refresh
+cannot half-apply.
+
+What this repo can prove about the copy, without the dsh framework installed:
+
+| Check | Covers |
+| --- | --- |
+| `npm run typecheck:packages` | the framework-free modules (`layout`, `pages`, `wheel`) and their specs, with `mellos-mapping/*` pointed at this repo's own sources |
+| `npm test` | the same modules' specs — 27 assertions on layout routing, the scale Schmitt trigger, the page-set model, the wheel curve |
+| `tests/packages.test.ts` | one declaration per source module (both directions), the shared version line, no surviving dsh-internal name, and the MCP patch row's spawn form |
+
+The rest cannot run here and is named, with its reason, in
+[`vitest.config.ts`](../../vitest.config.ts) and
+[`tsconfig.packages.json`](../../tsconfig.packages.json): anything that reaches
+`@deepseek-ai/*`, react, or a DOM belongs to the dsh workspace's own suite.
