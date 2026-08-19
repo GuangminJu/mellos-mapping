@@ -134,7 +134,8 @@ describe('renderMap', () => {
       return cp >= 0x2500 && cp <= 0x28ff;
     });
     expect(structural).toEqual([]);
-    expect(text).toContain('# 状态存储'); // done glyph in ASCII
+    expect(text).toContain('# 图领域模型'); // done glyph in ASCII
+    expect(text).toContain('o 状态存储'); // ... and its hollow face, done with no evidence
   });
 
   it('emits ANSI codes only when color is on', () => {
@@ -175,7 +176,7 @@ describe('renderMap', () => {
 
   it('reopens ANSI styles inside a window', () => {
     const full = renderMap(sampleMap(), { ...MONO, color: true });
-    const greenRow = full.findIndex((l) => l.includes('状态存储'));
+    const greenRow = full.findIndex((l) => l.includes('图领域模型'));
     const windowed = renderMapWindow(
       sampleMap(),
       { ...MONO, color: true },
@@ -355,7 +356,7 @@ describe('renderMap', () => {
     }
     // the wire passes BETWEEN the contract boxes without corrupting either
     const contractsBody = lines.find((l) => l.includes('状态存储'))!;
-    expect(contractsBody).toContain('■ 状态存储');
+    expect(contractsBody).toContain('□ 状态存储');
     expect(contractsBody).toContain('· Watcher');
     // both the straight edge and the threaded skip edge land on the foundation
     const groundBar = lines.findIndex((l) => l.includes('原语层'));
@@ -427,6 +428,51 @@ describe('diagram kinds', () => {
     expect(showRow.indexOf('显示结果')).toBeLessThan(showRow.indexOf('校验凭证'));
     // and the lane headers sit in the same left-to-right order
     expect(header.indexOf('客户端')).toBeLessThan(header.indexOf('服务端'));
+  });
+
+  it('tells a backed done from an unbacked one at every zoom, and names it in the legend', () => {
+    // "No evidence, no done" is the ledger's fourth rule, and the picture used
+    // to render both the same solid green square — this repo's own maps hold
+    // 13 done nodes with nothing behind them.
+    // labels truncate as the picture compresses, so find each box by its hit
+    const glyphRowOf = (id: string, zoom: ZoomStep): string => {
+      const { hits, lines } = renderMapWindow(sampleMap(), { ...MONO, zoom }, { x: 0, y: 0, width: 300, height: 300 });
+      const box = hits.find((h) => h.id === id)!;
+      return lines[box.h === 1 ? box.y : box.y + 1]!; // constellation glyph row, else the label row
+    };
+    for (const zoom of [2, 1, 0, -1, -2, -3, -4] as ZoomStep[]) {
+      expect(glyphRowOf('domain', zoom)).toContain('■'); // evidence: vitest 23 passed
+      expect(glyphRowOf('store', zoom)).toContain('□'); // done, and nothing behind it
+    }
+
+    const text = renderMap(sampleMap(), MONO).join('\n');
+    expect(text).toContain('□ done, no evidence'); // the legend explains the glyph
+    const colored = renderMap(sampleMap(), { ...MONO, color: true }).join('\n');
+    expect(colored).toContain('\x1b[32;2'); // green, not fully lit
+
+    // a map where every done node is backed says nothing about the rule
+    const backed = must(updateNode(sampleMap(), { id: nid('store'), evidence: 'vitest 4 passed' }));
+    const backedText = renderMap(backed, MONO).join('\n');
+    expect(backedText).not.toContain('□');
+    expect(backedText).not.toContain('no evidence');
+  });
+
+  it('does not call a group unverified for having no evidence of its own', () => {
+    // The aggregated far zoom synthesizes a box per group, and a synthesized
+    // value has no evidence field to carry: read literally, every grouped
+    // overview would accuse itself.
+    const grouped = (renderEvidence: string | undefined): string => {
+      let map = sampleMap();
+      map = must(updateNode(map, { id: nid('render'), status: 'done' }));
+      if (renderEvidence !== undefined) map = must(updateNode(map, { id: nid('render'), evidence: renderEvidence }));
+      map = must(declareGroup(map, { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+      map = must(updateNode(map, { id: nid('domain'), group: gid('ground') }));
+      map = must(updateNode(map, { id: nid('render'), group: gid('ground') }));
+      return renderMap(map, { ...MONO, zoom: -4 }).join('\n');
+    };
+    expect(grouped('vitest 30 passed')).toContain('■ 地基'); // both members are backed
+    expect(grouped('vitest 30 passed')).not.toContain('□ 地基');
+    expect(grouped(undefined)).toContain('□ 地基'); // one member's done is a bare claim
   });
 
   it('a band bar spans the whole picture, boxes outside every lane included', () => {

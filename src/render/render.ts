@@ -58,6 +58,7 @@ import {
   kindGlyph,
   spinnerGlyph,
   statusGlyph,
+  unverifiedDoneGlyph,
   zoomMode,
 } from '../semantics/semantics.js';
 
@@ -74,6 +75,7 @@ export {
   kindGlyph,
   spinnerGlyph,
   statusGlyph,
+  unverifiedDoneGlyph,
   zoomLabel,
 } from '../semantics/semantics.js';
 
@@ -282,7 +284,7 @@ function maskChar(mask: number, heavyHorizontal: boolean, unicode: boolean): str
 // canvas — a grid of cells that knows how to merge crossing lines
 // ---------------------------------------------------------------------------
 
-type Style = 'none' | 'dim' | 'amber' | 'green' | 'red' | 'faint';
+type Style = 'none' | 'dim' | 'amber' | 'green' | 'greenDim' | 'red' | 'faint';
 
 /** SGR parameter per style; combined with bold ("1") at emit time. */
 const SGR: Readonly<Record<Style, string>> = {
@@ -290,6 +292,7 @@ const SGR: Readonly<Record<Style, string>> = {
   dim: '2',
   amber: '33',
   green: '32',
+  greenDim: '32;2', // done, but nothing behind the claim: green, not fully lit
   red: '31',
   faint: '90',
 };
@@ -466,9 +469,29 @@ interface BoxSkin {
   readonly style: Style;
 }
 
-/** The color role a status wears in a terminal. */
-function styleFor(status: NodeStatus): Style {
-  return status === 'planned' ? 'dim' : status === 'in-progress' ? 'amber' : status === 'done' ? 'green' : 'red';
+/**
+ * What a box paints for its status. `done` has two FACES, because the ledger
+ * has a rule about it ("no evidence, no done") that the picture could not
+ * show: a node built and verified and a node merely declared done were the
+ * same solid green square at every zoom. This is not a fifth status —
+ * evidence is a property of a node, and whether it exists is presentation.
+ */
+type StatusFace = NodeStatus | 'done-unverified';
+
+/** The color role a status face wears in a terminal. */
+function styleFor(face: StatusFace): Style {
+  switch (face) {
+    case 'planned':
+      return 'dim';
+    case 'in-progress':
+      return 'amber';
+    case 'done':
+      return 'green';
+    case 'done-unverified':
+      return 'greenDim';
+    case 'regressed':
+      return 'red';
+  }
 }
 
 /**
@@ -480,33 +503,35 @@ export function statusSgr(status: NodeStatus): string {
   return SGR[styleFor(status)];
 }
 
-function skinFor(status: NodeStatus, unicode: boolean): BoxSkin {
-  const style = styleFor(status);
+function skinFor(face: StatusFace, unicode: boolean): BoxSkin {
+  const style = styleFor(face);
   if (!unicode) {
-    return status === 'planned'
+    return face === 'planned'
       ? { h: '.', v: ':', corners: ['+', '+', '+', '+'], style }
       : { h: '-', v: '|', corners: ['+', '+', '+', '+'], style };
   }
-  switch (status) {
+  switch (face) {
     case 'planned':
       return { h: '╌', v: '╎', corners: ['╭', '╮', '╰', '╯'], style };
     case 'in-progress':
       return { h: '─', v: '│', corners: ['╭', '╮', '╰', '╯'], style };
+    // an unverified done keeps the heavy border of done — it is the same
+    // claim, told with a hollow glyph and a dimmer green
     case 'done':
+    case 'done-unverified':
     case 'regressed':
       return { h: '━', v: '┃', corners: ['┏', '┓', '┗', '┛'], style };
   }
 }
 
 /**
- * The glyph a node shows for its status. A terminal box CAN animate, so
- * in-progress spins through the shared frames; every other status is the
- * shared static glyph.
+ * The glyph a node shows for its status face. A terminal box CAN animate, so
+ * in-progress spins through the shared frames; every other face is a shared
+ * static glyph.
  */
-function glyphFor(status: NodeStatus, opts: RenderOptions): string {
-  return status === 'in-progress'
-    ? spinnerGlyph(opts.spinnerFrame, opts.unicode)
-    : statusGlyph(status, opts.unicode);
+function glyphFor(face: StatusFace, opts: RenderOptions): string {
+  if (face === 'in-progress') return spinnerGlyph(opts.spinnerFrame, opts.unicode);
+  return face === 'done-unverified' ? unverifiedDoneGlyph(opts.unicode) : statusGlyph(face, opts.unicode);
 }
 
 /** Plain solid box for documentation diagrams — presence, not progress. */
@@ -713,14 +738,50 @@ const AGGREGATE_GEO: ZoomGeometry = {
   bandCounts: false,
 };
 
+/**
+ * Ids of the boxes whose `done` has nothing behind it.
+ *
+ * Computed against the map as DECLARED, not as drawn: an aggregated group box
+ * carries no evidence field of its own, and reading that absence literally
+ * would paint every grouped far-zoom view as unverified. A group is exactly
+ * as backed as the members it stands for.
+ */
+function unverifiedDoneIds(declared: MellosMap, drawn: MellosMap): Set<string> {
+  const out = new Set<string>();
+  const declaredById = new Map(declared.nodes.map((n) => [n.id as string, n]));
+  for (const node of drawn.nodes) {
+    if (node.status !== 'done') continue;
+    const own = declaredById.get(node.id as string);
+    if (own !== undefined) {
+      if (own.evidence === undefined) out.add(node.id as string);
+    } else if (
+      declared.nodes.some(
+        (m) => (m.group as string | undefined) === (node.id as string) && m.status === 'done' && m.evidence === undefined,
+      )
+    ) {
+      out.add(node.id as string); // a group box stands for a member nobody verified
+    }
+  }
+  return out;
+}
+
 function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const aggregated = plainGeo.mode === 'constellation' ? aggregateMap(oriented) : undefined;
-  return buildCanvasWith(aggregated ?? oriented, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo);
+  const drawn = aggregated ?? oriented;
+  return buildCanvasWith(drawn, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo, unverifiedDoneIds(oriented, drawn));
 }
 
-function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry): { canvas: Canvas; hits: BoxHit[] } {
+function buildCanvasWith(
+  map: MellosMap,
+  opts: RenderOptions,
+  geo: ZoomGeometry,
+  unverified: ReadonlySet<string>,
+): { canvas: Canvas; hits: BoxHit[] } {
+  /** The face a node presents: its status, or the hollow face of an unbacked done. */
+  const faceOf = (node: MapNode): StatusFace =>
+    unverified.has(node.id as string) ? 'done-unverified' : node.status;
   const canvas = new Canvas();
   const neutral = isNeutralKind(map);
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank); // index 0 = top band
@@ -1042,7 +1103,14 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   }
 
   for (const box of boxes.values()) {
-    drawBox(canvas, box, opts, neutral, opts.focus !== undefined && (box.node.id as string) === opts.focus);
+    drawBox(
+      canvas,
+      box,
+      opts,
+      neutral,
+      faceOf(box.node),
+      opts.focus !== undefined && (box.node.id as string) === opts.focus,
+    );
   }
 
   // -- draw: edges (wires touching the focused node render bright) --
@@ -1113,15 +1181,14 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     }
   } else {
     const legendOpts: RenderOptions = { ...opts, spinnerFrame: 0 };
-    const legendEntries: ReadonlyArray<readonly [NodeStatus, Style]> = [
-      ['planned', 'dim'],
-      ['in-progress', 'amber'],
-      ['done', 'green'],
-      ['regressed', 'red'],
-    ];
-    for (const [status, style] of legendEntries) {
+    // The hollow face is named only where the picture shows one — the four
+    // statuses are the vocabulary, this is a rule being broken in THIS map.
+    const faces: StatusFace[] = ['planned', 'in-progress', 'done', 'regressed'];
+    if (unverified.size > 0) faces.push('done-unverified');
+    for (const face of faces) {
       if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, '   ', 'none');
-      lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
+      const word = face === 'done-unverified' ? 'done, no evidence' : face;
+      lx = canvas.text(lx, legendY, `${glyphFor(face, legendOpts)} ${word}`, styleFor(face));
     }
   }
 
@@ -1135,14 +1202,21 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   return { canvas, hits };
 }
 
-function drawBox(canvas: Canvas, box: BoxLayout, opts: RenderOptions, neutral: boolean, focused = false): void {
+function drawBox(
+  canvas: Canvas,
+  box: BoxLayout,
+  opts: RenderOptions,
+  neutral: boolean,
+  face: StatusFace,
+  focused = false,
+): void {
   const { node, x, y, w } = box;
-  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(node.status, opts.unicode);
+  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(face, opts.unicode);
   // Neutral pages give the glyph slot to the node kind (a bullet when kindless).
   const slotGlyph = neutral
     ? (node.kind !== undefined ? kindGlyph(node.kind as string, opts.unicode) : undefined) ??
       (opts.unicode ? '·' : '.')
-    : glyphFor(node.status, opts);
+    : glyphFor(face, opts);
 
   if (box.borderless) {
     // Constellation mode: the node IS its glyph. Wires simply end
