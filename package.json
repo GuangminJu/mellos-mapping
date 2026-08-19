@@ -52,6 +52,7 @@
       "types": "./lib/render/render.d.ts",
       "default": "./lib/render/render.js"
     },
+    "./server": "./dist/server.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -70,8 +71,11 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "typecheck:packages": "tsc -p tsconfig.packages.json",
     "build": "node build.mjs && tsc -p tsconfig.lib.json",
-    "verify": "npm run typecheck && npm run test && npm run build"
+    "check:package": "node scripts/check-package-surface.mjs",
+    "prepack": "npm run build",
+    "verify": "npm run typecheck && npm run typecheck:packages && npm run test && npm run build && npm run check:package"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

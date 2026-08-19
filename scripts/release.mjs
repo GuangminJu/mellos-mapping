@@ -9,11 +9,33 @@
  * reads its own file and none of them can read another's. This script is the
  * single place that knows the full list, so a release cannot bump four spots
  * and forget the fifth. Commit, merge and tag remain manual on purpose.
+ *
+ * Publishing is manual too, and stays that way: `npm publish` from a laptop
+ * cannot attach a provenance attestation — `--provenance` needs a supported
+ * CI's OIDC identity (on GitHub, a workflow with `id-token: write`) and fails
+ * outright anywhere else. Adding the flag here would break every release. A
+ * repo that wants signed provenance has to move the publish itself into a
+ * workflow first; until then the honest statement is that releases are
+ * unattested. `.github/workflows/publish-mcp-registry.yml` already proves the
+ * OIDC half works, so that move is a workflow away, not a redesign.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * The registry every `resolved` URL in package-lock.json must point at.
+ *
+ * The lock is a checked-in artifact that CI and every contributor installs
+ * from, so it may never inherit the releasing developer's registry config: a
+ * mirror baked into `resolved` sends every `npm ci` in the world to a third
+ * party, and npm's `replace-registry-host` default (`npmjs`) only rewrites
+ * npmjs-owned hosts, so nothing rewrites a mirror back. Passing it explicitly
+ * makes a release reproducible from any machine; `tests/lockfile.test.ts`
+ * fails the build if a `resolved` ever lands elsewhere.
+ */
+const LOCKFILE_REGISTRY = 'https://registry.npmjs.org/';
 
 const version = process.argv[2];
 if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -63,7 +85,11 @@ bump('packages/dsh-client/package.json', jsonVersion, `"version": "${version}"`,
 // (npm ci refuses to install when the lock disagrees with package.json.)
 // Single command strings throughout: an args array alongside shell:true is
 // deprecated (DEP0190) because the pieces would be concatenated unescaped.
-const lock = spawnSync('npm install --package-lock-only', { cwd: root, stdio: 'inherit', shell: true });
+const lock = spawnSync(`npm install --package-lock-only --registry=${LOCKFILE_REGISTRY}`, {
+  cwd: root,
+  stdio: 'inherit',
+  shell: true,
+});
 if (lock.status !== 0) {
   console.error('package-lock resync failed.');
   process.exit(1);

@@ -98,6 +98,22 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 拉取本仓库的是第一条命令。重启 Claude Code 生效。发布即 `master` 分支
 上的版本号提升。（在对话里输入 `/plugin` 也能打开同一个管理界面。）
 
+### 从 0.19 升级
+
+0.20 把地图存储从 `.claude/` 挪到了 `.mellos/`——地图属于这个工具，不属于
+某一个客户端。服务器和 watcher 都会在启动时做一次搬迁，并在 stderr 打一行
+提示：
+
+| 0.19 及更早 | 0.20 及之后 |
+| --- | --- |
+| `.claude/mellos-mapping.json` | `.mellos/map.json` |
+| `.claude/mellos-mapping.pages/` | `.mellos/pages/` |
+| `.claude/mellos-mapping.config.json` | `.mellos/config.json` |
+
+搬迁不合并、也不覆盖：已经有 `.mellos/` 存储的项目原样不动。如果地图跟着
+git 走，记得把这次搬迁提交上去——`git add -A .claude .mellos` 会把它记成
+重命名，而不是一堆删除加一堆未跟踪文件。
+
 ## Codex CLI
 
 同一个仓库也是 Codex 插件（codex-cli 0.147+）。三行装完：
@@ -253,7 +269,7 @@ npx -y -p mellos-mapping mellos-mapping-watch
 - `complex` —— 只在中等或复杂任务时建图（未配置时的默认行为）。
 - `on-request` —— 只在你明确要求时建图。
 
-选择保存在 `.claude/mellos-mapping.config.json`，用于引导 AI；它从不阻止
+选择保存在 `.mellos/config.json`，用于引导 AI；它从不阻止
 工具本身——无论什么策略，明确要求建图永远有效。
 
 工具强制的结构不变量：层按 rank 构成全序；每个节点恰好属于一层；边**严格

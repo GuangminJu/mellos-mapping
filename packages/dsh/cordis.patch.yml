@@ -27,5 +27,34 @@
       config:
         serverName: mellos-mapping
         transport: stdio
-        command: npx
-        args: ['-y', 'mellos-mapping']
+        # Run the server this bundle already depends on, with the node binary
+        # dsh is itself running. This row used to read `npx -y mellos-mapping`,
+        # which was wrong three ways:
+        #
+        #   * Version — it named none, so every start fetched whatever npm
+        #     served that minute, while the reader half was pinned. There is
+        #     no literal version here either, and that is the point: the
+        #     `mellos-mapping` dependency in this package's package.json IS
+        #     the pin, so one release bumps one place and the row follows.
+        #   * Windows — the MCP SDK's StdioClientTransport spawns with
+        #     shell:false. There `npx` is ENOENT (it is a .cmd shim, and
+        #     CreateProcess cannot run one) and even `npx.cmd` is EINVAL since
+        #     the CVE-2024-27980 fix. The panel mounted and the mmap_* tools
+        #     silently never appeared. `process.execPath` is an absolute path
+        #     to a real executable, so no PATH lookup and no shim is involved.
+        #   * Startup — nothing is fetched from the network any more.
+        #
+        # `baseUrl` is the Loader's own config anchor, i.e. the profile
+        # directory (app-boot sets it from the cordis.yml it boots). The
+        # resolution hops through THIS package before asking for the server
+        # because pnpm manages profile node_modules, where a transitive
+        # dependency is not linked at the profile root; from this package's
+        # own directory the pnpm and npm-hoisted layouts both find it.
+        # `!!js` expressions evaluate with `with (ctx)` over a bare global
+        # scope that has no `require`, hence `process.getBuiltinModule`.
+        command: !!js process.execPath
+        args:
+          - !!js >-
+            ((m) => m.createRequire(m.createRequire(new URL('package.json', baseUrl))
+            .resolve('mellos-mapping-dsh/package.json')).resolve('mellos-mapping/server'))
+            (process.getBuiltinModule('node:module'))

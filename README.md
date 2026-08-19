@@ -106,6 +106,23 @@ marketplace clone — the first command is what actually pulls this repo.
 Restart Claude Code to apply. Releases are version bumps on `master`.
 (In-app, `/plugin` opens the same management UI.)
 
+### Upgrading from 0.19
+
+0.20 moved the store out of `.claude/` — the map belongs to this tool, not to
+one client — into `.mellos/`. The server and the watcher each perform the move
+once at startup, and print a line on stderr when they do:
+
+| 0.19 and earlier | 0.20 and later |
+| --- | --- |
+| `.claude/mellos-mapping.json` | `.mellos/map.json` |
+| `.claude/mellos-mapping.pages/` | `.mellos/pages/` |
+| `.claude/mellos-mapping.config.json` | `.mellos/config.json` |
+
+Nothing is merged and nothing is overwritten: a project that already has a
+`.mellos/` store is left untouched. If you keep your maps in git, commit the
+move — `git add -A .claude .mellos` records it as renames rather than as a
+pile of deletions plus untracked files.
+
 ## Codex CLI
 
 The same repo doubles as a Codex plugin (codex-cli 0.147+). Three lines:
@@ -277,7 +294,7 @@ first time the assistant declares a map — the reply nudges it to ask you):
 - `complex` — map only medium or complex tasks (the default until configured).
 - `on-request` — map only when you explicitly ask.
 
-The choice is stored in `.claude/mellos-mapping.config.json` and guides the
+The choice is stored in `.mellos/config.json` and guides the
 assistant; it never blocks the tools, and asking for a map explicitly always
 works under any policy.
 
