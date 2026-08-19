@@ -20,9 +20,11 @@ export {
   NODE_KIND_GLYPHS,
   SPINNER_FRAMES,
   STATUS_GLYPHS,
+  UNVERIFIED_DONE_GLYPHS,
   kindGlyph,
   spinnerGlyph,
   statusGlyph,
+  unverifiedDoneGlyph,
 } from './vocabulary.js';
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,6 @@ import {
   describeStoreError,
   listPageFiles,
   loadMapFile,
-  migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
 } from 'mellos-mapping/store'
@@ -102,6 +101,12 @@ export class MmapGateway extends TypertRemoteService {
   private readonly spec: ResolvedSpec
   /** Canonical cwd → live watcher, in least-recently-read order (Map insertion order). */
   private readonly watched = new Map<string, WatchedDir>()
+  /**
+   * Canonical cwds whose watcher is being built right now. A workspace is
+   * unwatched, starting, or watched — and "starting" needs a name of its own,
+   * because building a watcher awaits and the map cannot hold one yet.
+   */
+  private readonly starting = new Set<string>()
   /** Set at dispose: refuse new watchers and let in-flight work no-op. */
   private closed = false
 
@@ -130,6 +135,13 @@ export class MmapGateway extends TypertRemoteService {
    * cwd — unknown id, no recorded cwd, or a path that no longer resolves to a
    * directory — answers `{ cwd: null, pages: [] }` rather than failing: an
    * empty store and an unusable workspace both render as "no map here".
+   *
+   * This path READS. It never migrates a pre-0.19 `.claude` store, though it
+   * used to: renaming directories in the user's project as a side effect of
+   * opening a panel is not a read, and it raced the MCP server doing the same
+   * move — existsSync passes, the rename then throws ENOENT, and the
+   * exception escapes this Remote call. The writer owns the migration; until
+   * it runs, a legacy-only workspace reads as "no map here".
    * @param sessionId - id of the session whose workspace to read.
    * @returns the canonical workspace and its pages, invalid pages included as errors.
    */
@@ -138,9 +150,6 @@ export class MmapGateway extends TypertRemoteService {
     const cwd = await this.resolveCwd(sessionId)
     if (cwd === undefined) return { cwd: null, pages: [] }
     const defaultFile = join(cwd, STATE_FILE_RELATIVE_PATH)
-    // A workspace last mapped by a pre-0.19 tool may still hold its store
-    // under the legacy `.claude` location; the library moves it exactly once.
-    migrateLegacyStore(defaultFile)
     const pages: MmapPageView[] = await Promise.all(listPageFiles(defaultFile).map(async (file) => {
       const page = pageIdOfFile(defaultFile, file) ?? null
       const mtimeMs = await stat(file).then(info => info.mtimeMs, () => null)
@@ -195,6 +204,15 @@ export class MmapGateway extends TypertRemoteService {
    * workspace refreshes its recency; exceeding the bound releases the least
    * recently read watcher. Events outside the store paths are ignored, and
    * store events coalesce into one `mmap/changed` per debounce window.
+   *
+   * The slot is reserved BEFORE the first await. Two concurrent first reads
+   * of one workspace — the panel opening in two views, a refetch racing the
+   * initial read — both passed the "already watched?" check while the first
+   * one was still awaiting its path canonicalization, and both built a
+   * watcher. The second landed in the map, the first became unreachable:
+   * every store change fired twice and the orphan kept the process alive
+   * through dispose. `closed` is re-checked after every await for the mirror
+   * case, a dispose that lands mid-setup.
    */
   private async ensureWatch(cwd: string, defaultFile: string): Promise<void> {
     if (!this.spec.watch || this.closed) return
@@ -205,47 +223,61 @@ export class MmapGateway extends TypertRemoteService {
       this.watched.set(cwd, existing)
       return
     }
-    while (this.watched.size >= this.spec.maxWatchedDirs) {
-      const [oldestCwd, oldest] = this.watched.entries().next().value as [string, WatchedDir]
-      this.watched.delete(oldestCwd)
-      if (oldest.timer !== undefined) clearTimeout(oldest.timer)
-      await oldest.watcher.close()
-    }
-    // The `.mellos` directory (or the whole store) may not exist yet; the
-    // canonicalized path lets chokidar observe its later creation, the same
-    // discipline the credentials file watcher uses.
-    const storeDir = await canonicalizeWatchPath(join(defaultFile, '..'))
-    const watcher = chokidarWatch(storeDir, {
-      ignoreInitial: true,
-      depth: 2,
-      awaitWriteFinish: {
-        stabilityThreshold: this.spec.debounceMs,
-        pollInterval: Math.max(1, Math.min(this.spec.debounceMs, 10)),
-      },
-    })
-    const entry: WatchedDir = { watcher, timer: undefined }
-    watcher.on('all', (_event, path) => {
-      if (this.closed || !isStorePath(relative(storeDir, path))) return
-      if (entry.timer !== undefined) clearTimeout(entry.timer)
-      entry.timer = setTimeout(() => {
-        entry.timer = undefined
+    if (this.starting.has(cwd)) return // another read is building it right now
+    this.starting.add(cwd)
+    try {
+      while (this.watched.size >= this.spec.maxWatchedDirs) {
+        const [oldestCwd, oldest] = this.watched.entries().next().value as [string, WatchedDir]
+        this.watched.delete(oldestCwd)
+        if (oldest.timer !== undefined) clearTimeout(oldest.timer)
+        await oldest.watcher.close()
+      }
+      if (this.closed) return
+      // The `.mellos` directory (or the whole store) may not exist yet; the
+      // canonicalized path lets chokidar observe its later creation, the same
+      // discipline the credentials file watcher uses.
+      const storeDir = await canonicalizeWatchPath(join(defaultFile, '..'))
+      if (this.closed) return
+      const watcher = chokidarWatch(storeDir, {
+        ignoreInitial: true,
+        depth: 2,
+        awaitWriteFinish: {
+          stabilityThreshold: this.spec.debounceMs,
+          pollInterval: Math.max(1, Math.min(this.spec.debounceMs, 10)),
+        },
+      })
+      const entry: WatchedDir = { watcher, timer: undefined }
+      watcher.on('all', (_event, path) => {
+        if (this.closed || !isStorePath(relative(storeDir, path))) return
+        if (entry.timer !== undefined) clearTimeout(entry.timer)
+        entry.timer = setTimeout(() => {
+          entry.timer = undefined
+          if (this.closed) return
+          this.ctx.emit('mmap/changed', cwd)
+        }, this.spec.debounceMs)
+      })
+      watcher.on('ready', () => {
+        // The triggering read raced the watcher's own setup: a store write
+        // between that read and the watcher becoming active never fires an
+        // event. One change signal at ready closes the gap — consumers re-read,
+        // which is a no-op when nothing actually moved.
         if (this.closed) return
         this.ctx.emit('mmap/changed', cwd)
-      }, this.spec.debounceMs)
-    })
-    watcher.on('ready', () => {
-      // The triggering read raced the watcher's own setup: a store write
-      // between that read and the watcher becoming active never fires an
-      // event. One change signal at ready closes the gap — consumers re-read,
-      // which is a no-op when nothing actually moved.
-      if (this.closed) return
-      this.ctx.emit('mmap/changed', cwd)
-    })
-    watcher.on('error', (error) => {
-      this.ctx.logger.warn('mmap-host: watcher error on %s', storeDir)
-      this.ctx.logger.warn(error)
-    })
-    this.watched.set(cwd, entry)
+      })
+      watcher.on('error', (error) => {
+        this.ctx.logger.warn('mmap-host: watcher error on %s', storeDir)
+        this.ctx.logger.warn(error)
+      })
+      // Disposed while this watcher was being wired: it is in no collection,
+      // so nothing else will ever close it.
+      if (this.closed) {
+        await watcher.close()
+        return
+      }
+      this.watched.set(cwd, entry)
+    } finally {
+      this.starting.delete(cwd)
+    }
   }
 }
 

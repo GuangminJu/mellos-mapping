@@ -66,6 +66,26 @@ describe('displayWidth', () => {
     expect(displayWidth('图a图')).toBe(5);
     expect(displayWidth('⠋')).toBe(1); // braille spinner is narrow
   });
+
+  it('counts an emoji as two columns and a combining mark as none', () => {
+    // Labels are data: people write ✅ and é, and a width the grid gets wrong
+    // shears every row below the box.
+    expect(displayWidth('✅')).toBe(2);
+    expect(displayWidth('⚡')).toBe(2);
+    expect(displayWidth('🚀')).toBe(2);
+    expect(displayWidth('é')).toBe(1); // decomposed é: the mark rides on the e
+    expect(displayWidth('a‍b')).toBe(2); // zero-width joiner adds nothing
+    expect(displayWidth('❤️')).toBe(1); // variation selector adds nothing
+    expect(displayWidth('👍🏽')).toBe(2); // a skin tone is not a column
+  });
+
+  it('leaves the map own alphabet one column wide', () => {
+    // Every one of these is East Asian AMBIGUOUS, which a Western terminal
+    // draws narrow; widening them would break every box in the picture.
+    for (const glyph of ['·', '■', '✗', '○', '●', '◆', '▤', '⊞', '⋯', '▸', '⌫', '‹', '›']) {
+      expect(displayWidth(glyph)).toBe(1);
+    }
+  });
 });
 
 describe('renderMap', () => {
@@ -114,7 +134,8 @@ describe('renderMap', () => {
       return cp >= 0x2500 && cp <= 0x28ff;
     });
     expect(structural).toEqual([]);
-    expect(text).toContain('# 状态存储'); // done glyph in ASCII
+    expect(text).toContain('# 图领域模型'); // done glyph in ASCII
+    expect(text).toContain('o 状态存储'); // ... and its hollow face, done with no evidence
   });
 
   it('emits ANSI codes only when color is on', () => {
@@ -155,7 +176,7 @@ describe('renderMap', () => {
 
   it('reopens ANSI styles inside a window', () => {
     const full = renderMap(sampleMap(), { ...MONO, color: true });
-    const greenRow = full.findIndex((l) => l.includes('状态存储'));
+    const greenRow = full.findIndex((l) => l.includes('图领域模型'));
     const windowed = renderMapWindow(
       sampleMap(),
       { ...MONO, color: true },
@@ -220,11 +241,18 @@ describe('renderMap', () => {
   });
 
   it('scales the picture down step by step, boxes staying boxes (no early mode switch)', () => {
-    const barWidth = (zoom: ZoomStep): number =>
-      Math.max(...renderMap(sampleMap(), { ...MONO, zoom }).filter((l) => l.includes('━')).map(displayWidth));
-    expect(barWidth(-1)).toBeLessThan(barWidth(0));
-    expect(barWidth(-2)).toBeLessThan(barWidth(-1));
-    expect(barWidth(-3)).toBeLessThan(barWidth(-2));
+    // Measured on the BOXES: the band bars carry a label margin of their own,
+    // and at -3 the labels gain their done/total counts, so the bar rows are
+    // not a measure of how much the geometry compressed.
+    const pictureWidth = (zoom: ZoomStep): number =>
+      Math.max(
+        ...renderMapWindow(sampleMap(), { ...MONO, zoom }, { x: 0, y: 0, width: 0, height: 0 }).hits.map(
+          (h) => h.x + h.w,
+        ),
+      );
+    expect(pictureWidth(-1)).toBeLessThan(pictureWidth(0));
+    expect(pictureWidth(-2)).toBeLessThan(pictureWidth(-1));
+    expect(pictureWidth(-3)).toBeLessThan(pictureWidth(-2));
     const height = (zoom: ZoomStep): number => renderMap(sampleMap(), { ...MONO, zoom }).length;
     expect(height(-2)).toBeLessThan(height(0));
     for (const zoom of [-1, -2, -3] as const) {
@@ -328,7 +356,7 @@ describe('renderMap', () => {
     }
     // the wire passes BETWEEN the contract boxes without corrupting either
     const contractsBody = lines.find((l) => l.includes('状态存储'))!;
-    expect(contractsBody).toContain('■ 状态存储');
+    expect(contractsBody).toContain('□ 状态存储');
     expect(contractsBody).toContain('· Watcher');
     // both the straight edge and the threaded skip edge land on the foundation
     const groundBar = lines.findIndex((l) => l.includes('原语层'));
@@ -400,6 +428,127 @@ describe('diagram kinds', () => {
     expect(showRow.indexOf('显示结果')).toBeLessThan(showRow.indexOf('校验凭证'));
     // and the lane headers sit in the same left-to-right order
     expect(header.indexOf('客户端')).toBeLessThan(header.indexOf('服务端'));
+  });
+
+  it('tells a backed done from an unbacked one at every zoom, and names it in the legend', () => {
+    // "No evidence, no done" is the ledger's fourth rule, and the picture used
+    // to render both the same solid green square — this repo's own maps hold
+    // 13 done nodes with nothing behind them.
+    // labels truncate as the picture compresses, so find each box by its hit
+    const glyphRowOf = (id: string, zoom: ZoomStep): string => {
+      const { hits, lines } = renderMapWindow(sampleMap(), { ...MONO, zoom }, { x: 0, y: 0, width: 300, height: 300 });
+      const box = hits.find((h) => h.id === id)!;
+      return lines[box.h === 1 ? box.y : box.y + 1]!; // constellation glyph row, else the label row
+    };
+    for (const zoom of [2, 1, 0, -1, -2, -3, -4] as ZoomStep[]) {
+      expect(glyphRowOf('domain', zoom)).toContain('■'); // evidence: vitest 23 passed
+      expect(glyphRowOf('store', zoom)).toContain('□'); // done, and nothing behind it
+    }
+
+    const text = renderMap(sampleMap(), MONO).join('\n');
+    expect(text).toContain('□ done, no evidence'); // the legend explains the glyph
+    const colored = renderMap(sampleMap(), { ...MONO, color: true }).join('\n');
+    expect(colored).toContain('\x1b[32;2'); // green, not fully lit
+
+    // a map where every done node is backed says nothing about the rule
+    const backed = must(updateNode(sampleMap(), { id: nid('store'), evidence: 'vitest 4 passed' }));
+    const backedText = renderMap(backed, MONO).join('\n');
+    expect(backedText).not.toContain('□');
+    expect(backedText).not.toContain('no evidence');
+  });
+
+  it('does not call a group unverified for having no evidence of its own', () => {
+    // The aggregated far zoom synthesizes a box per group, and a synthesized
+    // value has no evidence field to carry: read literally, every grouped
+    // overview would accuse itself.
+    const grouped = (renderEvidence: string | undefined): string => {
+      let map = sampleMap();
+      map = must(updateNode(map, { id: nid('render'), status: 'done' }));
+      if (renderEvidence !== undefined) map = must(updateNode(map, { id: nid('render'), evidence: renderEvidence }));
+      map = must(declareGroup(map, { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+      map = must(updateNode(map, { id: nid('domain'), group: gid('ground') }));
+      map = must(updateNode(map, { id: nid('render'), group: gid('ground') }));
+      return renderMap(map, { ...MONO, zoom: -4 }).join('\n');
+    };
+    expect(grouped('vitest 30 passed')).toContain('■ 地基'); // both members are backed
+    expect(grouped('vitest 30 passed')).not.toContain('□ 地基');
+    expect(grouped(undefined)).toContain('□ 地基'); // one member's done is a bare claim
+  });
+
+  it('a band bar spans the whole picture, boxes outside every lane included', () => {
+    // Lanes reorder a band into its lane regions plus a trailing region for
+    // the laneless, so the LAST-DECLARED box of a band is not the rightmost
+    // one — and the aggregated far zoom declares exactly such a box first.
+    let map = setTitle(EMPTY_MAP, '车道');
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: rnk(0) }));
+    map = must(declareLane(map, { id: laid('client'), label: '客户端' }));
+    map = must(declareLane(map, { id: laid('server'), label: '服务端' }));
+    map = must(declareNode(map, { id: nid('note'), label: '旁注', layer: lid('t0') })); // no lane: rightmost
+    map = must(declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: laid('client') }));
+    map = must(declareNode(map, { id: nid('check'), label: '校验凭证', layer: lid('t0'), lane: laid('server') }));
+
+    const lines = renderMap(map, MONO);
+    const { hits } = renderMapWindow(map, MONO, { x: 0, y: 0, width: 0, height: 0 });
+    const offLane = hits.find((h) => h.id === 'note')!;
+    expect(offLane.x).toBeGreaterThan(Math.max(...hits.filter((h) => h.id !== 'note').map((h) => h.x)));
+    const barWidth = Math.max(...lines.filter((l) => l.includes('━')).map(displayWidth));
+    expect(barWidth).toBeGreaterThanOrEqual(offLane.x + offLane.w);
+  });
+
+  it('never lets a band label cut a wire crossing the bar', () => {
+    // The label used to be written over the bar, and Canvas.line refuses to
+    // overdraw a label literal: a wire descending through a column under the
+    // label simply vanished at the bar and re-appeared below it.
+    const crossings = (map: MellosMap, zoom: ZoomStep): number => {
+      const lines = renderMap(map, { ...MONO, zoom });
+      let checked = 0;
+      for (const [y, line] of lines.entries()) {
+        if (!line.includes('━')) continue;
+        const above = [...(lines[y - 1] ?? '')];
+        const below = [...(lines[y + 1] ?? '')];
+        const bar = [...line];
+        for (let x = 0; x < bar.length; x++) {
+          // only the wire area: every glyph left of the label is one column
+          if (!'│┼┿├┤'.includes(above[x] ?? ' ') || !'│┼┿├┤'.includes(below[x] ?? ' ')) continue;
+          expect(bar[x]).toBe('┿'); // a wire passes THROUGH the band, visibly
+          checked++;
+        }
+      }
+      return checked;
+    };
+    let grouped = sampleMap();
+    grouped = must(declareGroup(grouped, { id: gid('ground'), label: '地基子系统', layer: lid('primitives') }));
+    grouped = must(updateNode(grouped, { id: nid('domain'), group: gid('ground') }));
+    grouped = must(updateNode(grouped, { id: nid('render'), group: gid('ground') }));
+    expect(crossings(sampleMap(), 0)).toBeGreaterThan(0);
+    expect(crossings(grouped, -4)).toBeGreaterThan(0); // the far zoom is where it was reproduced
+  });
+
+  it('gives two crossing edges their own columns instead of one shared wire', () => {
+    // Same-lane boxes align across bands, so one edge's exit column and
+    // another's entry column landed on the very same column of one gap: the
+    // two wires ran on top of each other and the corner where one turned
+    // became a ├, reading as a single wire that branches.
+    let map = setTitle(EMPTY_MAP, '交叉');
+    map = setKind(map, 'sequence' as MapKind);
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: rnk(1) }));
+    map = must(declareLane(map, { id: laid('left'), label: '左侧' }));
+    map = must(declareLane(map, { id: laid('right'), label: '右侧' }));
+    map = must(declareNode(map, { id: nid('a'), label: '上左', layer: lid('t1'), lane: laid('left') }));
+    map = must(declareNode(map, { id: nid('b'), label: '上右', layer: lid('t1'), lane: laid('right') }));
+    map = must(declareNode(map, { id: nid('c'), label: '下左', layer: lid('t0'), lane: laid('left') }));
+    map = must(declareNode(map, { id: nid('d'), label: '下右', layer: lid('t0'), lane: laid('right') }));
+    map = must(linkNodes(map, nid('a'), nid('d')));
+    map = must(linkNodes(map, nid('b'), nid('c')));
+
+    const text = renderMap(map, MONO).join('\n');
+    // every box here is wide enough for its own slot, and no node has two
+    // edges on one side, so a T junction can only be two wires merged
+    expect(text).not.toContain('├');
+    expect(text).not.toContain('┤');
+    expect(text).toContain('┌');
+    expect(text).toContain('┐');
   });
 
   it('a node linking a sub-map wears the ⊞ badge, surviving label truncation', () => {

@@ -5,12 +5,15 @@
  * and the shared glyph vocabulary through the semantics entry); a `node:*`
  * import anywhere in their closure would break that consumer at bundle time.
  *
- * ./store and ./render are deliberately absent. store is the Node half by
- * contract. The terminal renderer imports no node builtins today either, but
- * nothing browser-side depends on it any more — the vocabulary a browser
- * shares with the pane lives in ./semantics — so the promise stays scoped to
- * what browsers actually need, and render keeps the freedom to reach for a
- * builtin (a TTY query, an env probe) if the terminal ever asks for one.
+ * ./store is deliberately absent: it is the Node half by contract.
+ *
+ * ./render is here for a different promise than the others. Nothing
+ * browser-side depends on it any more — the vocabulary a browser shares with
+ * the pane lives in ./semantics — but the renderer's own header opens with
+ * "pure function of (map, options): no I/O, no clock", and a `node:*` import
+ * anywhere in its eight modules would be exactly that promise breaking. The
+ * gate walks imports transitively, so naming the composition root covers the
+ * whole stage pipeline behind it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -22,6 +25,7 @@ const BROWSER_SAFE_ENTRIES = [
   'src/domain/ops.ts',
   'src/store/format.ts',
   'src/semantics/semantics.ts',
+  'src/render/render.ts',
 ];
 
 /** Static import/export-from specifiers of one TypeScript module. */

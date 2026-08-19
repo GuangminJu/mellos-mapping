@@ -45,6 +45,25 @@ export function statusGlyph(status: NodeStatus, unicode: boolean): string {
 }
 
 /**
+ * The glyph a DONE node wears when nothing was recorded to back the claim.
+ *
+ * "No evidence, no done" is the fourth rule of the ledger, and until now the
+ * picture could not say when it was broken: a done node with a test run
+ * behind it and a done node with nothing behind it were the same solid
+ * square. The hollow square is deliberately the SAME SHAPE — this is still
+ * done, just not filled in — so it reads as a degree of done, not as a fifth
+ * status. There is no fifth status: evidence is a property of a node, and
+ * whether it exists is presentation, not structure.
+ */
+export const UNVERIFIED_DONE_GLYPHS: readonly [unicode: string, ascii: string] = ['□', 'o'];
+
+/** The glyph for a done node with no evidence; see {@link UNVERIFIED_DONE_GLYPHS}. */
+export function unverifiedDoneGlyph(unicode: boolean): string {
+  const [uni, ascii] = UNVERIFIED_DONE_GLYPHS;
+  return unicode ? uni : ascii;
+}
+
+/**
  * Animation frames for in-progress work, per repertoire. The caller owns the
  * clock: it advances a frame index and this module maps it to a glyph, so
  * every animated surface spins at whatever rate its medium can paint while
