@@ -259,6 +259,12 @@ export interface DeclareNodeInput {
   readonly label: string;
   readonly layer: LayerId;
   readonly status?: NodeStatus;
+  /**
+   * Verification evidence, for a node declared straight into `done` — work
+   * already finished when the map is drawn is as entitled to its proof as
+   * work finished under the map's eyes.
+   */
+  readonly evidence?: string;
   readonly detail?: string;
   readonly group?: GroupId;
   readonly kind?: NodeKind;
@@ -287,6 +293,7 @@ export function declareNode(map: MellosMap, input: DeclareNodeInput): Result<Mel
     label: input.label,
     layer: input.layer,
     status: input.status ?? 'planned',
+    ...(input.evidence !== undefined ? { evidence: input.evidence } : {}),
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     ...(input.group !== undefined ? { group: input.group } : {}),
     ...(input.kind !== undefined ? { kind: input.kind } : {}),

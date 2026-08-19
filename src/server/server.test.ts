@@ -152,6 +152,226 @@ describe('mellos-mapping MCP server', () => {
   });
 });
 
+describe('revising a live map over the wire', () => {
+  const GHOST = {
+    layers: [
+      { id: 'base', name: 'Base', rank: 0 },
+      { id: 'top', name: 'Top', rank: 10 },
+    ],
+    lanes: [{ id: 'l', label: 'Lane' }],
+    groups: [{ id: 'g', label: 'Group', layer: 'base' }],
+    nodes: [
+      { id: 'core', label: 'Core', layer: 'base' },
+      { id: 'shell', label: 'Shell', layer: 'top' },
+    ],
+  };
+  const onDisk = (): { title?: string; layers: Array<{ id: string; name: string }>; nodes: Array<Record<string, string>> } =>
+    JSON.parse(readFileSync(stateFile, 'utf8'));
+
+  it('moves a node to another band and persists it', async () => {
+    await callText('mmap_declare', GHOST);
+    const moved = await callText('mmap_update', { updates: [{ id: 'core', layer: 'top' }] });
+    expect(moved.isError).toBe(false);
+    expect(onDisk().nodes.find((n) => n['id'] === 'core')?.['layer']).toBe('top');
+  });
+
+  it('renames a band, a group and a lane in one call', async () => {
+    await callText('mmap_declare', GHOST);
+    const renamed = await callText('mmap_update', {
+      layers: [{ id: 'base', name: '原语层', rank: 1 }],
+      groups: [{ id: 'g', label: '新子系统' }],
+      lanes: [{ id: 'l', label: '新泳道' }],
+    });
+    expect(renamed.isError).toBe(false);
+    const view = await callText('mmap_view', {});
+    expect(view.text).toContain('原语层');
+    expect(onDisk().layers.find((l) => l.id === 'base')).toMatchObject({ name: '原语层', rank: 1 });
+  });
+
+  it('clears evidence and the title with null, leaving absent keys behind', async () => {
+    await callText('mmap_declare', { ...GHOST, title: '演示' });
+    await callText('mmap_update', { updates: [{ id: 'core', status: 'done', evidence: 'spec green' }] });
+    expect(onDisk().nodes.find((n) => n['id'] === 'core')?.['evidence']).toBe('spec green');
+
+    const cleared = await callText('mmap_update', { updates: [{ id: 'core', evidence: null }] });
+    expect(cleared.isError).toBe(false);
+    expect(onDisk().nodes.find((n) => n['id'] === 'core')).not.toHaveProperty('evidence');
+
+    expect((await callText('mmap_declare', { title: null })).isError).toBe(false);
+    expect(onDisk()).not.toHaveProperty('title');
+  });
+
+  it('refuses a node that dives into the page the call targets', async () => {
+    const refused = await callText('mmap_declare', {
+      page: 'alpha',
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', submap: 'alpha' }],
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('own page');
+  });
+
+  it('refuses a revision that revises nothing', async () => {
+    await callText('mmap_declare', GHOST);
+    const empty = await callText('mmap_update', {});
+    expect(empty.isError).toBe(true);
+    expect(empty.text).toContain('nothing to revise');
+  });
+});
+
+describe('mmap_view answers "which pages does this project have?"', () => {
+  it('names the default page as present or absent, plus every named page and the one shown', async () => {
+    const emptyProject = await callText('mmap_view', {});
+    expect(emptyProject.text).toContain('pages: (default: absent) — this view: (default)');
+
+    await callText('mmap_declare', {
+      page: 'alpha',
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
+    });
+    // a project whose work lives on named pages: discoverable without the default file
+    const stillNoDefault = await callText('mmap_view', {});
+    expect(stillNoDefault.text).toContain('pages: (default: absent), alpha — this view: (default)');
+
+    await callText('mmap_declare', { layers: [{ id: 'base', name: 'Base', rank: 0 }] });
+    const viewingAlpha = await callText('mmap_view', { page: 'alpha' });
+    expect(viewingAlpha.text).toContain('pages: (default), alpha — this view: alpha');
+  });
+});
+
+/**
+ * The advertised schema is the only documentation a model reads before it
+ * calls, so it is specified as strictly as the behavior behind it.
+ */
+interface JsonSchemaNode {
+  readonly description?: string;
+  readonly properties?: Record<string, JsonSchemaNode>;
+  readonly items?: JsonSchemaNode;
+}
+
+describe('the advertised tool schemas', () => {
+  const schemaOf = async (tool: string): Promise<JsonSchemaNode> => {
+    const found = (await client.listTools()).tools.find((t) => t.name === tool);
+    if (found === undefined) throw new Error(`no such tool: ${tool}`);
+    return found.inputSchema as unknown as JsonSchemaNode;
+  };
+
+  it('gives every field its own schema — no field is advertised as a $ref to another', async () => {
+    for (const tool of (await client.listTools()).tools) {
+      expect(JSON.stringify(tool.inputSchema)).not.toContain('$ref');
+    }
+  });
+
+  it('describes a node id as a node id, and the page as the page', async () => {
+    const declare = await schemaOf('mmap_declare');
+    // The regression this pins: one shared id instance made zod-to-json-schema
+    // emit every later id as a pointer to `page`, so the model read "node id =
+    // the page this call targets".
+    expect(declare.properties?.['nodes']?.items?.properties?.['id']?.description).toContain('node');
+    expect(declare.properties?.['nodes']?.items?.properties?.['id']?.description).not.toContain('page');
+    expect(declare.properties?.['page']?.description).toContain('page');
+    expect(declare.properties?.['nodes']?.items?.properties?.['layer']?.description).toContain('band');
+  });
+
+  it('states the domain rules the map really enforces', async () => {
+    const declare = await schemaOf('mmap_declare');
+    const rank = declare.properties?.['layers']?.items?.properties?.['rank'];
+    expect(rank?.description).toContain('0 = bottom');
+    expect(declare.properties?.['nodes']?.items?.properties?.['status']?.description).toContain('regressed');
+  });
+
+  it('refuses an unknown key instead of dropping it, and names the key', async () => {
+    const misspelled = await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodez: [{ id: 'core', label: 'Core', layer: 'base' }],
+    });
+    expect(misspelled.isError).toBe(true);
+    expect(misspelled.text).toContain('nodez');
+
+    // ...at every depth: a misspelled field inside an item is the dangerous
+    // one, because the item itself still applies
+    const inner = await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', evidance: 'typo' }],
+    });
+    expect(inner.isError).toBe(true);
+    expect(inner.text).toContain('evidance');
+  });
+
+  it('accepts evidence on declare, so finished work can be mapped with its proof', async () => {
+    const declared = await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', status: 'done', evidence: 'vitest: 225 passed' }],
+    });
+    expect(declared.isError).toBe(false);
+    const onDisk = JSON.parse(readFileSync(stateFile, 'utf8')) as { nodes: Array<{ evidence?: string }> };
+    expect(onDisk.nodes[0]?.evidence).toBe('vitest: 225 passed');
+  });
+
+  it('refuses an empty title — a blank is not how a field is cleared', async () => {
+    const blank = await callText('mmap_declare', { title: '' });
+    expect(blank.isError).toBe(true);
+  });
+});
+
+/**
+ * Everything the tools accept is eventually drawn into a terminal, so the
+ * boundary keeps escape sequences out of the store rather than trusting each
+ * renderer to defuse them later.
+ */
+describe('control characters at the tool boundary', () => {
+  // Built from code points rather than written as escapes, so that reading
+  // this file (or grepping it) shows exactly which character is under test.
+  const ESC = String.fromCharCode(0x1b);
+  const BEL = String.fromCharCode(0x07);
+  const NEWLINE = String.fromCharCode(0x0a);
+  const BASE = { layers: [{ id: 'base', name: 'Base', rank: 0 }] };
+
+  it('refuses an ESC sequence in a label — a map may not repaint the terminal', async () => {
+    const attack = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: `${ESC}[2JCore`, layer: 'base' }],
+    });
+    expect(attack.isError).toBe(true);
+    expect(attack.text).toContain('control characters');
+  });
+
+  it('refuses a newline in a label — it would break the box the label sits in', async () => {
+    const broken = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: `Core${NEWLINE}and more`, layer: 'base' }],
+    });
+    expect(broken.isError).toBe(true);
+  });
+
+  it('refuses control characters in a title and in evidence too', async () => {
+    expect((await callText('mmap_declare', { title: `${ESC}]0;pwned` })).isError).toBe(true);
+    await callText('mmap_declare', { ...BASE, nodes: [{ id: 'core', label: 'Core', layer: 'base' }] });
+    const evidence = await callText('mmap_update', {
+      updates: [{ id: 'core', status: 'done', evidence: `passed${BEL}` }],
+    });
+    expect(evidence.isError).toBe(true);
+  });
+
+  it('accepts newlines in detail — a design note is written in paragraphs', async () => {
+    const declared = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', detail: `Responsibility.${NEWLINE}Contract.` }],
+    });
+    expect(declared.isError).toBe(false);
+    const onDisk = JSON.parse(readFileSync(stateFile, 'utf8')) as { nodes: Array<{ detail?: string }> };
+    expect(onDisk.nodes[0]?.detail).toBe(`Responsibility.${NEWLINE}Contract.`);
+  });
+
+  it('refuses a BEL in detail — newline and tab are the only controls a note may carry', async () => {
+    const noisy = await callText('mmap_declare', {
+      ...BASE,
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', detail: `Ready${BEL}` }],
+    });
+    expect(noisy.isError).toBe(true);
+  });
+});
+
 describe('mapping policy setup — the flow enforces itself over the wire', () => {
   const DECLARE = {
     layers: [{ id: 'base', name: 'Base', rank: 0 }],

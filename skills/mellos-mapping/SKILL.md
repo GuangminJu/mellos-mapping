@@ -19,8 +19,10 @@ maintain a **Mellos map**: a layered dependency map of the system under
 construction, persisted in `.mellos/map.json` (default page) plus
 `.mellos/pages/<slug>.json` (named pages) and rendered live in
 a terminal split pane beside the conversation. To learn whether a map already
-exists, call `mmap_view` — do not probe the default file, which is absent
-when all work lives on named pages.
+exists — and under which page slugs — call `mmap_view`: every response ends
+with a `pages:` line naming the pages this project has and which one you are
+looking at. Never probe the default file to decide: it is absent whenever all
+work lives on named pages.
 
 The map is a **ledger, not a judge**: the tools only refuse structural
 corruption; *when* to declare, start, or complete nodes is YOUR discipline,
@@ -100,9 +102,14 @@ usually mean the server was never registered: have the user run
    green only with a stated reason (its own verification re-ran green, or it
    never touches the broken behavior). After the fix, restore each node only
    as its own verification passes again.
-6. **Revise the ghost honestly.** The design is a hypothesis. When a node
-   splits, a primitive appears, or a layer was wrong, update the map in the
-   same turn you change the plan. A map that no longer matches your intent is
+6. **Revise the ghost honestly.** The design is a hypothesis, and everything
+   it declared can be revised. When a node splits, a primitive appears, or a
+   band was wrong, fix the map in the same turn you change the plan:
+   `mmap_update` moves a node to another band (`layer`), renames or re-ranks
+   a band, relabels a group or a lane, and clears any optional field with
+   `null` (never an empty string); `mmap_declare` grows the map and owns the
+   title (`null` removes it); `mmap_remove` drops edges, nodes, groups, lanes
+   and bands you have emptied. A map that no longer matches your intent is
    the one failure mode this system cannot survive.
 
 ## Modeling guidance

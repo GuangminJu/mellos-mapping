@@ -20,7 +20,9 @@ pages at `.mellos/pages/<slug>.json` — the watcher takes the
 default path as its base, polls ALL of these files, and redraws on change.
 The default file is optional; a project whose work lives on named pages has
 no `.mellos/map.json` at all. So never probe that single file to
-decide whether a map exists — call `mmap_view`, which reads the real store.
+decide whether a map exists — call `mmap_view`, which reads the real store
+and ends every response with a `pages:` line naming the pages that exist
+(marking the default page absent when it is) and the one it just rendered.
 
 Follow the platform-appropriate route:
 
