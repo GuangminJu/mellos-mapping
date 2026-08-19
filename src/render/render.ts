@@ -105,8 +105,53 @@ export interface Viewport {
 // display width — CJK-aware, because labels will often be Chinese
 // ---------------------------------------------------------------------------
 
+// A label is data: it carries whatever the author typed, and people type
+// emoji and accented letters. Both break a grid that assumes one code point
+// is one column — an emoji occupies two, a combining mark none — and the
+// damage is not local: a box border computed one column short shears every
+// row below it. The two tables below are the Unicode East Asian Width W/F
+// set and the zero-advance set, kept deliberately narrow: everything the
+// standard calls AMBIGUOUS (■ ● ✗ ○ and the rest of this map's own glyph
+// alphabet) stays ONE column, which is what a Western terminal draws.
+
 const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0x1100, 0x115f], // Hangul Jamo
+  // Wide symbols scattered through the BMP — mostly emoji that predate the
+  // emoji planes (⌚ ⏰ ⚡ ✅ ✨ ❌ ❓ ⭐ ⬛ …).
+  [0x231a, 0x231b],
+  [0x2329, 0x232a],
+  [0x23e9, 0x23ec],
+  [0x23f0, 0x23f0],
+  [0x23f3, 0x23f3],
+  [0x25fd, 0x25fe],
+  [0x2614, 0x2615],
+  [0x2648, 0x2653],
+  [0x267f, 0x267f],
+  [0x2693, 0x2693],
+  [0x26a1, 0x26a1],
+  [0x26aa, 0x26ab],
+  [0x26bd, 0x26be],
+  [0x26c4, 0x26c5],
+  [0x26ce, 0x26ce],
+  [0x26d4, 0x26d4],
+  [0x26ea, 0x26ea],
+  [0x26f2, 0x26f3],
+  [0x26f5, 0x26f5],
+  [0x26fa, 0x26fa],
+  [0x26fd, 0x26fd],
+  [0x2705, 0x2705],
+  [0x270a, 0x270b],
+  [0x2728, 0x2728],
+  [0x274c, 0x274c],
+  [0x274e, 0x274e],
+  [0x2753, 0x2755],
+  [0x2757, 0x2757],
+  [0x2795, 0x2797],
+  [0x27b0, 0x27b0],
+  [0x27bf, 0x27bf],
+  [0x2b1b, 0x2b1c],
+  [0x2b50, 0x2b50],
+  [0x2b55, 0x2b55],
   [0x2e80, 0xa4cf], // CJK radicals .. Yi (covers CJK Unified Ideographs)
   [0xa960, 0xa97f],
   [0xac00, 0xd7a3], // Hangul syllables
@@ -115,14 +160,35 @@ const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0xfe30, 0xfe6f],
   [0xff00, 0xff60], // fullwidth forms
   [0xffe0, 0xffe6],
+  [0x1f300, 0x1f64f], // pictographs, transport, emoticons (🚀 🎯 😀 …)
+  [0x1f680, 0x1f6ff],
+  [0x1f900, 0x1f9ff], // supplemental symbols (🤖 🧱 …)
+  [0x1fa70, 0x1faff], // symbols extended-A
   [0x20000, 0x3fffd], // CJK extension planes
 ];
 
-function charWidth(cp: number): number {
-  for (const [lo, hi] of WIDE_RANGES) {
-    if (cp >= lo && cp <= hi) return 2;
+/** Code points that advance the cursor by nothing at all. */
+const ZERO_WIDTH_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x0300, 0x036f], // combining diacritical marks (decomposed 'e' + ´)
+  [0x1ab0, 0x1aff],
+  [0x1dc0, 0x1dff],
+  [0x200b, 0x200f], // zero-width space .. RLM, zero-width joiner among them
+  [0x20d0, 0x20f0], // combining marks for symbols
+  [0xfe00, 0xfe0f], // variation selectors, VS16 (emoji presentation) included
+  [0xfe20, 0xfe2f], // combining half marks
+  [0x1f3fb, 0x1f3ff], // emoji skin tone modifiers — always applied to a base
+];
+
+function inRanges(cp: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  for (const [lo, hi] of ranges) {
+    if (cp >= lo && cp <= hi) return true;
   }
-  return 1;
+  return false;
+}
+
+function charWidth(cp: number): number {
+  if (inRanges(cp, ZERO_WIDTH_RANGES)) return 0;
+  return inRanges(cp, WIDE_RANGES) ? 2 : 1;
 }
 
 /** Terminal column width of a string (CJK chars occupy two columns). */
@@ -273,11 +339,20 @@ class Canvas {
   text(x: number, y: number, s: string, style: Style, bold = false): number {
     let cx = x;
     for (const ch of s) {
+      const w = charWidth(ch.codePointAt(0)!);
+      if (w === 0) {
+        // A combining mark, a variation selector or a skin tone takes no
+        // column of its own: it rides on the cell it modifies. Given one, it
+        // would overwrite the base character and the row would shift left.
+        const base = this.cell(Math.max(0, cx - 1), y);
+        const target = base.literal === '' ? this.cell(Math.max(0, cx - 2), y) : base; // skip a wide char's phantom half
+        target.literal = (target.literal ?? '') + ch;
+        continue;
+      }
       const c = this.cell(cx, y);
       c.literal = ch;
       c.style = style;
       c.bold = bold;
-      const w = charWidth(ch.codePointAt(0)!);
       if (w === 2) {
         // The second column of a wide character is a phantom cell: it must
         // exist so later writes don't overlap, but it emits nothing.
@@ -448,6 +523,8 @@ function neutralSkin(unicode: boolean): BoxSkin {
 const BOX_H = 3;
 const BOX_GAP = 2;
 const LEFT_MARGIN = 2;
+/** Bar cells kept left of the narrowest band label, so a band still reads as a band. */
+const BAR_MIN_RUN = 7;
 
 /** Box content budget for a detail step; present exactly when mode is 'detail'. */
 interface DetailBudget {
@@ -702,6 +779,9 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     }
     for (let i = 0; i < laneCount; i++) regionW[i] = Math.max(regionW[i]!, displayWidth(map.lanes[i]!.label) + 2);
     let x0 = LEFT_MARGIN;
+    // Every region gets an entry, the trailing off-lane one included: it holds
+    // real boxes (a group node carries no lane, and aggregateMap emits those
+    // first), and a picture that forgets its last region measures short.
     for (let i = 0; i < regions; i++) {
       laneX.push(x0);
       laneW.push(regionW[i]!);
@@ -727,13 +807,12 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     return geo.bandCounts && row.length > 0 && !neutral ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
   });
 
-  let contentWidth = LEFT_MARGIN;
-  for (const row of bandBoxes) {
-    const last = row[row.length - 1];
-    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
-  }
-  for (let i = 0; i < laneCount; i++) contentWidth = Math.max(contentWidth, laneX[i]! + laneW[i]!);
-  for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
+  // The RIGHTMOST box, not the last-declared one: lanes reorder a band into
+  // its lane regions, so declaration order says nothing about position, and a
+  // measurement taken from the wrong box left every band bar short.
+  let contentWidth = LEFT_MARGIN + BAR_MIN_RUN;
+  for (const box of boxes.values()) contentWidth = Math.max(contentWidth, box.x + box.w);
+  for (let i = 0; i < laneX.length; i++) contentWidth = Math.max(contentWidth, laneX[i]! + laneW[i]!);
 
   // -- edge analysis (see module header for the routing preference order) --
   const routes: EdgeRoute[] = map.edges.map((e) => {
@@ -746,6 +825,32 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
       toBand: bandIndexOf.get(toBox.node.layer as string)!,
     };
   });
+
+  /**
+   * Columns already carrying a VERTICAL run inside each band gap, and the
+   * edge that owns each.
+   *
+   * Two edges given the same column in one gap do not cross there — they run
+   * on top of each other for the whole gap, and where the shorter one turns
+   * onto its track row the union of masks becomes ├ or ┤: one wire that
+   * appears to branch, which is a lie about the dependencies. Packing tracks
+   * by horizontal extent alone could not see this, because the collision is
+   * vertical. A wire may of course reuse a column it owns itself — a skip
+   * edge descending straight out of its own exit slot is the ideal route, not
+   * a collision — and horizontal segments still cross verticals freely, which
+   * is an honest ┼.
+   */
+  const gapVerticals: Map<number, EdgeRoute>[] = Array.from(
+    { length: Math.max(0, bands.length - 1) },
+    () => new Map<number, EdgeRoute>(),
+  );
+  const verticalFree = (gap: number, x: number, route: EdgeRoute): boolean => {
+    const owner = gapVerticals[gap]?.get(x);
+    return owner === undefined || owner === route;
+  };
+  const takeVertical = (gap: number, x: number, route: EdgeRoute): void => {
+    gapVerticals[gap]?.set(x, route);
+  };
 
   // Attach columns already promised on a box's border (either side).
   const claimedColumns = new Map<BoxLayout, Set<number>>();
@@ -767,8 +872,9 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     const mid = Math.floor((lo + hi) / 2);
     for (let d = 0; d <= hi - lo && !straightX.has(r); d++) {
       for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
-        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x)) {
+        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x) && verticalFree(r.fromBand, x, r)) {
           straightX.set(r, claim(r.toBox, claim(r.fromBox, x)));
+          takeVertical(r.fromBand, x, r);
           break;
         }
       }
@@ -783,13 +889,16 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     outgoing.set(r.fromBox, [...(outgoing.get(r.fromBox) ?? []), r]);
     incoming.set(r.toBox, [...(incoming.get(r.toBox) ?? []), r]);
   }
-  const freeSlot = (box: BoxLayout, k: number, n: number): number => {
+  const freeSlot = (box: BoxLayout, k: number, n: number, route: EdgeRoute, gap: number): number => {
     const lo = box.x + 1;
     const hi = box.x + box.w - 2;
     const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round(((k + 1) * (box.w - 1)) / (n + 1))));
     for (let d = 0; d <= hi - lo; d++) {
       for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
-        if (x >= lo && x <= hi && isFree(box, x)) return claim(box, x);
+        if (x >= lo && x <= hi && isFree(box, x) && verticalFree(gap, x, route)) {
+          takeVertical(gap, x, route);
+          return claim(box, x);
+        }
       }
     }
     return ideal; // every column claimed (extremely crowded box) — overlap and live with it
@@ -798,9 +907,12 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   for (const r of bent) {
     const outs = outgoing.get(r.fromBox)!;
     const ins = incoming.get(r.toBox)!;
+    // The exit descends through the gap below the source band; the entry
+    // climbs out of the gap above the target band. For an adjacent edge those
+    // are one gap, so the entry column also avoids the exit column.
     attach.set(r, {
-      sx: freeSlot(r.fromBox, outs.indexOf(r), outs.length),
-      ex: freeSlot(r.toBox, ins.indexOf(r), ins.length),
+      sx: freeSlot(r.fromBox, outs.indexOf(r), outs.length, r, r.fromBand),
+      ex: freeSlot(r.toBox, ins.indexOf(r), ins.length, r, r.toBand - 1),
     });
   }
 
@@ -811,12 +923,20 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
   let fallbackCount = 0;
   const blockedByBox = (band: number, x: number): boolean =>
     bandBoxes[band]!.some((b) => x >= b.x && x <= b.x + b.w - 1);
+  /** The descent runs through every gap from the source band to the target's. */
+  const descentGapsFree = (r: EdgeRoute, c: number): boolean => {
+    for (let g = r.fromBand; g <= r.toBand - 1; g++) {
+      if (!verticalFree(g, c, r)) return false;
+    }
+    return true;
+  };
   for (const r of skipRoutes) {
     const { ex } = attach.get(r)!;
     let chosen: number | undefined;
     for (let d = 0; d <= contentWidth && chosen === undefined; d++) {
       for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
         if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
+        if (!descentGapsFree(r, c)) continue;
         let blocked = false;
         for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
         if (!blocked) {
@@ -827,9 +947,20 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
     }
     if (chosen === undefined) chosen = contentWidth + 2 + fallbackCount++ * 2; // margin fallback
     usedDescent.add(chosen);
+    for (let g = r.fromBand; g <= r.toBand - 1; g++) takeVertical(g, chosen, r);
     descentX.set(r, chosen);
   }
-  const totalWidth = fallbackCount > 0 ? contentWidth + 2 + fallbackCount * 2 : contentWidth;
+  /** Everything a wire may occupy: the boxes, plus any margin corridor. */
+  const wiredWidth = fallbackCount > 0 ? contentWidth + 2 + fallbackCount * 2 : contentWidth;
+  /**
+   * The band label owns a margin of its own at the right edge, and nothing
+   * else may enter it. Written over the bar, as it used to be, a label
+   * REPLACED the bar cells it covered — and Canvas.line refuses to overdraw a
+   * label literal, so any wire descending through a column under the label
+   * was simply cut at the bar, leaving a wire that starts nowhere.
+   */
+  const labelMargin = Math.max(...bandLabel.map(displayWidth));
+  const totalWidth = wiredWidth + labelMargin;
 
   // 4. pack horizontal segments into shared track rows per gap
   const gapCount = bands.length - 1;
@@ -905,10 +1036,9 @@ function buildCanvasWith(map: MellosMap, opts: RenderOptions, geo: ZoomGeometry)
 
   for (let b = 0; b < bands.length; b++) {
     const label = bandLabel[b]!;
-    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b]!, LEFT | RIGHT, true);
-    // flush right; only a margin-fallback column pushes it back to the content edge
-    const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
-    canvas.text(labelStart, barY[b]!, label, 'none', true);
+    for (let x = 0; x < wiredWidth; x++) canvas.line(x, barY[b]!, LEFT | RIGHT, true);
+    // flush right, inside the reserved margin — never over a bar cell a wire could need
+    canvas.text(totalWidth - displayWidth(label), barY[b]!, label, 'none', true);
   }
 
   for (const box of boxes.values()) {
