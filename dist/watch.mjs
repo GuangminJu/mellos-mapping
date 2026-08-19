@@ -1750,7 +1750,7 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
 }
 function main() {
   const cfg = parseArgs(process.argv.slice(2), process.cwd());
-  migrateLegacyStore(cfg.file);
+  if (migrateLegacyStore(cfg.file)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";

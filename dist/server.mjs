@@ -22787,7 +22787,7 @@ function resolveStateFile(env, cwd) {
 }
 async function main() {
   const stateFile = resolveStateFile(process.env, process.cwd());
-  migrateLegacyStore(stateFile);
+  if (migrateLegacyStore(stateFile)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
   const server = buildServer(stateFile);
   await server.connect(new StdioServerTransport());
 }
