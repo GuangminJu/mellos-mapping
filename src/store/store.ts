@@ -140,7 +140,7 @@ function writeFileAtomic(path: string, contents: string): Result<void, StoreErro
  * Project-relative location of the DEFAULT page's state file. The store lives
  * in the tool-owned `.mellos/` directory: the map belongs to mellos-mapping,
  * not to whichever host (Claude Code, Codex, a harness) happens to drive the
- * server, so no host brand appears in the path. Pre-0.19 stores under
+ * server, so no host brand appears in the path. Pre-0.20 stores under
  * `.claude/` are moved once by {@link migrateLegacyStore}.
  */
 export const STATE_FILE_RELATIVE_PATH = join('.mellos', 'map.json');
@@ -351,7 +351,7 @@ export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): R
 // legacy migration — stores written under the old host-coupled location
 // ---------------------------------------------------------------------------
 //
-// Up to 0.18 the store lived in `.claude/mellos-mapping.*`: the map's home
+// Up to 0.19 the store lived in `.claude/mellos-mapping.*`: the map's home
 // was coupled to one host brand, which turned absurd the moment another host
 // (a harness, Codex) drove the same server. The move is one-time and
 // explicit — entry points call it before touching the store; nothing here

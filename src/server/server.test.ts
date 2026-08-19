@@ -5,7 +5,7 @@
  * watcher-visible file actually changes.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -312,6 +312,217 @@ describe('the advertised tool schemas', () => {
     const blank = await callText('mmap_declare', { title: '' });
     expect(blank.isError).toBe(true);
   });
+
+  it('refuses an id that is not a slug, wherever an id appears', async () => {
+    const BASE = { layers: [{ id: 'base', name: 'Base', rank: 0 }] };
+    // The grammar is one rule for every id in the system, so one bad shape is
+    // enough per position: an upper-case letter, a space, a leading dash, a
+    // blank, and a name longer than the 64-character budget.
+    for (const bad of ['Core', 'core node', '-core', '', 'c'.repeat(65)]) {
+      const node = await callText('mmap_declare', { ...BASE, nodes: [{ id: bad, label: 'Core', layer: 'base' }] });
+      expect(node.isError, `node id "${bad}" was accepted`).toBe(true);
+    }
+    const layer = await callText('mmap_declare', { layers: [{ id: 'Base', name: 'Base', rank: 0 }] });
+    expect(layer.isError).toBe(true);
+    const group = await callText('mmap_declare', { ...BASE, groups: [{ id: 'A B', label: 'G', layer: 'base' }] });
+    expect(group.isError).toBe(true);
+  });
+
+  it('refuses a page slug that is not a slug — before it can name a file', async () => {
+    for (const bad of ['../escape', 'Alpha', 'a/b', '']) {
+      const paged = await callText('mmap_view', { page: bad });
+      expect(paged.isError, `page "${bad}" was accepted`).toBe(true);
+    }
+    // and nothing was created outside the store's own shape
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('refuses a rank outside the band range', async () => {
+    for (const rank of [-1, 100, 1.5]) {
+      const bad = await callText('mmap_declare', { layers: [{ id: 'base', name: 'Base', rank }] });
+      expect(bad.isError, `rank ${rank} was accepted`).toBe(true);
+    }
+  });
+
+  it('refuses a label longer than the budget every surface shares', async () => {
+    const BASE = { layers: [{ id: 'base', name: 'Base', rank: 0 }] };
+    const sixty = 'x'.repeat(60);
+    const fits = await callText('mmap_declare', { ...BASE, nodes: [{ id: 'core', label: sixty, layer: 'base' }] });
+    expect(fits.isError).toBe(false);
+    const over = await callText('mmap_declare', { nodes: [{ id: 'more', label: `${sixty}x`, layer: 'base' }] });
+    expect(over.isError).toBe(true);
+  });
+
+  it('refuses a zoom off the ladder, at both ends', async () => {
+    for (const zoom of [-5, 3]) {
+      const bad = await callText('mmap_view', { zoom });
+      expect(bad.isError, `zoom ${zoom} was accepted`).toBe(true);
+    }
+  });
+
+  it('refuses an empty updates array — a batch that revises nothing is a mistake', async () => {
+    await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
+    });
+    const before = readFileSync(stateFile, 'utf8');
+    for (const args of [{ updates: [] }, { layers: [] }, { groups: [] }, { lanes: [] }]) {
+      const empty = await callText('mmap_update', args);
+      expect(empty.isError, `${JSON.stringify(args)} was accepted`).toBe(true);
+    }
+    expect(readFileSync(stateFile, 'utf8')).toBe(before);
+  });
+});
+
+/**
+ * The wire contract when the store is already damaged: every tool answers
+ * with the fault named, and NOTHING is written — a map file nobody could
+ * parse must not be replaced by whatever the caller happened to send.
+ */
+describe('a corrupted state file', () => {
+  const BROKEN = '{"version":1,"layers":[},';
+
+  it('refuses every mutation and leaves the file byte-for-byte intact', async () => {
+    mkdirSync(join(dir, '.mellos'), { recursive: true });
+    writeFileSync(stateFile, BROKEN, 'utf8');
+
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['mmap_declare', { nodes: [{ id: 'core', label: 'Core', layer: 'base' }] }],
+      ['mmap_update', { updates: [{ id: 'core', status: 'done', evidence: 'spec green' }] }],
+      ['mmap_remove', { nodes: ['core'] }],
+    ];
+    for (const [tool, args] of calls) {
+      const answer = await callText(tool, args);
+      expect(answer.isError, `${tool} did not report the damaged file`).toBe(true);
+      expect(answer.text).toContain('not valid JSON');
+      expect(answer.text).toContain(stateFile);
+      expect(readFileSync(stateFile, 'utf8'), `${tool} rewrote the damaged file`).toBe(BROKEN);
+    }
+
+    // reading is refused the same way, and still says which file
+    const view = await callText('mmap_view', {});
+    expect(view.isError).toBe(true);
+    expect(view.text).toContain('not valid JSON');
+
+    // a page BESIDE the damaged default page is unaffected: pages isolate
+    const paged = await callText('mmap_declare', {
+      page: 'alpha',
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+    });
+    expect(paged.isError).toBe(false);
+    expect(readFileSync(stateFile, 'utf8')).toBe(BROKEN);
+  });
+
+  it('refuses a file whose shape the parser will not coerce, naming the key', async () => {
+    mkdirSync(join(dir, '.mellos'), { recursive: true });
+    // The shape mistake leniency would turn into data loss: read as "no
+    // nodes", the next save would write that erasure over the file.
+    writeFileSync(stateFile, '{"version":1,"layers":[],"nodes":{},"edges":[]}', 'utf8');
+    const declared = await callText('mmap_declare', { layers: [{ id: 'base', name: 'Base', rank: 0 }] });
+    expect(declared.isError).toBe(true);
+    expect(declared.text).toContain('"nodes"');
+  });
+});
+
+describe('refusals that protect the structure, over the wire', () => {
+  const TWO_BANDS = {
+    layers: [
+      { id: 'base', name: 'Base', rank: 0 },
+      { id: 'top', name: 'Top', rank: 1 },
+    ],
+    nodes: [
+      { id: 'core', label: 'Core', layer: 'base' },
+      { id: 'shell', label: 'Shell', layer: 'top' },
+    ],
+    edges: [{ from: 'shell', to: 'core' }],
+  };
+
+  it('refuses to remove a band that still holds a node, and says what holds it', async () => {
+    await callText('mmap_declare', TWO_BANDS);
+    const before = readFileSync(stateFile, 'utf8');
+    const refused = await callText('mmap_remove', { layers: ['base'] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('still holds node "core"');
+    expect(readFileSync(stateFile, 'utf8')).toBe(before);
+
+    // emptied first, the same removal lands
+    expect((await callText('mmap_remove', { nodes: ['core', 'shell'] })).isError).toBe(false);
+    expect((await callText('mmap_remove', { layers: ['base'] })).isError).toBe(false);
+  });
+
+  it('refuses to remove a band that still holds a group', async () => {
+    await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      groups: [{ id: 'g', label: 'Group', layer: 'base' }],
+    });
+    const refused = await callText('mmap_remove', { layers: ['base'] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('still holds group "g"');
+  });
+
+  it('refuses a move that would leave an edge pointing sideways or up (I4)', async () => {
+    await callText('mmap_declare', TWO_BANDS);
+    const before = readFileSync(stateFile, 'utf8');
+
+    // shell uses core; moving shell down onto core's band makes the edge
+    // same-band, which is the same fault as pointing upward
+    const sideways = await callText('mmap_update', { updates: [{ id: 'shell', layer: 'base' }] });
+    expect(sideways.isError).toBe(true);
+    expect(sideways.text).toContain('not strictly downward');
+    expect(readFileSync(stateFile, 'utf8')).toBe(before);
+
+    // and the other direction: moving the used node above its user
+    const upward = await callText('mmap_update', { updates: [{ id: 'core', layer: 'top' }] });
+    expect(upward.isError).toBe(true);
+    expect(upward.text).toContain('not strictly downward');
+    expect(readFileSync(stateFile, 'utf8')).toBe(before);
+  });
+});
+
+describe('mmap_view along the zoom ladder', () => {
+  const MAP = {
+    title: 'Ladder',
+    layers: [
+      { id: 'base', name: 'Base', rank: 0 },
+      { id: 'top', name: 'Top', rank: 1 },
+    ],
+    groups: [{ id: 'foundation', label: 'Foundation', layer: 'base' }],
+    nodes: [
+      { id: 'core', label: 'Core', layer: 'base', group: 'foundation', status: 'done', evidence: 'spec: 12 passed' },
+      { id: 'edge-case', label: 'Edge Case', layer: 'base', group: 'foundation' },
+      { id: 'shell', label: 'Shell', layer: 'top', detail: 'Outer boundary.' },
+    ],
+    edges: [{ from: 'shell', to: 'core' }],
+  };
+
+  it('renders every rung, and each one shows what that rung promises', async () => {
+    await callText('mmap_declare', MAP);
+
+    // -4: the far view AGGREGATES into groups, so the group's name is what
+    // survives and a member's is not.
+    const overview = await callText('mmap_view', { zoom: -4 });
+    expect(overview.isError).toBe(false);
+    expect(overview.text).toContain('Foundation');
+
+    // 1 and 2 unfold the box contents; +2 is the reading card, so a note that
+    // fits at +1 must still be there at +2.
+    for (const zoom of [1, 2]) {
+      const detail = await callText('mmap_view', { zoom });
+      expect(detail.isError, `zoom ${zoom} failed`).toBe(false);
+      expect(detail.text, `zoom ${zoom} dropped the evidence`).toContain('spec: 12 passed');
+      expect(detail.text, `zoom ${zoom} dropped the design note`).toContain('Outer boundary.');
+    }
+
+    // the standard rung shows neither — that is what unfolding means
+    const standard = await callText('mmap_view', { zoom: 0 });
+    expect(standard.text).not.toContain('spec: 12 passed');
+
+    // every rung carries the page-set line
+    for (const zoom of [-4, -3, -2, -1, 0, 1, 2]) {
+      const view = await callText('mmap_view', { zoom });
+      expect(view.text, `zoom ${zoom} lost the pages line`).toContain('pages: (default) — this view: (default)');
+    }
+  });
 });
 
 /**
@@ -414,7 +625,7 @@ describe('mapping policy setup — the flow enforces itself over the wire', () =
 
   it('a broken config file is surfaced on declare and on read, never treated as unset', async () => {
     const configFile = join(dir, '.mellos', 'config.json');
-    await callText('mmap_declare', DECLARE); // creates .claude/
+    await callText('mmap_declare', DECLARE); // creates .mellos/
     writeFileSync(configFile, 'not json');
 
     const read = await callText('mmap_setup', {});

@@ -47,6 +47,16 @@ export function mergePages(
   return result.pages.map((page) => {
     const key = page.page ?? DEFAULT_PAGE_KEY
     const old = prev.find(entry => entry.key === key)
+    // VIOLATION: security-boundaries - `as unknown as MellosMap` trusts the
+    // wire. The value crossed a typert Remote call as JsonValue, and this is
+    // the browser side of that call. It is not re-validated because it cannot
+    // be here: parseMap is the validator, it lives in mellos-mapping/format,
+    // and running it per page per revision on the render path would re-replay
+    // every map through the domain ops on every poll. What the value IS was
+    // decided at the real boundary — the host loaded it with loadMapFile,
+    // which parses strictly and answers a broken file as `error` instead of a
+    // map (packages/dsh/src/index.ts). This side's trust ends there: a
+    // hostile host is a hostile process, not a threat this cast admits.
     const map = page.map != null ? (page.map as unknown as MellosMap) : old?.map
     const moved = old !== undefined && page.mtimeMs !== old.mtimeMs
     const fresh = !first && key !== activeKey && ((old?.fresh ?? false) || moved || old === undefined)

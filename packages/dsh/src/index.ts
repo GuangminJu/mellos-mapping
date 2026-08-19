@@ -155,6 +155,15 @@ export class MmapGateway extends TypertRemoteService {
       const mtimeMs = await stat(file).then(info => info.mtimeMs, () => null)
       const loaded = loadMapFile(file)
       return loaded.ok
+        // VIOLATION: no-primitive-obsession - a MellosMap is flattened to
+        // JsonValue for the wire. The transport (typert Remote) types a
+        // payload structurally as JsonValue, and MellosMap is not assignable
+        // to it: its fields are branded strings, which JsonValue's `string`
+        // does not admit. Un-branding the domain to satisfy a transport would
+        // be the wrong direction, and hand-writing a JsonValue mirror of the
+        // whole map (plus a converter both sides maintain) would duplicate
+        // the format module for no added guarantee — the client casts back
+        // and its spec pins the round trip.
         ? { page, map: loaded.value as unknown as JsonValue, error: null, mtimeMs }
         : { page, map: null, error: describeStoreError(loaded.error), mtimeMs }
     }))
