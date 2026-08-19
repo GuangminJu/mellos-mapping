@@ -98,7 +98,6 @@ import {
 } from '../store/store.js';
 import { parseInput } from './input.js';
 import {
-  type PageEntry,
   type PageFault,
   type PaneState,
   describePageFault,
