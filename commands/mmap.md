@@ -6,12 +6,19 @@ allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 
 If `$ARGUMENTS` contains `setup`, do NOT open the pane. Run the setup
 questionnaire instead: call `mmap_setup` (no arguments) to read the current
-policy, then ask the user which mode they want — `always` (map every
-structured task: workflows, designs, architecture, technical dependencies),
-`complex` (only medium or complex tasks), `on-request` (only when explicitly
-asked) — using AskUserQuestion where available, mentioning the current
-policy if one is set. Persist their choice with `mmap_setup {policy}` and
-confirm what was saved and where. Then stop.
+policy — the reply names the USER-level choice, this project's override if it
+has one, and which of them is in effect. Then ask the user which mode they
+want — `always` (map every structured task: workflows, designs, architecture,
+technical dependencies), `complex` (only medium or complex tasks),
+`on-request` (only when explicitly asked) — using AskUserQuestion where
+available, mentioning whatever is already set.
+
+Persist with `mmap_setup {policy, scope}`. `scope` defaults to `user`, which
+is almost always right: the question is about how this person works, so it is
+answered once and applies to every project they open. Use
+`scope: "project"` only when they say they want THIS project to differ from
+that — ask which they mean if `$ARGUMENTS` does not make it obvious. Confirm
+what was saved, at which scope, and where. Then stop.
 
 Otherwise: open the live Mellos map watcher for this project in a separate terminal pane.
 The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`. The store is
@@ -69,6 +76,11 @@ Follow the platform-appropriate route:
    the `×` on the active tab, asks, and a second press within the window
    deletes that page's file. `mmap_remove {pages: [...]}` does the same from
    a tool call — with the user behind it, never on your own initiative.
+
+   The user also has the pane on a toggle of their own: `mmap` typed in any
+   terminal of the project opens it, and `mmap` again closes it. So a pane
+   that disappears mid-session is a decision, not a crash — say so rather
+   than reopening it uninvited.
 
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`

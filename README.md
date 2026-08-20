@@ -94,9 +94,32 @@ claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install
 
 Requires Node.js 18+ on PATH (Claude Code itself requires Node, so you
 already have it). No build step: `dist/` is committed, so a clone runs as-is —
-`dist/server.mjs` (the MCP server), `dist/watch.mjs` (the pane) and
+`dist/server.mjs` (the MCP server), `dist/watch.mjs` (the pane),
+`dist/mmap.mjs` (the `mmap` toggle), `dist/hook-session-start.mjs` (the
+`SessionStart` hook that `hooks/hooks.json` registers) and
 `dist/store-paths.mjs` (the store's path vocabulary, which the plain-node pane
 launcher imports instead of restating filenames).
+
+The first session after installing asks you **one** question — how eager
+mapping should be — and records the answer for every project you will ever
+open. From then on the hook carries it into each new session by itself; there
+is no per-project setup step. See
+[Setup: choose when maps open](#setup-choose-when-maps-open).
+
+To type `mmap` in your own terminals, run this once:
+
+```
+node "<plugin dir>/scripts/install-mmap-command.mjs"
+```
+
+It writes `mmap.cmd` (cmd, PowerShell) and `mmap` (git-bash) into
+`%LOCALAPPDATA%\mellos-mapping\bin`, and appends that one directory to your
+**user** PATH — printing the new value before writing it, doing nothing when
+the entry is already there, and refusing to touch the PATH at all where `setx`
+would flatten `%VARIABLE%` references or truncate a long one (it prints what
+to add by hand instead). Open a new terminal afterwards. `--uninstall`
+reverses both halves. `npm i -g mellos-mapping` provides the same command
+without this step.
 
 ## Update
 
@@ -299,6 +322,36 @@ though one is already running for this project. Watcher-only: `--file <path>`
 names the default page's state file (the launcher derives it from the project
 directory).
 
+### The mmap command
+
+`mmap`, typed in any terminal, is a **toggle**: it opens the map pane for the
+project you are standing in, or closes the one that is already open.
+
+| You type | What it does |
+| --- | --- |
+| `mmap` | nothing watching this project → open the pane; something watching → close it |
+| `mmap <page-slug>` | open on that page, or retarget an already-open pane to it — never closes |
+| `mmap --window` | open in the dedicated "mellos-mapping" window instead of splitting this one |
+| `mmap --force` | open another pane even though one is already running |
+
+The project is found the way git finds its root: from the current directory
+upwards, to the nearest one holding a `.mellos/` store. Standing in a project
+that has no map yet is fine — the pane opens on its standby screen and says so
+until the first `mmap_declare`.
+
+Closing goes through the store rather than through a signal: `mmap` writes a
+one-shot request beside the map, the pane consumes it on its next poll (250 ms
+by default) and exits, handing the terminal back exactly as it found it — mouse
+reporting off, cursor visible. A pane still on the standby screen closes the
+same way. The request is deleted as it is read, and a leftover from a pane that
+died is swept when the next one starts, so a stale request can never close a
+fresh pane.
+
+Every watcher flag above works here too, forwarded verbatim; an unknown one is
+a usage error, never dropped in silence. `mmap` needs
+[installing once](#install) unless you have the npm package. Inside a Claude
+Code conversation, `/mellos-mapping:mmap` opens the same pane.
+
 ### Pages
 
 A project can keep several maps side by side — **one effort = one page**.
@@ -417,17 +470,33 @@ the previous file is intact and calling again is the whole recovery.
 
 ### Setup: choose when maps open
 
-Each project chooses how eager mapping is, once, via `/mmap setup` (or the
-first time the assistant declares a map — the reply nudges it to ask you):
+How eager mapping should be is a habit, not a property of a repository — so it
+is chosen **once, for you**, in the first session after you install:
 
 - `always` — map every structured task: workflows, designs, architecture,
-  technical dependencies.
-- `complex` — map only medium or complex tasks (the default until configured).
-- `on-request` — map only when you explicitly ask.
+  technical dependencies. The assistant opens the pane on its own initiative;
+  your recorded answer is its standing consent, so it stops asking.
+- `complex` — the same, but only for medium or complex tasks: several modules,
+  a new subsystem, roughly an hour of work or more.
+- `on-request` — map only when you explicitly ask. In a project with no map,
+  the plugin then says nothing at all — zero noise is the point.
 
-The choice is stored in `.mellos/config.json` and guides the
-assistant; it never blocks the tools, and asking for a map explicitly always
-works under any policy.
+The answer lands in `<your home>/.mellos/config.json` and reaches every session
+through the plugin's `SessionStart` hook, which reads it and hands the
+assistant the matching instruction before you have typed anything. Nothing has
+to be set up per project, ever again.
+
+One project can still differ: `mmap_setup {policy, scope: "project"}` records
+a policy in that project's `.mellos/config.json`, and a project policy
+overrides the user one. `/mmap setup` re-runs the question for either scope
+whenever you want to change your mind. The policy guides the assistant; it
+never blocks the tools, and asking for a map explicitly always works under any
+policy.
+
+Hosts without hooks (Codex CLI, a bare MCP client) get the question another
+way: while no policy exists in either scope, every `mmap_declare` reply carries
+a note telling the assistant to ask you. That note goes quiet for good — in
+every project — the moment you have answered anywhere.
 
 Structural invariants enforced by the tools: layers form a total order by
 rank (an integer in 0..99, 0 = bottom, unique per map); every node lives in

@@ -115,12 +115,25 @@ describe('the pane flags in the docs', () => {
     ...flagArray('PANE_FLAGS'),
     '--page', // consumed inline by parsePaneArgs, so it is in no array
   ]);
-  const accepted = new Set([...watcherFlags, ...launcherFlags]);
+  /**
+   * The PATH installer is a third command line with a vocabulary of its own,
+   * and the READMEs document it. Taken from the usage line it prints, which is
+   * the same string a user is shown when they get it wrong.
+   */
+  const installerFlags = new Set(
+    [
+      ...(/export const USAGE = '([^']*)'/.exec(read('scripts/install-mmap-command.mjs'))?.[1] ?? '').matchAll(
+        /--[a-z][a-z0-9-]*/g,
+      ),
+    ].map((m) => m[0]),
+  );
+  const accepted = new Set([...watcherFlags, ...launcherFlags, ...installerFlags]);
 
-  it('both parsers were found (the extraction still matches the sources)', () => {
+  it('all three parsers were found (the extraction still matches the sources)', () => {
     expect(watcherFlags.has('--no-follow')).toBe(true);
     expect(launcherFlags.has('--window')).toBe(true);
-    expect(accepted.size).toBeGreaterThanOrEqual(9);
+    expect(installerFlags.has('--uninstall')).toBe(true);
+    expect(accepted.size).toBeGreaterThanOrEqual(10);
   });
 
   it('mentions no flag neither parser accepts', () => {

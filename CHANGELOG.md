@@ -44,9 +44,45 @@ the git history (`git log --oneline`), which is where this file starts.
 - **The lockfile points at `registry.npmjs.org`.** `npm ci` from a clone no
   longer depends on whatever registry the lockfile was last written against;
   a spec guards it.
+- **`loadMappingPolicy` and `saveMappingPolicy` take the CONFIG file path**
+  (`mellos-mapping/store`), not the default page's path. The policy now lives
+  in two scopes and one loader serves both, so the argument had to become the
+  file itself: pass `configFilePath(defaultFile)` for a project, or
+  `userConfigFilePath(home)` for the user. `buildServer` likewise takes the
+  user configuration path as a second argument.
 
 ### Added
 
+- **`mmap` — one word in any terminal that opens the map pane, and the same
+  word that closes it.** Bare `mmap` finds the project the way git finds its
+  root (upwards from the cwd to the nearest `.mellos/`), opens the pane if
+  nothing is watching that project, and closes the pane if something is. It
+  closes through the store, not a signal: a one-shot request beside the map,
+  consumed on the pane's next poll, after which the pane exits and hands the
+  terminal back — a pane still on its standby screen included. A leftover
+  request from a pane that died is swept when the next pane starts, so a stale
+  one can never close a fresh one. `mmap <slug>` opens on that page or
+  retargets an open pane to it, and never closes. Every watcher flag is
+  forwarded verbatim; an unknown one is refused. npm installs provide it as a
+  `bin`; a plugin install gets it from
+  `node scripts/install-mmap-command.mjs`, which writes a `.cmd` and a
+  git-bash shim into `%LOCALAPPDATA%\mellos-mapping\bin` and appends that one
+  directory to the user PATH — printing the new value first, doing nothing
+  when it is already there, and refusing outright where `setx` would flatten
+  a `%VARIABLE%` PATH or truncate a long one. `--uninstall` reverses it.
+- **The mapping policy is chosen once, for the user, and injected into every
+  session.** It was a per-project setting that something had to remember to
+  ask about. It now has a USER scope — `<home>/.mellos/config.json`, the same
+  file format — and `mmap_setup` writes there by default; a project can still
+  override it with `scope: "project"`, and the read form reports both scopes
+  and which one governs. A `SessionStart` hook (registered by the new
+  `hooks/hooks.json`, bundled as `dist/hook-session-start.mjs`) then puts the
+  answer in front of the assistant at every session start, resume and
+  compaction: the one-time question when nobody has chosen, the working loop
+  under `always`/`complex` — including opening the pane WITHOUT asking, since
+  a recorded policy is standing consent — one quiet line under `on-request` in
+  a project that has a map, and nothing at all in one that does not. The hook
+  never fails a session: any internal fault exits 0 in silence.
 - **A page can be deleted — from the pane and from the tool surface.** Pages
   accumulate (one effort is one page) and nothing could remove one. In the
   pane, `x` — or the `×` the active tab now carries in mouse mode — asks, the
@@ -118,9 +154,18 @@ the git history (`git log --oneline`), which is where this file starts.
 ### Changed
 
 - `.mellos/` gained `config.json` (the mapping policy) alongside `map.json`,
-  `pages/` and the one-shot `focus` file; the 0.19 → 0.20 move of the whole
-  store out of `.claude/` still runs once per project and logs one line on
-  stderr.
+  `pages/` and the one-shot `focus` file, plus the one-shot `quit` file the
+  `mmap` toggle writes; the 0.19 → 0.20 move of the whole store out of
+  `.claude/` still runs once per project and logs one line on stderr.
+- The declare-time setup nudge fires only while NEITHER scope has a policy, so
+  it stops for good after the one user-level answer instead of returning in
+  every new project. It is kept for hosts that have no hooks (Codex CLI, bare
+  MCP clients), where it is the only path the question has.
+- `dist/` gained `dist/mmap.mjs` (the `mmap` toggle) and
+  `dist/hook-session-start.mjs` (the `SessionStart` hook); the launcher
+  machinery both pane entry points share now lives in
+  `scripts/pane-core.mjs`, and `scripts/open-pane.mjs` keeps its command line
+  unchanged.
 - `npm run build` cleans `dist/` and `lib/` before emitting, `prepack` builds,
   and `npm run verify` ends with `check:package`, which packs the real tarball
   and fails if any `exports` or `bin` target is missing from it.
