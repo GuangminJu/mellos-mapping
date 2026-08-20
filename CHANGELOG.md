@@ -51,6 +51,14 @@ the git history (`git log --oneline`), which is where this file starts.
   `userConfigFilePath(home)` for the user. `buildServer` likewise takes the
   user configuration path as a second argument.
 
+### Changed
+
+- **The standby screen is text only.** The animated water (the ripple engine)
+  is gone: on real terminals its shaded cells rendered as blocks of color
+  noise rather than waves, and decoration was never the screen's job. While
+  no map exists the pane now shows just the spinner line and the waiting
+  diagnostics, so the standby fits shorter panes than it used to.
+
 ### Added
 
 - **`mmap` — one word in any terminal that opens the map pane, and the same

@@ -2222,13 +2222,6 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
   }
   return lines.slice(0, rows);
 }
-var WATER_ROWS = 7;
-var WATER_COLS_MAX = 60;
-var SPLASH_SHADES = {
-  unicode: ["\u2591", "\u2591", "\u2592", "\u2592", "\u2593", "\u2593", "\u2588", "\u2588"],
-  ascii: [".", ".", ":", ":", "=", "=", "#", "#"]
-};
-var WAVE_RAMP = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
 function elapsedLabel(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
   const m = Math.floor(s / 60);
@@ -2248,91 +2241,15 @@ function waitingInfo(s, width) {
   lines.push("the map appears at the first mmap_declare");
   return lines.map((l) => fitWidth(l, w));
 }
-var WAVE_INTERVAL = 18;
-var WAVE_LIFETIME = 64;
-var WAVE_SPEED = 0.9;
-var WAVE_ENVELOPE = 10;
-var WAVE_NUMBER = 0.42;
-var WAVE_LEVELS = 7;
-var WAVE_GAIN = 4.5;
-function waveHash(n) {
-  let h = Math.imul(n + 1, 2654435761) >>> 0;
-  h ^= h >>> 15;
-  h = Math.imul(h, 2246822519) >>> 0;
-  h ^= h >>> 13;
-  return h >>> 0;
-}
-var WAVE_CORNERS = [
-  [0, 0],
-  [1, 0],
-  [0, 1],
-  [1, 1]
-];
-function liveRipples(frame, width, height) {
-  const out = [];
-  const first = Math.floor((frame - WAVE_LIFETIME - WAVE_INTERVAL) / WAVE_INTERVAL);
-  const last = Math.floor(frame / WAVE_INTERVAL);
-  for (let n = Math.max(0, first); n <= last; n++) {
-    const h = waveHash(n);
-    const age = frame - (n * WAVE_INTERVAL + h % WAVE_INTERVAL);
-    if (age < 0 || age > WAVE_LIFETIME) continue;
-    const [fx, fy] = WAVE_CORNERS[h % WAVE_CORNERS.length];
-    out.push({
-      ox: fx * (width - 1),
-      oy: fy * (height - 1),
-      r: age * WAVE_SPEED,
-      fade: 1 - age / WAVE_LIFETIME
-    });
-  }
-  return out;
-}
-function waveAt(ripples, x, y) {
-  let value = 0;
-  for (const w of ripples) {
-    const front = Math.hypot(x - w.ox, (y - w.oy) * 2) - w.r;
-    value += Math.cos(front * WAVE_NUMBER) * Math.exp(-(front * front) / (2 * WAVE_ENVELOPE ** 2)) * w.fade;
-  }
-  return value;
-}
-function waveLevel(value) {
-  return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
-}
 function splashFrame(notice, info, frame, width, height, unicode, color) {
-  const fieldW = Math.min(width - 4, WATER_COLS_MAX);
-  if (fieldW < 24 || height < WATER_ROWS + info.length + 3) return void 0;
-  const mode = unicode ? "unicode" : "ascii";
-  const shades = SPLASH_SHADES[mode];
-  const indent = " ".repeat(Math.max(0, Math.floor((width - fieldW) / 2)));
-  const ripples = liveRipples(frame, fieldW, WATER_ROWS);
-  const paintRow = (y) => {
-    const levels = Array.from({ length: fieldW }, (_, x) => waveLevel(waveAt(ripples, x, y)));
-    let out = "";
-    for (let i = 0; i < fieldW; ) {
-      const level = levels[i];
-      let j = i;
-      while (j < fieldW && levels[j] === level) j++;
-      if (level === 0) out += " ".repeat(j - i);
-      else {
-        const ink = shades[Math.abs(level)].repeat(j - i);
-        out += color ? `\x1B[38;5;${WAVE_RAMP[WAVE_LEVELS + level]}m${ink}${RESET}` : ink;
-      }
-      i = j;
-    }
-    return out;
-  };
+  if (width < 24 || height < info.length + 3) return void 0;
   const dim = (s) => color ? `\x1B[90m${s}${RESET}` : s;
-  const spinner = SPINNER_FRAMES[mode];
+  const spinner = SPINNER_FRAMES[unicode ? "unicode" : "ascii"];
   const status = fitWidth(`${spinner[frame % spinner.length]} ${notice}`, Math.max(1, width - 2));
   const statusIndent = " ".repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
   const infoWidth = Math.max(0, ...info.map((l) => displayWidth(l)));
   const infoIndent = " ".repeat(Math.max(0, Math.floor((width - infoWidth) / 2)));
-  const block = [
-    ...Array.from({ length: WATER_ROWS }, (_, y) => indent + paintRow(y)),
-    "",
-    statusIndent + dim(status),
-    "",
-    ...info.map((l) => infoIndent + dim(l))
-  ];
+  const block = [statusIndent + dim(status), "", ...info.map((l) => infoIndent + dim(l))];
   return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ""), ...block];
 }
 function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
@@ -2873,8 +2790,6 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
 export {
   PANEL_ROWS_MIN,
   USAGE,
-  WAVE_LEVELS,
-  WAVE_NUMBER,
   anchorOffsets,
   clampPanelRows,
   describeArgsError,
@@ -2884,7 +2799,6 @@ export {
   elapsedLabel,
   fitWidth,
   launchedAsEntry,
-  liveRipples,
   mapPanel,
   nearestHit,
   nodePanel,
@@ -2899,8 +2813,5 @@ export {
   topLevelFiles,
   usableColumns,
   waitingInfo,
-  waveAt,
-  waveHash,
-  waveLevel,
   wrapWidth
 };

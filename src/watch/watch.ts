@@ -753,38 +753,15 @@ export function nodePanel(
 }
 
 /**
- * The standby state — open water and diagnostics.
+ * The standby state — a spinner and diagnostics, nothing else.
  *
  * Before any map exists the pane used to spell the plugin name in a block
- * font; field feedback preferred information over decoration, so the letters
- * are gone. The ripple engine (community PR#1) now paints bare water: rings
- * born at a randomized corner every WAVE_INTERVAL frames expand as damped
- * fronts, the ink of a cell is the SUM of every live ring over it — crests
- * reinforce, a crest meeting a trough cancels — and STILL water stays blank,
- * so only the moving interference pattern shows. Surface height drives one
- * continuous indigo→cyan→white ramp; without color the same field shades the
- * ink instead, so a --no-color --ascii pane still ripples. Below the water:
- * the spinner line and the waiting diagnostics (what is being watched, for
- * how long, and any file that exists but refuses to load).
- *
- * Everything here is a pure function of `frame` — no Math.random, so the
- * animation is reproducible and testable.
+ * font, and later to animate open water in its place; field feedback retired
+ * both — the decoration rendered as noise on real terminals, and the
+ * information was always the part that earned the screen. What remains is
+ * the spinner line and the waiting diagnostics: what is being watched, for
+ * how long, and any file that exists but refuses to load.
  */
-const WATER_ROWS = 7;
-const WATER_COLS_MAX = 60;
-
-/** Ink shades by |level| 0..WAVE_LEVELS for the no-color path. */
-const SPLASH_SHADES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
-  unicode: ['░', '░', '▒', '▒', '▓', '▓', '█', '█'],
-  ascii: ['.', '.', ':', ':', '=', '=', '#', '#'],
-};
-/**
- * One continuous xterm-256 ramp, deep trough to high crest, indexed by
- * WAVE_LEVELS + level. Monotonic in lightness and confined to indigo→cyan→white
- * so neighbouring cells are always neighbouring colors: the ripple reads as a
- * gradient over the letters instead of confetti. Still water sits mid-ramp.
- */
-const WAVE_RAMP: readonly number[] = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
 
 /** m:ss below an hour, h:mm:ss beyond — how long the pane has been waiting. */
 export function elapsedLabel(ms: number): string {
@@ -828,99 +805,10 @@ export function waitingInfo(s: WaitingStatus, width: number): string[] {
 }
 
 /**
- * frames between births · frames a ring survives · art columns per frame.
- * Tuned so three or four rings share the water: enough for collisions to
- * happen often, few enough that the picture still reads as waves.
- */
-const WAVE_INTERVAL = 18;
-const WAVE_LIFETIME = 64;
-const WAVE_SPEED = 0.9;
-/** Ring half-width in cells, and the angular wavenumber of its lobes. */
-const WAVE_ENVELOPE = 10;
-export const WAVE_NUMBER = 0.42;
-/**
- * Levels either side of still water, and the surface-height-to-level gain.
- * The gain is deliberately short of the top: one ring alone peaks around
- * level 5, so the last two rungs of the ramp — the near-white glare — can
- * only be reached where rings actually pile onto each other.
- */
-export const WAVE_LEVELS = 7;
-const WAVE_GAIN = 4.5;
-
-/**
- * Deterministic scramble standing in for a die roll — wave `n` always picks
- * the same corner and the same birth jitter, on every machine and every run.
- */
-export function waveHash(n: number): number {
-  let h = Math.imul(n + 1, 2654435761) >>> 0;
-  h ^= h >>> 15;
-  h = Math.imul(h, 2246822519) >>> 0;
-  h ^= h >>> 13;
-  return h >>> 0;
-}
-
-/** Corner origins as (x, y) fractions of the art block: TL, TR, BL, BR. */
-const WAVE_CORNERS: readonly (readonly [number, number])[] = [
-  [0, 0],
-  [1, 0],
-  [0, 1],
-  [1, 1],
-];
-
-export interface Ripple {
-  readonly ox: number;
-  readonly oy: number;
-  /** current radius of the ring front */
-  readonly r: number;
-  /** 1 at birth, 0 at the end of life */
-  readonly fade: number;
-}
-
-/** Every ring alive at `frame`, oldest first. */
-export function liveRipples(frame: number, width: number, height: number): Ripple[] {
-  const out: Ripple[] = [];
-  // a birth jitters up to WAVE_INTERVAL-1 frames late, so scan one slot wider
-  const first = Math.floor((frame - WAVE_LIFETIME - WAVE_INTERVAL) / WAVE_INTERVAL);
-  const last = Math.floor(frame / WAVE_INTERVAL);
-  for (let n = Math.max(0, first); n <= last; n++) {
-    const h = waveHash(n);
-    const age = frame - (n * WAVE_INTERVAL + (h % WAVE_INTERVAL));
-    if (age < 0 || age > WAVE_LIFETIME) continue;
-    const [fx, fy] = WAVE_CORNERS[h % WAVE_CORNERS.length]!;
-    out.push({
-      ox: fx * (width - 1),
-      oy: fy * (height - 1),
-      r: age * WAVE_SPEED,
-      fade: 1 - age / WAVE_LIFETIME,
-    });
-  }
-  return out;
-}
-
-/**
- * Superpose the rings over one cell into a signed surface height: + crest,
- * - trough, ~0 still water or two rings cancelling. Rows are half the height
- * of columns in a terminal cell, so y is doubled to keep the rings round.
- */
-export function waveAt(ripples: readonly Ripple[], x: number, y: number): number {
-  let value = 0;
-  for (const w of ripples) {
-    const front = Math.hypot(x - w.ox, (y - w.oy) * 2) - w.r;
-    value += Math.cos(front * WAVE_NUMBER) * Math.exp(-(front * front) / (2 * WAVE_ENVELOPE ** 2)) * w.fade;
-  }
-  return value;
-}
-
-/** Quantize surface height to a ramp index in [-WAVE_LEVELS, WAVE_LEVELS]. */
-export function waveLevel(value: number): number {
-  return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
-}
-
-/**
- * The full standby frame — water, spinner line, diagnostics — centered in a
- * `width` x `height` viewport, ANSI already applied. Returns undefined when
- * the pane is too small for it all; the caller then falls back to plain
- * text lines.
+ * The full standby frame — the spinner line and the diagnostics, centered in
+ * a `width` x `height` viewport, ANSI already applied. Returns undefined
+ * when the pane is too small for it all; the caller then falls back to
+ * plain text lines.
  */
 export function splashFrame(
   notice: string,
@@ -931,46 +819,15 @@ export function splashFrame(
   unicode: boolean,
   color: boolean,
 ): string[] | undefined {
-  const fieldW = Math.min(width - 4, WATER_COLS_MAX);
-  if (fieldW < 24 || height < WATER_ROWS + info.length + 3) return undefined;
-
-  const mode = unicode ? 'unicode' : 'ascii';
-  const shades = SPLASH_SHADES[mode];
-  const indent = ' '.repeat(Math.max(0, Math.floor((width - fieldW) / 2)));
-  const ripples = liveRipples(frame, fieldW, WATER_ROWS);
-
-  // Open water: still cells stay blank; only where rings pass does ink appear,
-  // shade by |level| so the crest-trough texture survives even in color mode.
-  const paintRow = (y: number): string => {
-    const levels = Array.from({ length: fieldW }, (_, x) => waveLevel(waveAt(ripples, x, y)));
-    let out = '';
-    for (let i = 0; i < fieldW; ) {
-      const level = levels[i]!;
-      let j = i;
-      while (j < fieldW && levels[j] === level) j++;
-      if (level === 0) out += ' '.repeat(j - i);
-      else {
-        const ink = shades[Math.abs(level)]!.repeat(j - i);
-        out += color ? `\x1b[38;5;${WAVE_RAMP[WAVE_LEVELS + level]!}m${ink}${RESET}` : ink;
-      }
-      i = j;
-    }
-    return out;
-  };
+  if (width < 24 || height < info.length + 3) return undefined;
 
   const dim = (s: string): string => (color ? `\x1b[90m${s}${RESET}` : s);
-  const spinner = SPINNER_FRAMES[mode];
+  const spinner = SPINNER_FRAMES[unicode ? 'unicode' : 'ascii'];
   const status = fitWidth(`${spinner[frame % spinner.length]!} ${notice}`, Math.max(1, width - 2));
   const statusIndent = ' '.repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
   const infoWidth = Math.max(0, ...info.map((l) => displayWidth(l)));
   const infoIndent = ' '.repeat(Math.max(0, Math.floor((width - infoWidth) / 2)));
-  const block = [
-    ...Array.from({ length: WATER_ROWS }, (_, y) => indent + paintRow(y)),
-    '',
-    statusIndent + dim(status),
-    '',
-    ...info.map((l) => infoIndent + dim(l)),
-  ];
+  const block = [statusIndent + dim(status), '', ...info.map((l) => infoIndent + dim(l))];
   return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ''), ...block];
 }
 

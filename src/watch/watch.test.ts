@@ -43,19 +43,12 @@ import {
   parseArgs,
   pageTabRow,
   panelRowsFromDividerY,
-  type Ripple,
-  WAVE_LEVELS,
-  WAVE_NUMBER,
   elapsedLabel,
-  liveRipples,
   splashFrame,
   tabScrollFor,
   waitingInfo,
   topLevelFiles,
   usableColumns,
-  waveAt,
-  waveHash,
-  waveLevel,
   wrapWidth,
   describePageFault,
   readPage,
@@ -525,57 +518,18 @@ describe('standby splash', () => {
     for (const l of info) expect(l.length).toBeLessThanOrEqual(24);
   });
 
-  it('rolls the same corners and jitters on every run', () => {
-    expect(waveHash(7)).toBe(waveHash(7));
-    expect(waveHash(7)).not.toBe(waveHash(8));
-    // over a long run every corner gets used
-    const corners = new Set(Array.from({ length: 60 }, (_, n) => waveHash(n) % 4));
-    expect([...corners].sort()).toEqual([0, 1, 2, 3]);
-  });
-
-  it('keeps a steady population of rings, each expanding and fading', () => {
-    expect(liveRipples(0, 40, 11).length).toBeLessThanOrEqual(1); // water starts still
-    const rings = liveRipples(200, 40, 11);
-    expect(rings.length).toBeGreaterThanOrEqual(2);
-    expect(rings.length).toBeLessThanOrEqual(6);
-    // oldest first: the widest ring is also the faintest
-    expect(rings[0]!.r).toBeGreaterThan(rings.at(-1)!.r);
-    expect(rings[0]!.fade).toBeLessThan(rings.at(-1)!.fade);
-    for (const r of rings) expect(r.fade).toBeGreaterThanOrEqual(0);
-  });
-
-  it('superposes rings: crests reinforce, a crest meets a trough and cancels', () => {
-    const ring = (r: number): Ripple => ({ ox: 0, oy: 0, r, fade: 1 });
-    const crest = waveAt([ring(10)], 10, 0); // cell sits exactly on the front
-    expect(crest).toBeCloseTo(1, 5);
-    expect(waveAt([ring(10), ring(10)], 10, 0)).toBeCloseTo(2, 5);
-    // a ring whose front trails by half a wavelength arrives in antiphase
-    expect(Math.abs(waveAt([ring(10), ring(10 - Math.PI / WAVE_NUMBER)], 10, 0))).toBeLessThan(crest);
-  });
-
-  it('keeps the top of the ramp out of reach for a lone ring', () => {
-    const ring = (r: number): Ripple => ({ ox: 0, oy: 0, r, fade: 1 });
-    const alone = waveLevel(waveAt([ring(10)], 10, 0));
-    expect(alone).toBeGreaterThan(0);
-    expect(alone).toBeLessThan(WAVE_LEVELS); // only a pile-up reaches the glare
-    expect(waveLevel(waveAt([ring(10), ring(10)], 10, 0))).toBe(WAVE_LEVELS);
-  });
-
-  it('quantizes surface height into the ramp, clamping the extremes', () => {
-    expect(waveLevel(0)).toBe(0);
-    expect(waveLevel(5)).toBe(WAVE_LEVELS);
-    expect(waveLevel(-5)).toBe(-WAVE_LEVELS);
-    expect(waveLevel(-0.5)).toBe(-2);
-  });
-
   const INFO = ['watching  m.json', 'polling every 250 ms'];
 
-  it('gives up on a pane too small for water plus diagnostics', () => {
+  it('gives up on a pane too small for the diagnostics', () => {
     expect(splashFrame('waiting', INFO, 0, 20, 40, true, true)).toBeUndefined();
-    expect(splashFrame('waiting', INFO, 0, 80, 8, true, true)).toBeUndefined();
+    expect(splashFrame('waiting', INFO, 0, 80, 4, true, true)).toBeUndefined();
   });
 
-  it('centers the notice and the diagnostics under the water', () => {
+  it('a short pane that fits the text still gets the screen — no decoration to make room for', () => {
+    expect(splashFrame('waiting', INFO, 0, 80, INFO.length + 3, true, true)).toBeDefined();
+  });
+
+  it('centers the spinner notice and the diagnostics, and shows nothing else', () => {
     const frame = splashFrame('waiting for the first mmap_declare ...', INFO, 0, 60, 30, true, false)!;
     expect(frame.length).toBeLessThanOrEqual(30);
     const text = frame.join('\n');
@@ -584,40 +538,17 @@ describe('standby splash', () => {
     expect(text).toContain('polling every 250 ms');
     const noticeRow = frame.find((r) => r.includes('waiting for'))!;
     expect(noticeRow.startsWith(' ')).toBe(true);
+    // the water is gone: no shade ink, and without color no ANSI at all
+    expect(text).not.toMatch(/[░▒▓█#=:]/);
+    expect(text).not.toContain('\x1b[');
   });
 
-  it('animates without color by shading the ink instead', () => {
-    const a = splashFrame('waiting', INFO, 40, 60, 30, false, false)!.join('\n');
-    const b = splashFrame('waiting', INFO, 90, 60, 30, false, false)!.join('\n');
-    expect(a).not.toContain('\x1b[');
-    expect(a).not.toBe(b);
-    expect(a + b).toMatch(/[#=:.]/);
-  });
-
-  it('colors from the one ramp only, still water blank, texture riding the waves', () => {
-    const ramp = new Set([17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195]);
-    const a = splashFrame('waiting', INFO, 40, 60, 30, true, true)!.join('\n');
-    const b = splashFrame('waiting', INFO, 90, 60, 30, true, true)!.join('\n');
-    expect(a).toContain('\x1b[38;5;');
-    expect(strip(a)).not.toBe(strip(b)); // shade texture moves with the rings
-    for (let f = 0; f < 200; f += 7) {
-      const codes = splashFrame('waiting', INFO, f, 60, 30, true, true)!.join('\n').matchAll(/38;5;(\d+)/g);
-      for (const m of codes) expect(ramp.has(Number(m[1]))).toBe(true);
-    }
-  });
-
-  it('reads as a gradient, not confetti: neighbouring water cells stay close on the ramp', () => {
-    let widest = 0;
-    for (let f = 0; f < 400; f++) {
-      const rings = liveRipples(f, 60, 7); // the water field's dimensions
-      for (let y = 0; y < 7; y++) {
-        for (let x = 1; x < 60; x++) {
-          const step = Math.abs(waveLevel(waveAt(rings, x, y)) - waveLevel(waveAt(rings, x - 1, y)));
-          widest = Math.max(widest, step);
-        }
-      }
-    }
-    expect(widest).toBeLessThanOrEqual(3);
+  it('only the spinner moves between frames', () => {
+    const a = splashFrame('waiting', INFO, 0, 60, 30, true, false)!;
+    const b = splashFrame('waiting', INFO, 1, 60, 30, true, false)!;
+    const differing = a.filter((line, i) => line !== b[i]);
+    expect(differing).toHaveLength(1);
+    expect(strip(differing[0]!)).toContain('waiting');
   });
 });
 
