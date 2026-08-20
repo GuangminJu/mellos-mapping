@@ -110,8 +110,10 @@ The `mmap` terminal command (the pane's open/close toggle) installs itself on
 Windows: the same hook notices on session start when the shim is missing or
 points at an older install, writes `mmap.cmd` (cmd, PowerShell) and `mmap`
 (git-bash) into `%LOCALAPPDATA%\mellos-mapping\bin`, appends that one
-directory to your **user** PATH, and tells you so through the assistant —
-terminals opened from then on have the command. The PATH edit keeps the
+directory to your **user** PATH, and tells you so through the assistant. The
+PATH change reaches only new processes — and a new tab of a running Windows
+Terminal inherits the old environment, so close the terminal app entirely and
+reopen it before the first `mmap`. The PATH edit keeps the
 installer's guarantees: nothing happens when the entry is already there, and
 a PATH that `setx` would damage (flattened `%VARIABLE%` references, truncation
 past its limit) is refused outright, with the entry to add by hand named

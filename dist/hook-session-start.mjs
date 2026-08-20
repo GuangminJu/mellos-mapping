@@ -132,8 +132,9 @@ function installContextLine(outcome) {
     return [
       "mellos-mapping: the `mmap` terminal command was just installed for the user",
       `(${o.binDir} was added to their user PATH). Typed in any project terminal, \`mmap\``,
-      "toggles the map pane. Only terminals opened from now on have it \u2014 if the user says",
-      "`mmap` is not recognized, have them open a new terminal."
+      "toggles the map pane. The PATH change reaches only NEW processes \u2014 and a new tab of",
+      "a running Windows Terminal inherits the old environment, so if the user says `mmap`",
+      "is not recognized, tell them to close Windows Terminal entirely and reopen it."
     ].join("\n");
   }
   if (o.path === "refused" || o.path === "error") {

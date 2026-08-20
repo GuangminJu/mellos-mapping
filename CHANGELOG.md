@@ -69,7 +69,9 @@ the git history (`git log --oneline`), which is where this file starts.
   session start and runs `scripts/install-mmap-command.mjs --json` itself:
   a `.cmd` and a git-bash shim land in `%LOCALAPPDATA%\mellos-mapping\bin`,
   that one directory is appended to the user PATH, and the change is announced
-  through the assistant's context (new terminals only — the hook says so). The
+  through the assistant's context — including that the PATH reaches only new
+  processes, so Windows Terminal must be closed entirely and reopened (a new
+  tab inherits the old environment). The
   steady state costs the hook a single shim read; the PATH edit keeps the
   installer's guarantees — nothing when the entry is already there, refusal
   where `setx` would flatten a `%VARIABLE%` PATH or truncate a long one, with
@@ -95,7 +97,11 @@ the git history (`git log --oneline`), which is where this file starts.
   three seconds removes that page's file; switching page, `Esc` or waiting
   takes the request back. The resting footer advertises the key —
   `x delete page`, worded as the deletion it is, beside `q quit` — because a
-  key nothing names might as well not exist. From a tool call, `mmap_remove` gained
+  key nothing names might as well not exist. A page listed while its file
+  does not exist — the standby fallback after the last real page is deleted,
+  or a `--page` still waiting for its first declare — never arms the
+  confirmation: deleting it would "succeed" while changing nothing, forever,
+  so the footer says `nothing to delete` instead of pretending. From a tool call, `mmap_remove` gained
   `pages: ["slug", …]`, applied after that call's map edits. It refuses a page
   the same call targets with `page`, and an unknown slug — naming a page the
   project does not have is a typo far more often than a race — with the real

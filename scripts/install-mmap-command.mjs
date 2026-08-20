@@ -252,7 +252,7 @@ function main() {
       console.log(`removed ${path}`);
     }
     applyPath(raw, pathWithout(raw, binDir));
-    console.log('Open a new terminal for the change to take effect.');
+    console.log('Close your terminal app entirely and reopen it for the change to take effect — a new tab keeps the old PATH.');
     return;
   }
 
@@ -284,7 +284,10 @@ function main() {
       console.error(`setx refused: ${outcome.reason}`);
       process.exit(1);
   }
-  console.log('Open a new terminal, then type `mmap` in any project: it opens the map pane, or closes the open one.');
+  console.log(
+    'Close Windows Terminal entirely and reopen it — a running terminal, new tabs included, keeps the old PATH.',
+  );
+  console.log('Then type `mmap` in any project: it opens the map pane, or closes the open one.');
 }
 
 if (launchedAsEntry(process.argv[1], import.meta.url)) main();

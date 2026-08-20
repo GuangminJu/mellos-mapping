@@ -100,8 +100,10 @@ claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install
 `mmap` 终端命令（面板的开关切换）在 Windows 上会自己装好：还是这个钩子，
 在会话启动时发现 shim 缺失或者还指向旧版本安装，就把 `mmap.cmd`（cmd、
 PowerShell）和 `mmap`（git-bash）写进 `%LOCALAPPDATA%\mellos-mapping\bin`，
-把这一个目录追加进你的**用户** PATH，并通过助手告诉你这件事——从那之后
-新开的终端就有这个命令。PATH 的改动保持安装器原有的承诺：条目已经在里面
+把这一个目录追加进你的**用户** PATH，并通过助手告诉你这件事。PATH 改动
+只对新进程生效——而且运行中的 Windows Terminal 连新标签页都继承旧环境，
+所以第一次敲 `mmap` 之前要把终端应用整个关掉重开。PATH 的编辑保持安装器
+原有的承诺：条目已经在里面
 就什么都不做；遇到 `setx` 会损坏的 PATH（`%VARIABLE%` 被展平、超长被截
 断），它干脆拒绝，改为把要手动添加的条目说清楚。
 

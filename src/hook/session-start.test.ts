@@ -160,7 +160,9 @@ describe('the mmap command installs itself — the hook side of the installer co
   it('a PATH update is announced, and names the one thing the user must do', () => {
     const line = installContextLine({ kind: 'installed', binDir: 'C:\\bin', path: 'updated', wanted: 'C:\\a;C:\\bin' })!;
     expect(line).toContain('C:\\bin');
-    expect(line).toContain('new terminal');
+    // a new TAB inherits the old environment — the instruction must be the
+    // whole-process restart, or the user tries mmap and concludes it broke
+    expect(line).toContain('close Windows Terminal entirely');
     expect(line).toContain('`mmap`');
   });
 
