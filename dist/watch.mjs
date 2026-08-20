@@ -1843,6 +1843,9 @@ function disarmDelete(state) {
 function requestDelete(state, now, windowMs) {
   const file = state.activeFile;
   if (file === void 0) return { state: disarmDelete(state), request: { kind: "none" } };
+  if (entryOf(state, file)?.state.kind === "absent") {
+    return { state: disarmDelete(state), request: { kind: "absent", file } };
+  }
   const armed = state.pendingDelete;
   if (armed !== void 0 && armed.file === file && now <= armed.until) {
     return { state: { ...state, pendingDelete: void 0 }, request: { kind: "confirmed", file } };
@@ -2641,6 +2644,13 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     const asked = requestDelete(pane, now, CONFIRM_WINDOW_MS);
     pane = asked.state;
     if (asked.request.kind === "none") return;
+    if (asked.request.kind === "absent") {
+      flash = {
+        text: `nothing to delete \u2014 ${pageName(asked.request.file)} has no file`,
+        until: now + FLASH_NOTICE_MS
+      };
+      return;
+    }
     if (asked.request.kind === "armed") {
       flash = {
         text: `press x again to delete ${pageName(asked.request.file)} \u2014 its file is removed`,

@@ -230,6 +230,8 @@ export function disarmDelete(state: PaneState): PaneState {
 export type DeleteRequest =
   /** Nothing to delete: the pane has no page on screen. */
   | { readonly kind: 'none' }
+  /** The page on screen has no file — deleting it would be theatre. */
+  | { readonly kind: 'absent'; readonly file: string }
   /** First press: the request waits for a second one until `until`. */
   | { readonly kind: 'armed'; readonly file: string; readonly until: number }
   /** Second press on the same page inside the window: delete it. */
@@ -244,6 +246,14 @@ export type DeleteRequest =
  * disarms; anything else — an expired window, a different active page,
  * nothing on screen — starts over rather than deleting something the user
  * did not just look at.
+ *
+ * A page whose entry is ABSENT never arms. Deleting it would "succeed" (the
+ * goal state — no file — already holds) yet change nothing on screen, and
+ * one such page is a permanent resident: with every real page deleted, the
+ * watcher falls back to its base file, which stays listed while not
+ * existing. Arming there made an undeletable last page that answered every
+ * confirmation with a lie; 'absent' lets the caller say what is actually
+ * true — there is no file.
  * @param now - epoch ms of the press (the caller owns the clock).
  * @param windowMs - how long the armed request stands.
  * @returns the next state, and what this press meant. The caller performs
@@ -256,6 +266,9 @@ export function requestDelete(
 ): { state: PaneState; request: DeleteRequest } {
   const file = state.activeFile;
   if (file === undefined) return { state: disarmDelete(state), request: { kind: 'none' } };
+  if (entryOf(state, file)?.state.kind === 'absent') {
+    return { state: disarmDelete(state), request: { kind: 'absent', file } };
+  }
   const armed = state.pendingDelete;
   if (armed !== undefined && armed.file === file && now <= armed.until) {
     return { state: { ...state, pendingDelete: undefined }, request: { kind: 'confirmed', file } };

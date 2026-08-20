@@ -1463,6 +1463,16 @@ function main(): void {
     const asked = requestDelete(pane, now, CONFIRM_WINDOW_MS);
     pane = asked.state;
     if (asked.request.kind === 'none') return;
+    if (asked.request.kind === 'absent') {
+      // the standby fallback page, or a --page still waiting for its first
+      // declare: nothing exists to delete, and the footer says so instead of
+      // running a confirmation that could only pretend
+      flash = {
+        text: `nothing to delete — ${pageName(asked.request.file)} has no file`,
+        until: now + FLASH_NOTICE_MS,
+      };
+      return;
+    }
     if (asked.request.kind === 'armed') {
       flash = {
         text: `press x again to delete ${pageName(asked.request.file)} — its file is removed`,

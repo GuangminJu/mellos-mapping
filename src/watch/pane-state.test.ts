@@ -342,6 +342,22 @@ describe('the delete request', () => {
     const empty = initialPaneState(false, undefined);
     expect(requestDelete(empty, 1000, WINDOW).request).toEqual({ kind: 'none' });
   });
+
+  it('never arms on a page that has no file — deleting the standby fallback was theatre', () => {
+    // Every real page deleted: the watcher lists its base file although it
+    // does not exist. Confirming a deletion there "succeeded" while changing
+    // nothing, forever — the undeletable last page.
+    const store = new Store(); // nothing on disk
+    const state = tick(initialPaneState(false, undefined), store, { files: [MAIN] });
+    expect(entryOf(state, MAIN)?.state.kind).toBe('absent');
+
+    const pressed = requestDelete(state, 1000, WINDOW);
+    expect(pressed.request).toEqual({ kind: 'absent', file: MAIN });
+    expect(pressed.state.pendingDelete).toBeUndefined(); // and nothing armed
+
+    // pressing again changes nothing either — there is no second-press delete
+    expect(requestDelete(pressed.state, 1100, WINDOW).request).toEqual({ kind: 'absent', file: MAIN });
+  });
 });
 
 describe('the dive stack', () => {
