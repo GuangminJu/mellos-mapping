@@ -8,17 +8,24 @@ var RANK_MAX = 99;
 var RANK_RULE_TEXT = `an integer in ${RANK_MIN}..${RANK_MAX}, 0 = bottom / most primitive`;
 
 // src/store/store.ts
-var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+var STORE_DIR_NAME = ".mellos";
+var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 var FOCUS_FILE_NAME = "focus";
 function focusFilePath(defaultFile) {
   return join(dirname(defaultFile), FOCUS_FILE_NAME);
+}
+var QUIT_FILE_NAME = "quit";
+function quitFilePath(defaultFile) {
+  return join(dirname(defaultFile), QUIT_FILE_NAME);
 }
 var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 export {
   FOCUS_FILE_NAME,
   ID_RULE,
   PAGES_DIR_NAME,
+  QUIT_FILE_NAME,
   STATE_FILE_RELATIVE_PATH,
-  focusFilePath
+  focusFilePath,
+  quitFilePath
 };

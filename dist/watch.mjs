@@ -1352,6 +1352,8 @@ function describeStoreError(e) {
       return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
     case "save-failed":
       return `could not write ${e.path}: ${e.detail}`;
+    case "delete-failed":
+      return `could not delete ${e.path}: ${e.detail}`;
   }
 }
 function isRecord(v) {
@@ -1547,7 +1549,17 @@ function parseMap(raw, path) {
 }
 
 // src/store/store.ts
-var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+function errnoOf(e) {
+  return e.code ?? e.message;
+}
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function stripBom(text) {
+  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
+}
+var STORE_DIR_NAME = ".mellos";
+var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
   return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
@@ -1569,6 +1581,14 @@ function listPageFiles(defaultFile) {
     if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
+}
+function deletePageFile(path) {
+  try {
+    rmSync(path, { force: true });
+    return ok(void 0);
+  } catch (e) {
+    return err({ kind: "delete-failed", path, detail: errnoOf(e) });
+  }
 }
 var FOCUS_FILE_NAME = "focus";
 function focusFilePath(defaultFile) {
@@ -1599,12 +1619,36 @@ function takeFocusRequest(defaultFile) {
   const id = makePageId(page);
   return id.ok ? { page: id.value } : void 0;
 }
+var QUIT_FILE_NAME = "quit";
+function quitFilePath(defaultFile) {
+  return join(dirname(defaultFile), QUIT_FILE_NAME);
+}
+function takeQuitRequest(defaultFile) {
+  const path = quitFilePath(defaultFile);
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return false;
+  }
+  sweepQuitRequest(defaultFile);
+  let parsed;
+  try {
+    parsed = JSON.parse(stripBom(raw));
+  } catch {
+    return false;
+  }
+  return isRecord2(parsed);
+}
+function sweepQuitRequest(defaultFile) {
+  try {
+    rmSync(quitFilePath(defaultFile), { force: true });
+  } catch {
+  }
+}
 var CONFIG_FILE_NAME = "config.json";
 function configFilePath(defaultFile) {
   return join(dirname(defaultFile), CONFIG_FILE_NAME);
-}
-function stripBom(text) {
-  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
 }
 var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
@@ -1734,6 +1778,7 @@ function parseInput(chunk) {
     else if (ch === "	") events.push({ kind: "next-page" });
     else if (ch === "\x7F" || ch === "\b") events.push({ kind: "back" });
     else if (ch === "f" || ch === "F") events.push({ kind: "follow-toggle" });
+    else if (ch === "x" || ch === "X") events.push({ kind: "delete-page" });
     else if (ch >= "1" && ch <= "9") events.push({ kind: "page", index: ch.charCodeAt(0) - "1".charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: "pan", ...KEY_PAN[ch] });
     i += 1;
@@ -1756,7 +1801,15 @@ function mtimeOf(entry) {
   return entry === void 0 || entry.state.kind === "absent" ? void 0 : entry.state.mtimeMs;
 }
 function initialPaneState(follow, requestedFile) {
-  return { pages: [], activeFile: void 0, pendingFocusFile: requestedFile, follow, diveStack: [], scanned: false };
+  return {
+    pages: [],
+    activeFile: void 0,
+    pendingFocusFile: requestedFile,
+    follow,
+    diveStack: [],
+    scanned: false,
+    pendingDelete: void 0
+  };
 }
 function entryOf(state, file) {
   return file === void 0 ? void 0 : state.pages.find((p) => p.file === file);
@@ -1774,9 +1827,28 @@ function markViewed(state, file) {
 function userSwitch(state, file) {
   const followTurnedOff = state.follow;
   return {
-    state: markViewed({ ...state, activeFile: file, pendingFocusFile: void 0, follow: false }, file),
+    state: markViewed(
+      // Looking elsewhere withdraws an armed deletion: it was aimed at the
+      // page that was on screen, and the confirming press must never land on
+      // whichever page took its place.
+      { ...state, activeFile: file, pendingFocusFile: void 0, follow: false, pendingDelete: void 0 },
+      file
+    ),
     followTurnedOff
   };
+}
+function disarmDelete(state) {
+  return state.pendingDelete === void 0 ? state : { ...state, pendingDelete: void 0 };
+}
+function requestDelete(state, now, windowMs) {
+  const file = state.activeFile;
+  if (file === void 0) return { state: disarmDelete(state), request: { kind: "none" } };
+  const armed = state.pendingDelete;
+  if (armed !== void 0 && armed.file === file && now <= armed.until) {
+    return { state: { ...state, pendingDelete: void 0 }, request: { kind: "confirmed", file } };
+  }
+  const until = now + windowMs;
+  return { state: { ...state, pendingDelete: { file, until } }, request: { kind: "armed", file, until } };
 }
 function toggleFollow(state) {
   return { ...state, follow: !state.follow };
@@ -1856,7 +1928,12 @@ function scan(state, input) {
     pendingFocusFile,
     follow: state.follow,
     diveStack: state.diveStack.filter((f) => files.has(f)),
-    scanned: true
+    scanned: true,
+    // An armed deletion belongs to the page it was armed on. If the scan
+    // moved the view (follow, a request, a page that vanished), the request
+    // is stale — the confirming press must never hit a page that merely
+    // arrived under the cursor.
+    pendingDelete: state.pendingDelete?.file === activeFile ? state.pendingDelete : void 0
   };
   return { state: markViewed(next, activeFile), freshened };
 }
@@ -1974,6 +2051,7 @@ var FLASH_ACK_MS = 2500;
 var FLASH_NOTICE_MS = 3e3;
 var FLASH_BACKGROUND_NEWS_MS = 4e3;
 var DOUBLE_CLICK_MS = 450;
+var CONFIRM_WINDOW_MS = 3e3;
 var FALLBACK_COLUMNS = 100;
 var FALLBACK_ROWS = 30;
 var DEFAULT_PAGE_TAB_LABEL = "main";
@@ -2000,14 +2078,19 @@ function anchorOffsets(anchor, offset, before, after) {
   };
 }
 var TAB_INDICATOR_W = 3;
-function pageTabRow(tabs, width, unicode, scroll = 0) {
+var CLOSE_TAB_TEXT = { unicode: "\xD7 ", ascii: "x " };
+var CLOSE_TAB_SGR = "90";
+function pageTabRow(tabs, width, unicode, scroll = 0, closable = false) {
   const texts = tabs.map((tab) => {
     const marker = tab.active ? unicode ? "\u25CF" : "*" : unicode ? "\u25CB" : "o";
     const glyph = statusGlyph(tab.status, unicode);
     return tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `;
   });
   const sgrOf = (tab) => tab.neutral === true ? tab.active ? "1" : tab.fresh ? "36" : "90" : tab.active ? `${statusSgr(tab.status)};1` : tab.fresh ? statusSgr(tab.status) : "90";
-  const widths = texts.map(displayWidth);
+  const closeText = CLOSE_TAB_TEXT[unicode ? "unicode" : "ascii"];
+  const closeW = displayWidth(closeText);
+  const closeOf = (i) => closable && tabs[i].active ? closeW : 0;
+  const widths = texts.map((t, i) => displayWidth(t) + closeOf(i));
   const count = tabs.length;
   let lo = 0;
   let hi = count - 1;
@@ -2027,14 +2110,21 @@ function pageTabRow(tabs, width, unicode, scroll = 0) {
   if (lo > 0) push(unicode ? " \u2039 " : " < ", "90", { kind: "scroll", delta: -1 });
   const tail = hi < count - 1 ? TAB_INDICATOR_W : 0;
   for (let i = lo; i <= hi; i++) {
-    push(fitWidth(texts[i], Math.max(1, width - (col - 1) - tail)), sgrOf(tabs[i]), { kind: "switch", index: i });
+    const close = closeOf(i);
+    push(fitWidth(texts[i], Math.max(1, width - (col - 1) - tail - close)), sgrOf(tabs[i]), {
+      kind: "switch",
+      index: i
+    });
+    if (close > 0 && col - 1 + close + tail <= width) push(closeText, CLOSE_TAB_SGR, { kind: "delete" });
   }
   if (hi < count - 1) push(unicode ? " \u203A " : " > ", "90", { kind: "scroll", delta: 1 });
   return segments;
 }
-function tabScrollFor(tabs, width, unicode, scroll, index) {
+function tabScrollFor(tabs, width, unicode, scroll, index, closable = false) {
   if (index <= scroll) return Math.max(0, index);
-  const visibleAt = (s2) => pageTabRow(tabs, width, unicode, s2).some((seg) => seg.action.kind === "switch" && seg.action.index === index);
+  const visibleAt = (s2) => pageTabRow(tabs, width, unicode, s2, closable).some(
+    (seg) => seg.action.kind === "switch" && seg.action.index === index
+  );
   let s = Math.max(0, Math.min(scroll, tabs.length - 1));
   while (s < index && !visibleAt(s)) s++;
   return s;
@@ -2269,6 +2359,7 @@ ${USAGE}`);
   }
   const cfg = parsed.value;
   if (migrateLegacyStore(cfg.file)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
+  sweepQuitRequest(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";
@@ -2353,7 +2444,9 @@ ${USAGE}`);
     hoverId = void 0;
     const top = topFiles();
     const tabIndex = top.indexOf(file);
-    if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
+    if (tabIndex >= 0) {
+      tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex, mouseActive);
+    }
   };
   const handSwitch = (file) => {
     const previous = pane.activeFile;
@@ -2474,7 +2567,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       lastTabSegments = [head, tail];
       tabLine = lastTabSegments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
     } else if (tabRows() > 0) {
-      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll);
+      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll, mouseActive);
       lastTabSegments = segments;
       tabLine = segments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
     } else {
@@ -2502,6 +2595,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     paint2();
   };
   const tick = () => {
+    if (takeQuitRequest(cfg.file)) quit();
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
@@ -2530,6 +2624,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     }
     adoptView(previous);
     adoptPage();
+    if (flash?.confirm === true && pane.pendingDelete === void 0) flash = void 0;
     const top = topFiles();
     for (const file of scanned.freshened) {
       if (top.includes(file)) continue;
@@ -2539,6 +2634,25 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     if (pane.pages.some((p) => mapOf(p)?.nodes.some((n) => n.status === "in-progress"))) spinnerFrame++;
     if (flash !== void 0 && Date.now() > flash.until) flash = void 0;
     paint2();
+  };
+  const pageName = (file) => pageIdOfFile(cfg.file, file) ?? DEFAULT_PAGE_TAB_LABEL;
+  const askDelete = () => {
+    const now = Date.now();
+    const asked = requestDelete(pane, now, CONFIRM_WINDOW_MS);
+    pane = asked.state;
+    if (asked.request.kind === "none") return;
+    if (asked.request.kind === "armed") {
+      flash = {
+        text: `press x again to delete ${pageName(asked.request.file)} \u2014 its file is removed`,
+        until: asked.request.until,
+        confirm: true
+      };
+      return;
+    }
+    const file = asked.request.file;
+    const removed = deletePageFile(file);
+    flash = removed.ok ? { text: `deleted ${pageName(file)}`, until: now + FLASH_ACK_MS } : { text: describeStoreError(removed.error), until: now + FLASH_NOTICE_MS };
+    tick();
   };
   if (interactive) {
     process.stdin.setRawMode(true);
@@ -2560,7 +2674,10 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             dirty = true;
             break;
           case "clear":
-            if (selectedId !== void 0) selectedId = void 0;
+            if (pane.pendingDelete !== void 0) {
+              pane = disarmDelete(pane);
+              flash = void 0;
+            } else if (selectedId !== void 0) selectedId = void 0;
             else climbBack();
             dirty = true;
             break;
@@ -2650,6 +2767,8 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
                   climbBack();
                 } else if (tabHit.action.kind === "scroll") {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
+                } else if (tabHit.action.kind === "delete") {
+                  askDelete();
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
                   if (target !== void 0 && target !== pane.activeFile) handSwitch(target);
@@ -2708,6 +2827,10 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
           case "follow-toggle":
             pane = toggleFollow(pane);
             flash = { text: pane.follow ? "auto-follow on" : "auto-follow off", until: Date.now() + FLASH_ACK_MS };
+            dirty = true;
+            break;
+          case "delete-page":
+            askDelete();
             dirty = true;
             break;
         }

@@ -6914,6 +6914,7 @@ var require_dist = __commonJS({
 
 // src/server/server.ts
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -22447,6 +22448,8 @@ function describeStoreError(e) {
       return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
     case "save-failed":
       return `could not write ${e.path}: ${e.detail}`;
+    case "delete-failed":
+      return `could not delete ${e.path}: ${e.detail}`;
   }
 }
 function isRecord(v) {
@@ -22695,7 +22698,14 @@ function writeFileAtomic(path, contents) {
     }
   }
 }
-var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function stripBom(text2) {
+  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
+}
+var STORE_DIR_NAME = ".mellos";
+var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page2) {
   return page2 === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page2}.json`);
@@ -22718,10 +22728,21 @@ function listPageFiles(defaultFile) {
   }
   return out;
 }
+function deletePageFile(path) {
+  try {
+    rmSync(path, { force: true });
+    return ok(void 0);
+  } catch (e) {
+    return err({ kind: "delete-failed", path, detail: errnoOf(e) });
+  }
+}
 var CONFIG_FILE_NAME = "config.json";
 var CONFIG_FILE_VERSION = 1;
 function configFilePath(defaultFile) {
   return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+function userConfigFilePath(userBase) {
+  return join(userBase, STORE_DIR_NAME, CONFIG_FILE_NAME);
 }
 var MAPPING_POLICIES = ["always", "complex", "on-request"];
 function makeMappingPolicy(raw) {
@@ -22737,14 +22758,7 @@ function describeMappingPolicy(policy) {
       return "map only when the user explicitly asks";
   }
 }
-function isRecord2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function stripBom(text2) {
-  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
-}
-function loadMappingPolicy(defaultFile) {
-  const path = configFilePath(defaultFile);
+function loadMappingPolicy(path) {
   let text2;
   try {
     text2 = readFileSync(path, "utf8");
@@ -22768,9 +22782,19 @@ function loadMappingPolicy(defaultFile) {
   const policy = makeMappingPolicy(rawPolicy);
   return policy.ok ? ok(policy.value) : err({ kind: "bad-shape", path, detail: `policy is "${rawPolicy}", expected one of: ${MAPPING_POLICIES.join(" | ")}` });
 }
-function saveMappingPolicy(defaultFile, policy) {
+function saveMappingPolicy(path, policy) {
   const body = JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + "\n";
-  return writeFileAtomic(configFilePath(defaultFile), body);
+  return writeFileAtomic(path, body);
+}
+var POLICY_SCOPES = ["user", "project"];
+function effectiveMappingPolicy(projectConfigFile, userConfigFile) {
+  const project = loadMappingPolicy(projectConfigFile);
+  if (!project.ok) return project;
+  const user = loadMappingPolicy(userConfigFile);
+  if (!user.ok) return user;
+  const effective = project.value ?? user.value;
+  const source = project.value !== void 0 ? "project" : user.value !== void 0 ? "user" : void 0;
+  return ok({ project: project.value, user: user.value, effective, source });
 }
 var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
@@ -23128,8 +23152,9 @@ function loadOrEmpty(stateFile) {
   if (loaded.error.kind === "not-found") return { ok: true, value: EMPTY_MAP };
   return { ok: false, error: describeStoreError(loaded.error) };
 }
-function buildServer(stateFile) {
+function buildServer(stateFile, userConfigFile) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const projectConfigFile = configFilePath(stateFile);
   const fileOf = (page2) => pageFilePath(stateFile, page2);
   const mutate = (page2, apply) => {
     const file = fileOf(page2);
@@ -23141,12 +23166,45 @@ function buildServer(stateFile) {
     if (!saved.ok) return saveFailed(saved.error);
     return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : ""));
   };
+  const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
+  const refusePageDeletion = (pages, target) => {
+    if (target !== void 0 && pages.includes(target)) {
+      return text(
+        `refused (nothing changed): pages includes "${target}", the page this call targets \u2014 one call must not edit a map it is deleting. Delete it from a call that does not target it.`,
+        true
+      );
+    }
+    const known = knownPages();
+    const unknown2 = pages.filter((p) => !known.includes(p));
+    if (unknown2.length > 0) {
+      return text(
+        `refused (nothing changed): no page named ${unknown2.map((p) => `"${p}"`).join(", ")}. This project's named pages: ${known.length > 0 ? known.join(", ") : "(none)"}.`,
+        true
+      );
+    }
+    return void 0;
+  };
+  const deletePages = (pages, summary) => {
+    const deleted = [];
+    const failed = [];
+    for (const p of pages) {
+      const removed = deletePageFile(pageFilePath(stateFile, p));
+      if (removed.ok) deleted.push(p);
+      else failed.push(`${p} (${describeStoreError(removed.error)})`);
+    }
+    const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(", ") : "(none)"}`;
+    if (failed.length === 0) return text(`${summary}${gone}`);
+    return text(
+      `${summary}${gone}; could NOT delete: ${failed.join("; ")}. Deleting files is not a transaction: what is named deleted above is gone for good, and only the failures are worth retrying.`,
+      true
+    );
+  };
   const setupNudge = () => {
-    const policy = loadMappingPolicy(stateFile);
-    if (!policy.ok) return `
-note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_setup).`;
-    if (policy.value !== void 0) return "";
-    return "\nnote: mapping policy not set for this project. Ask the user when maps should open \u2014 " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then record the answer with mmap_setup.";
+    const scopes = effectiveMappingPolicy(projectConfigFile, userConfigFile);
+    if (!scopes.ok) return `
+note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_setup).`;
+    if (scopes.value.effective !== void 0) return "";
+    return "\nnote: no mapping policy has been chosen yet. Ask the user when maps should open \u2014 " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then record the answer with mmap_setup. It is asked once ever, not once per project.";
   };
   server.registerTool(
     "mmap_declare",
@@ -23257,42 +23315,71 @@ note: ${describeStoreError(policy.error)} \u2014 fix it or rerun setup (mmap_set
     "mmap_remove",
     {
       title: "Revise the map",
-      description: "Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work.",
+      description: 'Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work. `pages` is the other scale: it DELETES whole page files, so a finished effort can be cleaned up instead of accumulating tabs forever. A bare `{pages: ["slug"]}` with no other field is the normal form; combined with map edits, the edits are applied first and the pages are deleted after. The deletion is permanent and cannot be undone, so delete only pages whose effort is over \u2014 and only ever with the user behind it. An unknown slug is refused with the project\'s real page list (naming a page that does not exist is a typo, not a request). The default page has no slug and is not deletable here. A node elsewhere still pointing at a deleted page with `submap` stays legal \u2014 a submap reference has no existence invariant \u2014 but it has nowhere to dive until the page comes back.',
       inputSchema: closed({
         page: page(),
         edges: external_exports.array(closed(edgeEnds())).optional(),
         nodes: external_exports.array(id("id of the node to remove, with every edge touching it")).optional(),
         groups: external_exports.array(id("id of the group to remove; members stay, merely ungrouped")).optional(),
         lanes: external_exports.array(id("id of the lane to remove; members stay, merely off-lane")).optional(),
-        layers: external_exports.array(id("id of the band to remove; it must hold no nodes and no groups")).optional()
+        layers: external_exports.array(id("id of the band to remove; it must hold no nodes and no groups")).optional(),
+        pages: external_exports.array(
+          id(
+            "slug of a page whose WHOLE map file is deleted \u2014 the page and everything drawn on it. Not the page this same call targets with `page`."
+          )
+        ).optional().describe("pages to delete entirely, after this call's map edits; permanent")
       })
     },
-    (input) => mutate(input.page, (map) => applyRemove(map, input))
+    (input) => {
+      if (input.pages === void 0) return mutate(input.page, (map) => applyRemove(map, input));
+      const refusal = refusePageDeletion(input.pages, input.page);
+      if (refusal !== void 0) return refusal;
+      const editsAnything = (input.edges?.length ?? 0) + (input.nodes?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0) + (input.layers?.length ?? 0) > 0;
+      let summary = "";
+      if (editsAnything) {
+        const edited = mutate(input.page, (map) => applyRemove(map, input));
+        if (edited.isError === true) return edited;
+        summary = `${edited.content[0]?.text ?? ""}
+`;
+      }
+      return deletePages(input.pages, summary);
+    }
   );
   server.registerTool(
     "mmap_setup",
     {
       title: "Configure when maps open",
-      description: `Get or set this project's mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it. If it reports "not set", ask the USER to choose (never pick for them): always = ` + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + ". Then call again with their choice to persist it. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.",
+      description: 'Get or set the mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it: the reply names the policy chosen for the USER (every project), the one this PROJECT overrides it with if any, and which of them is in effect. If it reports "not set", ask the USER to choose (never pick for them): always = ' + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + '. Then call again with their choice to persist it. It defaults to user scope, which is the normal one \u2014 the question is about how someone works, so it is asked once ever, not once per repository. Pass scope: "project" only when the user wants THIS project to differ from that habit. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.',
       inputSchema: closed({
-        policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy")
+        policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy"),
+        scope: external_exports.enum(POLICY_SCOPES).optional().describe(
+          'where to record the choice: "user" (default) applies to every project this user opens; "project" overrides that for this project alone. Ignored when reading.'
+        )
       })
     },
     (input) => {
+      const scope = input.scope ?? "user";
+      const configFile = scope === "project" ? projectConfigFile : userConfigFile;
       if (input.policy !== void 0) {
         const policy = input.policy;
-        const saved = saveMappingPolicy(stateFile, policy);
+        const saved = saveMappingPolicy(configFile, policy);
         if (!saved.ok) return saveFailed(saved.error);
-        return text(`mapping policy set: ${policy} \u2014 ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
-      }
-      const loaded = loadMappingPolicy(stateFile);
-      if (!loaded.ok) return text(describeStoreError(loaded.error), true);
-      if (loaded.value === void 0) {
+        const reach = scope === "user" ? 'applies to EVERY project this user opens; a single project can still override it with mmap_setup {policy, scope: "project"}' : "applies to THIS project only, overriding the user-level choice";
         return text(
-          "mapping policy not set. Ask the user to choose one of: " + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then call mmap_setup with their choice. Until then act as complex."
+          `mapping policy set (${scope} scope): ${policy} \u2014 ${describeMappingPolicy(policy)}. ${reach}. [${configFile}]`
         );
       }
-      return text(`mapping policy: ${loaded.value} \u2014 ${describeMappingPolicy(loaded.value)}`);
+      const scopes = effectiveMappingPolicy(projectConfigFile, userConfigFile);
+      if (!scopes.ok) return text(describeStoreError(scopes.error), true);
+      const { user, project, effective, source } = scopes.value;
+      const said = (p) => p === void 0 ? "not set" : p;
+      const heading = `mapping policy \u2014 user: ${said(user)}; project: ${said(project)}`;
+      if (effective === void 0) {
+        return text(
+          `${heading}. Nobody has chosen yet. Ask the user to choose one of: ` + MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join("; ") + " \u2014 then call mmap_setup with their choice (scope defaults to user, which is what you want: the question is asked once ever). Until then act as complex."
+        );
+      }
+      return text(`${heading}. In effect: ${effective} (${source} scope) \u2014 ${describeMappingPolicy(effective)}`);
     }
   );
   server.registerTool(
@@ -23320,10 +23407,14 @@ function resolveStateFile(env, cwd) {
   const projectDir = env["MELLOS_MAPPING_CWD"] ?? env["CLAUDE_PROJECT_DIR"] ?? cwd;
   return join2(projectDir, STATE_FILE_RELATIVE_PATH);
 }
+function resolveUserConfigFile(home) {
+  return userConfigFilePath(home);
+}
 async function main() {
   const stateFile = resolveStateFile(process.env, process.cwd());
+  const userConfigFile = resolveUserConfigFile(homedir());
   if (migrateLegacyStore(stateFile)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
-  const server = buildServer(stateFile);
+  const server = buildServer(stateFile, userConfigFile);
   await server.connect(new StdioServerTransport());
 }
 function launchedAsEntry(argv1, moduleUrl) {
@@ -23345,5 +23436,6 @@ export {
   SERVER_VERSION,
   buildServer,
   launchedAsEntry,
-  resolveStateFile
+  resolveStateFile,
+  resolveUserConfigFile
 };
