@@ -75,6 +75,13 @@ await build({ ...shared, entryPoints: ['src/watch/watch.ts'], outfile: 'dist/wat
 await build({ ...shared, banner: {}, entryPoints: ['scripts/mmap.mjs'], outfile: 'dist/mmap.mjs' });
 
 /**
+ * The SessionStart hook. hooks/hooks.json names this exact path under
+ * ${CLAUDE_PLUGIN_ROOT}, so the two move together; tests/plugin.test.ts holds
+ * them to it.
+ */
+await build({ ...shared, entryPoints: ['src/hook/session-start.ts'], outfile: 'dist/hook-session-start.mjs' });
+
+/**
  * The store's own path vocabulary, for the plain-node launcher scripts.
  *
  * scripts/open-pane.mjs runs on bare node and cannot import the TypeScript
@@ -109,4 +116,6 @@ await build({
 });
 
 console.log(`cleaned: ${OUTPUT_DIRS.join(', ')}`);
-console.log('bundled: dist/server.mjs, dist/watch.mjs, dist/mmap.mjs, dist/store-paths.mjs');
+console.log(
+  'bundled: dist/server.mjs, dist/watch.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/store-paths.mjs',
+);
