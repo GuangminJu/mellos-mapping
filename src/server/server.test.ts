@@ -5,7 +5,7 @@
  * watcher-visible file actually changes.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -216,6 +216,110 @@ describe('revising a live map over the wire', () => {
     const empty = await callText('mmap_update', {});
     expect(empty.isError).toBe(true);
     expect(empty.text).toContain('nothing to revise');
+  });
+});
+
+/**
+ * Deleting a page is the one mmap_remove that leaves the map layer entirely:
+ * a whole file goes, and no map value can express that. So the spec pins the
+ * file system, the refusals, and what the reply promises about them.
+ */
+describe('mmap_remove deletes whole pages', () => {
+  const PAGE = { layers: [{ id: 'base', name: 'Base', rank: 0 }], nodes: [{ id: 'core', label: 'Core', layer: 'base' }] };
+  const pageFile = (slug: string): string => join(dir, '.mellos', 'pages', `${slug}.json`);
+
+  it('deletes a named page file, and the pages line stops naming it', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'alpha' });
+    await callText('mmap_declare', { ...PAGE, page: 'beta' });
+    expect((await callText('mmap_view', {})).text).toContain('pages: (default: absent), alpha, beta');
+
+    const removed = await callText('mmap_remove', { pages: ['alpha'] });
+    expect(removed.isError).toBe(false);
+    expect(removed.text).toBe('deleted page(s): alpha');
+    expect(existsSync(pageFile('alpha'))).toBe(false);
+    expect(existsSync(pageFile('beta'))).toBe(true);
+
+    // the pages line reads the store, so it tells the truth by itself
+    expect((await callText('mmap_view', {})).text).toContain('pages: (default: absent), beta');
+  });
+
+  it('deletes a batch, and a bare deletion creates no default page file', async () => {
+    for (const slug of ['alpha', 'beta', 'gamma']) await callText('mmap_declare', { ...PAGE, page: slug });
+    const removed = await callText('mmap_remove', { pages: ['alpha', 'gamma'] });
+    expect(removed.isError).toBe(false);
+    expect(removed.text).toBe('deleted page(s): alpha, gamma');
+    expect(readdirSync(join(dir, '.mellos', 'pages'))).toEqual(['beta.json']);
+    // a call that only deletes pages must touch no map — least of all create one
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it('refuses to delete the page the same call targets, and deletes nothing', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'alpha' });
+    const refused = await callText('mmap_remove', { page: 'alpha', nodes: ['core'], pages: ['alpha'] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('the page this call targets');
+    expect(existsSync(pageFile('alpha'))).toBe(true);
+    // and the map edit it carried did not land either
+    expect((await callText('mmap_view', { page: 'alpha' })).text).toContain('Core');
+  });
+
+  it('refuses an unknown slug as the typo it probably is, naming the real pages', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'alpha' });
+    const refused = await callText('mmap_remove', { pages: ['aplha'] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('no page named "aplha"');
+    expect(refused.text).toContain('alpha');
+    expect(existsSync(pageFile('alpha'))).toBe(true);
+
+    // one bad slug refuses the whole batch: validation runs before any delete
+    const batch = await callText('mmap_remove', { pages: ['alpha', 'ghost'] });
+    expect(batch.isError).toBe(true);
+    expect(existsSync(pageFile('alpha'))).toBe(true);
+  });
+
+  it('applies the call\'s map edits first, then deletes the other page', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'alpha' });
+    await callText('mmap_declare', { ...PAGE, page: 'beta' });
+    const both = await callText('mmap_remove', { page: 'alpha', nodes: ['core'], pages: ['beta'] });
+    expect(both.isError).toBe(false);
+    expect(both.text).toContain('map now: 1 layer(s), 0 node(s)');
+    expect(both.text).toContain('deleted page(s): beta');
+    expect(existsSync(pageFile('beta'))).toBe(false);
+  });
+
+  it('a refused map edit deletes nothing — the edits go first for exactly that', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'alpha' });
+    await callText('mmap_declare', { ...PAGE, page: 'beta' });
+    const refused = await callText('mmap_remove', { page: 'alpha', layers: ['base'], pages: ['beta'] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('still holds node "core"');
+    expect(existsSync(pageFile('beta'))).toBe(true);
+  });
+
+  it('names the page a deletion failed on, and says the rest is really gone', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'alpha' });
+    await callText('mmap_declare', { ...PAGE, page: 'beta' });
+    // a DIRECTORY where beta's file was: rm refuses it, alpha is already gone
+    rmSync(pageFile('beta'));
+    mkdirSync(join(pageFile('beta'), 'wedged'), { recursive: true });
+
+    const partial = await callText('mmap_remove', { pages: ['alpha', 'beta'] });
+    expect(partial.isError).toBe(true);
+    expect(partial.text).toContain('deleted page(s): alpha');
+    expect(partial.text).toContain('could NOT delete: beta');
+    expect(partial.text).toContain('gone for good');
+    expect(existsSync(pageFile('alpha'))).toBe(false);
+  });
+
+  it('leaves a submap reference to the deleted page standing — it never promised existence', async () => {
+    await callText('mmap_declare', { ...PAGE, page: 'child' });
+    await callText('mmap_declare', {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base', submap: 'child' }],
+    });
+    expect((await callText('mmap_remove', { pages: ['child'] })).isError).toBe(false);
+    const onDisk = JSON.parse(readFileSync(stateFile, 'utf8')) as { nodes: Array<{ submap?: string }> };
+    expect(onDisk.nodes[0]?.submap).toBe('child'); // a dangling dive, and legal
   });
 });
 
