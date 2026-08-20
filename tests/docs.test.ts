@@ -97,14 +97,16 @@ describe('the pane flags in the docs', () => {
     [...read('src/watch/watch.ts').matchAll(/case '(--[a-z][a-z0-9-]*)':/g)].map((m) => m[1]!),
   );
   /**
-   * The launcher's own flag vocabulary, taken from the three exported arrays
+   * The launchers' own flag vocabulary, taken from the three exported arrays
    * that ARE that vocabulary — not from every `--x` literal in the file, which
-   * would also collect the arguments it passes on to `wt`.
+   * would also collect the arguments passed on to `wt`. Both entry points
+   * (`open-pane.mjs`, `mmap.mjs`) read these same arrays from the shared core,
+   * which is what makes one extraction enough.
    */
-  const launcherSource = read('scripts/open-pane.mjs');
+  const launcherSource = read('scripts/pane-core.mjs');
   const flagArray = (name: string): string[] => {
     const declaration = new RegExp(`export const ${name} = \\[([^\\]]*)\\]`).exec(launcherSource);
-    expect(declaration, `scripts/open-pane.mjs no longer declares ${name}`).not.toBeNull();
+    expect(declaration, `scripts/pane-core.mjs no longer declares ${name}`).not.toBeNull();
     return [...declaration![1]!.matchAll(/'(--[a-z][a-z0-9-]*)'/g)].map((m) => m[1]!);
   };
   const launcherFlags = new Set([

@@ -63,7 +63,8 @@
     "lib",
     "README.zh-CN.md",
     "scripts/codex-register.mjs",
-    "scripts/open-pane.mjs"
+    "scripts/open-pane.mjs",
+    "scripts/pane-core.mjs"
   ],
   "engines": {
     "node": ">=18"
