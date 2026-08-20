@@ -56,6 +56,25 @@ await build({ ...shared, entryPoints: ['src/server/server.ts'], outfile: 'dist/s
 await build({ ...shared, entryPoints: ['src/watch/watch.ts'], outfile: 'dist/watch.mjs' });
 
 /**
+ * The human's `mmap` toggle, as one file.
+ *
+ * It is already plain JavaScript, so this bundle exists for two other reasons:
+ * `bin` targets must live under a packed directory (dist/ is; scripts/ is
+ * packed file-by-file), and the plugin's PATH shim wants a single self-
+ * contained file to point at rather than a script plus its sibling module.
+ * The bundle inlines scripts/pane-core.mjs and keeps the ONE runtime import —
+ * dist/store-paths.mjs, resolved from `import.meta.url` — dynamic, so the
+ * store's vocabulary still has exactly one definition.
+ *
+ * No banner: the entry point is already a runnable script and esbuild carries
+ * its shebang through, so the shared banner would prepend a SECOND one — and a
+ * `#!` on line 2 is a syntax error, not a comment. Nothing in this bundle
+ * resolves a require at runtime either, so the createRequire shim would be
+ * dead weight even where it parsed.
+ */
+await build({ ...shared, banner: {}, entryPoints: ['scripts/mmap.mjs'], outfile: 'dist/mmap.mjs' });
+
+/**
  * The store's own path vocabulary, for the plain-node launcher scripts.
  *
  * scripts/open-pane.mjs runs on bare node and cannot import the TypeScript
@@ -90,4 +109,4 @@ await build({
 });
 
 console.log(`cleaned: ${OUTPUT_DIRS.join(', ')}`);
-console.log('bundled: dist/server.mjs, dist/watch.mjs, dist/store-paths.mjs');
+console.log('bundled: dist/server.mjs, dist/watch.mjs, dist/mmap.mjs, dist/store-paths.mjs');

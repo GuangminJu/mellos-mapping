@@ -25,7 +25,8 @@
   ],
   "bin": {
     "mellos-mapping": "dist/server.mjs",
-    "mellos-mapping-watch": "dist/watch.mjs"
+    "mellos-mapping-watch": "dist/watch.mjs",
+    "mmap": "dist/mmap.mjs"
   },
   "exports": {
     "./domain/types": {
@@ -63,6 +64,7 @@
     "lib",
     "README.zh-CN.md",
     "scripts/codex-register.mjs",
+    "scripts/mmap.mjs",
     "scripts/open-pane.mjs",
     "scripts/pane-core.mjs"
   ],
