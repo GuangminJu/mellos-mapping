@@ -139,14 +139,36 @@ function writeFileAtomic(path: string, contents: string): Result<void, StoreErro
   }
 }
 
+// ---------------------------------------------------------------------------
+// reading text that a human may have touched — shared by every load below
+// ---------------------------------------------------------------------------
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 /**
- * Project-relative location of the DEFAULT page's state file. The store lives
- * in the tool-owned `.mellos/` directory: the map belongs to mellos-mapping,
- * not to whichever host (Claude Code, Codex, a harness) happens to drive the
- * server, so no host brand appears in the path. Pre-0.20 stores under
- * `.claude/` are moved once by {@link migrateLegacyStore}.
+ * Drop a leading UTF-8 byte-order mark. Windows editors (Notepad, some
+ * PowerShell redirections) add one when a human edits a state file by hand,
+ * and JSON.parse refuses the result — an invisible character would otherwise
+ * read as "your map is corrupt". The BOM carries no meaning for us: the
+ * files are UTF-8 by contract.
  */
-export const STATE_FILE_RELATIVE_PATH = join('.mellos', 'map.json');
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/**
+ * The directory a store lives in, under a project root or under a user's home.
+ * It is tool-owned: the map belongs to mellos-mapping, not to whichever host
+ * (Claude Code, Codex, a harness) happens to drive the server, so no host
+ * brand appears in the path. Pre-0.20 stores under `.claude/` are moved once
+ * by {@link migrateLegacyStore}.
+ */
+export const STORE_DIR_NAME = '.mellos';
+
+/** Project-relative location of the DEFAULT page's state file. */
+export const STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, 'map.json');
 
 // ---------------------------------------------------------------------------
 // pages — a project may keep several maps side by side (one effort = one page)
@@ -280,6 +302,74 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
   return id.ok ? { page: id.value } : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// quit requests — "close yourself" messages from the toggle to the watcher
+// ---------------------------------------------------------------------------
+//
+// The mirror of the focus file, and there for the same reason: a human who
+// types `mmap` in some OTHER terminal has no channel to the pane that is
+// already running. The quit file is that channel, one-shot on purpose — the
+// watcher consumes the request AND DELETES the file, so a request lives about
+// one poll tick and nothing stale survives to close tomorrow's pane.
+//
+// The request carries no payload. A pane belongs to one store, so "close the
+// pane watching this store" has nothing to say beyond being asked.
+
+/** Sibling of the default file carrying a one-shot "close the pane" request. */
+export const QUIT_FILE_NAME = 'quit';
+
+export function quitFilePath(defaultFile: string): string {
+  return join(dirname(defaultFile), QUIT_FILE_NAME);
+}
+
+/**
+ * Consume a pending quit request: read it, delete the file, say whether there
+ * was one. Absent file — the overwhelmingly common case — or content that is
+ * not a JSON object means NO request; the channel is best-effort and junk is
+ * swept by the same delete.
+ *
+ * The empty JSON object is the whole grammar. It exists so that a stray file
+ * of this name — an editor backup, a half-written write from a foreign tool —
+ * cannot take a live pane down by accident; a pane closing is the one thing
+ * in this channel a user cannot undo by waiting.
+ */
+export function takeQuitRequest(defaultFile: string): boolean {
+  const path = quitFilePath(defaultFile);
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return false;
+  }
+  sweepQuitRequest(defaultFile);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripBom(raw));
+  } catch {
+    return false;
+  }
+  return isRecord(parsed);
+}
+
+/**
+ * Delete a quit request WITHOUT acting on it — the same file, read as a
+ * leftover rather than as a message.
+ *
+ * A toggle that wrote the request and then lost its watcher (a crash, a
+ * closed window, a `taskkill`) leaves the file behind, and the next pane to
+ * open would consume it on its first tick and close instantly. The watcher
+ * sweeps at STARTUP for exactly that: a request that predates the pane cannot
+ * have been addressed to it. Best-effort, like every delete in this channel.
+ */
+export function sweepQuitRequest(defaultFile: string): void {
+  try {
+    rmSync(quitFilePath(defaultFile), { force: true });
+  } catch {
+    // The file is unreachable for some reason the next tick will meet again;
+    // re-consuming a request we cannot delete only closes a pane the user
+    // asked to close.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // mapping policy — WHEN the assistant should open a map, chosen by the user
@@ -287,16 +377,46 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
 //
 // Plugin configuration, not map data: it never enters a MellosMap and the
 // ledger never enforces it (the ledger is not a judge). It lives in its own
-// sibling file so hand-editing or corrupting it can never touch a map.
+// file so hand-editing or corrupting it can never touch a map.
+//
+// TWO SCOPES, one file format:
+//
+//   user    <home>/.mellos/config.json — the normal one. The question "when
+//           should maps open?" is about how somebody works, not about a
+//           particular repository, so it is asked ONCE, right after install,
+//           and answered for every project they will ever open.
+//   project <root>/.mellos/config.json — the override. A project that needs a
+//           different answer from its owner's habit says so, and wins.
+//
+// PROJECT beats USER wherever both are set (effectiveMappingPolicy); neither
+// set means nobody has chosen yet, which is the one state that still prompts.
+// Both are read and written by the same pair of functions, which take the
+// CONFIG FILE PATH — not a map path — precisely so neither scope can grow a
+// loader of its own.
 
-/** Sibling of the default file holding the project's plugin configuration. */
+/** Name of the file holding a mapping-policy configuration, in either scope. */
 export const CONFIG_FILE_NAME = 'config.json';
 
 /** On-disk config format version. Bump only with a documented migration. */
 export const CONFIG_FILE_VERSION = 1;
 
+/** The PROJECT-scope configuration file: sibling of the default page. */
 export function configFilePath(defaultFile: string): string {
   return join(dirname(defaultFile), CONFIG_FILE_NAME);
+}
+
+/**
+ * The USER-scope configuration file: the same store directory name, under the
+ * user's own base directory.
+ *
+ * @param userBase - the user's home directory. Always passed in, never read
+ *   from the environment down here: a function that reached for os.homedir()
+ *   itself would make every spec a gamble on the developer's real
+ *   configuration, and one of them would eventually write it. Entry points
+ *   resolve the home once and hand it down.
+ */
+export function userConfigFilePath(userBase: string): string {
+  return join(userBase, STORE_DIR_NAME, CONFIG_FILE_NAME);
 }
 
 export const MAPPING_POLICIES = ['always', 'complex', 'on-request'] as const;
@@ -328,28 +448,15 @@ export function describeMappingPolicy(policy: MappingPolicy): string {
   }
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
 /**
- * Drop a leading UTF-8 byte-order mark. Windows editors (Notepad, some
- * PowerShell redirections) add one when a human edits a state file by hand,
- * and JSON.parse refuses the result — an invisible character would otherwise
- * read as "your map is corrupt". The BOM carries no meaning for us: the
- * files are UTF-8 by contract.
- */
-function stripBom(text: string): string {
-  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-}
-
-/**
- * The configured policy, or ok(undefined) when the project has never been
- * set up (missing file or missing key — both mean "nobody chose yet").
+ * The policy recorded in ONE configuration file, or ok(undefined) when nobody
+ * has chosen there (missing file or missing key — both mean the same thing).
  * A file that exists but does not parse is an error, never silently ignored.
+ *
+ * @param path - the configuration file itself: {@link configFilePath} for a
+ *   project, {@link userConfigFilePath} for the user. One loader, two scopes.
  */
-export function loadMappingPolicy(defaultFile: string): Result<MappingPolicy | undefined, StoreError> {
-  const path = configFilePath(defaultFile);
+export function loadMappingPolicy(path: string): Result<MappingPolicy | undefined, StoreError> {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
@@ -378,12 +485,56 @@ export function loadMappingPolicy(defaultFile: string): Result<MappingPolicy | u
 
 /**
  * Persist the policy atomically (P2), same write as the map files.
+ * @param path - the configuration file to write; see {@link loadMappingPolicy}.
  * @returns ok when the file holds the policy; save-failed leaves the previous
  *   configuration in place.
  */
-export function saveMappingPolicy(defaultFile: string, policy: MappingPolicy): Result<void, StoreError> {
+export function saveMappingPolicy(path: string, policy: MappingPolicy): Result<void, StoreError> {
   const body = JSON.stringify({ version: CONFIG_FILE_VERSION, policy }, null, 2) + '\n';
-  return writeFileAtomic(configFilePath(defaultFile), body);
+  return writeFileAtomic(path, body);
+}
+
+/** The two places a mapping policy can be recorded, in override order. */
+export const POLICY_SCOPES = ['user', 'project'] as const;
+export type PolicyScope = (typeof POLICY_SCOPES)[number];
+
+/** What both scopes say, and which of them actually governs. */
+export interface MappingPolicyScopes {
+  readonly project: MappingPolicy | undefined;
+  readonly user: MappingPolicy | undefined;
+  /** What to act on. undefined = nobody has chosen yet, anywhere. */
+  readonly effective: MappingPolicy | undefined;
+  /** Where `effective` came from; undefined exactly when `effective` is. */
+  readonly source: PolicyScope | undefined;
+}
+
+/**
+ * Resolve the policy that governs this project: the PROJECT file if it names
+ * one, otherwise the USER file, otherwise nothing.
+ *
+ * Both scopes are reported, not just the winner — a surface that says "always"
+ * without saying where it came from cannot tell a user why changing their
+ * user-level choice did nothing here.
+ *
+ * @param projectConfigFile - see {@link configFilePath}.
+ * @param userConfigFile - see {@link userConfigFilePath}.
+ * @returns err as soon as EITHER file exists and is broken, project first: a
+ *   configuration nobody can read is not the same as a configuration nobody
+ *   wrote, and silently falling through to the other scope would act on a
+ *   choice the user did not make.
+ */
+export function effectiveMappingPolicy(
+  projectConfigFile: string,
+  userConfigFile: string,
+): Result<MappingPolicyScopes, StoreError> {
+  const project = loadMappingPolicy(projectConfigFile);
+  if (!project.ok) return project;
+  const user = loadMappingPolicy(userConfigFile);
+  if (!user.ok) return user;
+  const effective = project.value ?? user.value;
+  const source: PolicyScope | undefined =
+    project.value !== undefined ? 'project' : user.value !== undefined ? 'user' : undefined;
+  return ok({ project: project.value, user: user.value, effective, source });
 }
 
 // ---------------------------------------------------------------------------

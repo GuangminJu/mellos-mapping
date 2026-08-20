@@ -151,10 +151,10 @@ describe('atomic writes under a hostile filesystem (P2)', () => {
   it('reports a failed policy write the same way — configuration is never half-set', () => {
     const defaultFile = join(dir, '.mellos', 'map.json');
     fault.renameFailures = Number.MAX_SAFE_INTEGER;
-    expect(mustFail(saveMappingPolicy(defaultFile, 'always')).kind).toBe('save-failed');
+    expect(mustFail(saveMappingPolicy(configFilePath(defaultFile), 'always')).kind).toBe('save-failed');
     expect(readdirSync(join(dir, '.mellos'))).toEqual([]);
     fault.renameFailures = 0;
-    must(saveMappingPolicy(defaultFile, 'always'));
+    must(saveMappingPolicy(configFilePath(defaultFile), 'always'));
     expect(readFileSync(configFilePath(defaultFile), 'utf8')).toContain('"policy": "always"');
   });
 });

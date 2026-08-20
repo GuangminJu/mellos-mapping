@@ -47,7 +47,9 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mellos-save-failure-'));
   stateFile = join(dir, '.mellos', 'map.json');
   fault.renameFailures = 0;
-  const server = buildServer(stateFile);
+  // The user-scope config lives inside the temp tree too: a spec must never be
+  // able to read, let alone write, the developer's real configuration.
+  const server = buildServer(stateFile, join(dir, 'home', '.mellos', 'config.json'));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'spec-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

@@ -7,7 +7,7 @@ description: >-
   of work. Declare the design as ghost nodes first, then light nodes up
   bottom-to-top as they are built and verified. Also use when the user asks
   for a mellos map, /mmap, a dependency map, or wants to see development
-  progress as a picture. The project's mmap_setup policy decides how eager
+  progress as a picture. The user's mmap_setup policy decides how eager
   mapping is — always / complex tasks only / on-request.
 ---
 
@@ -30,8 +30,12 @@ spelled out here. Report honestly — an unflattering map is doing its job.
 
 ## When to open a map
 
-The PROJECT chooses how eager mapping is. Before the first map decision of a
-session, call `mmap_setup` (no arguments) to learn the policy:
+The USER chooses how eager mapping is — once, for themselves, not once per
+project. In Claude Code the answer is already in this session's context: a
+`SessionStart` hook reads it and states it before the conversation begins, so
+there is nothing to probe. In hosts without hooks (Codex CLI, a bare MCP
+client) call `mmap_setup` with no arguments before the first map decision of
+the session; the reply names both scopes and which one governs.
 
 - `always` — map every structured task: workflows, designs, architecture,
   technical dependencies. Small effort, small map — but a map.
@@ -40,14 +44,21 @@ session, call `mmap_setup` (no arguments) to learn the policy:
   Skip trivial edits; a map of one node is noise. When unsure, ask.
 - `on-request` — open a map only when the user explicitly asks.
 
-If the reply says the policy is not set, ask the USER to choose — present the
-three options, never pick for them — then persist the answer with
-`mmap_setup {policy}`. Ask once per project: the choice is saved in
-`.mellos/config.json`, and `/mmap setup` reruns the question
-whenever the user wants to change it. Until they answer, act as `complex`.
-Two things always outrank the policy: an explicit user request for a map
-wins under any policy, and a map that is already open keeps getting honest
-updates whatever the policy says.
+Under `always` and `complex`, the recorded policy is STANDING CONSENT: on a
+task it covers, declare the ghost design and open the pane yourself, without
+asking first. Re-asking for permission the user has already given is the
+failure mode this policy exists to remove.
+
+If the policy is not set anywhere, ask the USER to choose — present the three
+options, never pick for them — then persist the answer with
+`mmap_setup {policy, scope: "user"}`. That is asked ONCE EVER: the choice is
+saved in the user's own `.mellos/config.json` and applies to every project.
+A project that genuinely needs to differ takes
+`mmap_setup {policy, scope: "project"}`, which overrides the user choice
+there; `/mmap setup` reruns the question for either scope. Until they answer,
+act as `complex`. Two things always outrank the policy: an explicit user
+request for a map wins under any policy, and a map that is already open keeps
+getting honest updates whatever the policy says.
 
 Caught mid-implementation without a map on work that deserves one? Stop and
 declare it with honest statuses (written-but-unverified is `in-progress`, not
@@ -63,8 +74,9 @@ usually mean the server was never registered: have the user run
    layer bands (rank 0 = most primitive, at the bottom), every planned node,
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
-2. **Offer the pane — showing the RIGHT page.** After the first declare, tell
-   the user the map is live. In Claude Code `/mellos-mapping:mmap` opens the
+2. **Open the pane — showing the RIGHT page.** After the first declare, tell
+   the user the map is live. Under `always` or `complex` this is not an offer:
+   open it. In Claude Code `/mellos-mapping:mmap` opens the
    pane. In other clients on Windows run
    `node <plugin root>/scripts/open-pane.mjs <project dir> --page <slug>` —
    it locates the terminal window hosting THIS session and splits it there,
@@ -85,7 +97,9 @@ usually mean the server was never registered: have the user run
    `node <plugin root>/dist/watch.mjs --page <slug>` from the project
    directory in a second terminal or split (this skill file lives under
    `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline
-   anywhere.
+   anywhere. The user has a hand on the pane too: `mmap` in any terminal of
+   the project opens it, and `mmap` again closes it — so a pane that vanishes
+   is them, not a fault.
 3. **Work bottom-up.** Set a node `in-progress` before implementing it, and
    prefer finishing its lower dependencies first. Independent same-band
    siblings need no artificial queue — building them together (several
