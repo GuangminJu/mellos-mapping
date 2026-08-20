@@ -1356,7 +1356,7 @@ function main(): void {
       : (flash !== undefined ? `${flash.text} · ` : '') +
         `${zoomTag} · wheel zoom · ` +
         (pannable ? 'drag pan · ' : '') +
-        'hover/click · 0 reset · q quit';
+        'hover/click · 0 reset · x delete page · q quit';
     // A footer wider than the pane would wrap and shear the whole frame.
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;

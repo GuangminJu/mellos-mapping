@@ -2574,7 +2574,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       lastTabSegments = [];
     }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
-    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
+    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 x delete page \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
     let frame = HOME;
