@@ -139,6 +139,25 @@ function writeFileAtomic(path: string, contents: string): Result<void, StoreErro
   }
 }
 
+// ---------------------------------------------------------------------------
+// reading text that a human may have touched — shared by every load below
+// ---------------------------------------------------------------------------
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Drop a leading UTF-8 byte-order mark. Windows editors (Notepad, some
+ * PowerShell redirections) add one when a human edits a state file by hand,
+ * and JSON.parse refuses the result — an invisible character would otherwise
+ * read as "your map is corrupt". The BOM carries no meaning for us: the
+ * files are UTF-8 by contract.
+ */
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 /**
  * Project-relative location of the DEFAULT page's state file. The store lives
  * in the tool-owned `.mellos/` directory: the map belongs to mellos-mapping,
@@ -280,6 +299,74 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
   return id.ok ? { page: id.value } : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// quit requests — "close yourself" messages from the toggle to the watcher
+// ---------------------------------------------------------------------------
+//
+// The mirror of the focus file, and there for the same reason: a human who
+// types `mmap` in some OTHER terminal has no channel to the pane that is
+// already running. The quit file is that channel, one-shot on purpose — the
+// watcher consumes the request AND DELETES the file, so a request lives about
+// one poll tick and nothing stale survives to close tomorrow's pane.
+//
+// The request carries no payload. A pane belongs to one store, so "close the
+// pane watching this store" has nothing to say beyond being asked.
+
+/** Sibling of the default file carrying a one-shot "close the pane" request. */
+export const QUIT_FILE_NAME = 'quit';
+
+export function quitFilePath(defaultFile: string): string {
+  return join(dirname(defaultFile), QUIT_FILE_NAME);
+}
+
+/**
+ * Consume a pending quit request: read it, delete the file, say whether there
+ * was one. Absent file — the overwhelmingly common case — or content that is
+ * not a JSON object means NO request; the channel is best-effort and junk is
+ * swept by the same delete.
+ *
+ * The empty JSON object is the whole grammar. It exists so that a stray file
+ * of this name — an editor backup, a half-written write from a foreign tool —
+ * cannot take a live pane down by accident; a pane closing is the one thing
+ * in this channel a user cannot undo by waiting.
+ */
+export function takeQuitRequest(defaultFile: string): boolean {
+  const path = quitFilePath(defaultFile);
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return false;
+  }
+  sweepQuitRequest(defaultFile);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripBom(raw));
+  } catch {
+    return false;
+  }
+  return isRecord(parsed);
+}
+
+/**
+ * Delete a quit request WITHOUT acting on it — the same file, read as a
+ * leftover rather than as a message.
+ *
+ * A toggle that wrote the request and then lost its watcher (a crash, a
+ * closed window, a `taskkill`) leaves the file behind, and the next pane to
+ * open would consume it on its first tick and close instantly. The watcher
+ * sweeps at STARTUP for exactly that: a request that predates the pane cannot
+ * have been addressed to it. Best-effort, like every delete in this channel.
+ */
+export function sweepQuitRequest(defaultFile: string): void {
+  try {
+    rmSync(quitFilePath(defaultFile), { force: true });
+  } catch {
+    // The file is unreachable for some reason the next tick will meet again;
+    // re-consuming a request we cannot delete only closes a pane the user
+    // asked to close.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // mapping policy — WHEN the assistant should open a map, chosen by the user
@@ -326,21 +413,6 @@ export function describeMappingPolicy(policy: MappingPolicy): string {
     case 'on-request':
       return 'map only when the user explicitly asks';
   }
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-/**
- * Drop a leading UTF-8 byte-order mark. Windows editors (Notepad, some
- * PowerShell redirections) add one when a human edits a state file by hand,
- * and JSON.parse refuses the result — an invisible character would otherwise
- * read as "your map is corrupt". The BOM carries no meaning for us: the
- * files are UTF-8 by contract.
- */
-function stripBom(text: string): string {
-  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 /**

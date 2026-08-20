@@ -26,7 +26,9 @@
  *   x, or click the × on the active tab   ask to delete the page on screen;
  *                  press again within the confirmation window and its file
  *                  is removed for good. Anything else takes the request back
- *   q              quit
+ *   q              quit — as does `mmap` typed in any terminal of this
+ *                  project, which writes the store's one-shot quit request
+ *                  (the pane is a toggle from outside as well as from inside)
  *
  * The bottom of the pane is a fixed-height detail panel: a separator, a
  * status-colored header, evidence, both wire directions (each neighbour
@@ -45,9 +47,9 @@
  * Writing contract: the pane is a READER of the store, with exactly one
  * exception — it deletes a page file on a CONFIRMED delete request (`x`
  * twice, or two clicks on the active tab's ×). Nothing else it does writes
- * anything: no map is ever saved from here, and the focus file it consumes
- * is a message addressed to it. A deletion the store refuses is a footer
- * line, never a half-done state.
+ * anything: no map is ever saved from here, and the focus and quit files it
+ * consumes are messages addressed to it. A deletion the store refuses is a
+ * footer line, never a half-done state.
  *
  * Resilience contract: NOTHING a file or a picture does may take the pane
  * down. A torn or half-written file (only possible with foreign writers; our
@@ -106,7 +108,9 @@ import {
   migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
+  sweepQuitRequest,
   takeFocusRequest,
+  takeQuitRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
 import {
@@ -1033,6 +1037,13 @@ function main(): void {
   // Announce it on stderr before the alternate screen opens, so the move is
   // not something the user only discovers from `git status`.
   if (migrateLegacyStore(cfg.file)) console.error('mellos-mapping: moved the legacy .claude map store to .mellos/ — commit the move.');
+  // A quit request written before this pane existed was addressed to a pane
+  // that is gone — a toggle whose watcher crashed, a window closed from its
+  // titlebar. Consuming it on the first tick would close the pane the user
+  // just asked for, so it is swept here instead. The LAUNCHER deliberately
+  // does not sweep: it cannot know when the watcher it spawns will boot, and
+  // the only moment a leftover is provably not for this pane is this one.
+  sweepQuitRequest(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
 
@@ -1377,6 +1388,13 @@ function main(): void {
   };
 
   const tick = (): void => {
+    // The `mmap` toggle's OFF half. First thing in the tick, and outside the
+    // map/standby split below: a pane about to close needs to measure, read
+    // and paint nothing, and a pane still waiting for its first declare has
+    // to answer the toggle exactly like one showing a map. quit() is the same
+    // clean shutdown the `q` key runs — the exit hook hands the terminal back.
+    if (takeQuitRequest(cfg.file)) quit();
+
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
     }

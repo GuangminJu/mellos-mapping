@@ -38,10 +38,13 @@ import {
   pageFilePath,
   pageIdOfFile,
   parseMap,
+  quitFilePath,
   saveMapFile,
   saveMappingPolicy,
   serializeMap,
+  sweepQuitRequest,
   takeFocusRequest,
+  takeQuitRequest,
 } from './store.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -457,6 +460,49 @@ describe('focus requests — one-shot "show this page" channel', () => {
       expect(takeFocusRequest(defaultFile)).toBeUndefined();
       expect(existsSync(focusFilePath(defaultFile))).toBe(false);
     }
+  });
+});
+
+describe('quit requests — one-shot "close the pane" channel', () => {
+  it('the quit file sits beside the default file', () => {
+    const defaultFile = join(dir, 'map.json');
+    expect(quitFilePath(defaultFile)).toBe(join(dir, 'quit'));
+  });
+
+  it('no file means no request', () => {
+    expect(takeQuitRequest(join(dir, 'map.json'))).toBe(false);
+  });
+
+  it('consuming a request answers true AND deletes the file (one-shot)', () => {
+    const defaultFile = join(dir, 'map.json');
+    writeFileSync(quitFilePath(defaultFile), '{}');
+    expect(takeQuitRequest(defaultFile)).toBe(true);
+    expect(existsSync(quitFilePath(defaultFile))).toBe(false);
+    expect(takeQuitRequest(defaultFile)).toBe(false);
+  });
+
+  it('junk in the channel closes nothing, and the delete sweeps it', () => {
+    const defaultFile = join(dir, 'map.json');
+    for (const junk of ['', 'not json', '"just-a-string"', '[1,2]', 'null']) {
+      writeFileSync(quitFilePath(defaultFile), junk);
+      expect(takeQuitRequest(defaultFile)).toBe(false);
+      expect(existsSync(quitFilePath(defaultFile))).toBe(false);
+    }
+  });
+
+  it('a BOM a hand-edit left behind still reads as a request', () => {
+    const defaultFile = join(dir, 'map.json');
+    writeFileSync(quitFilePath(defaultFile), '﻿{}', 'utf8');
+    expect(takeQuitRequest(defaultFile)).toBe(true);
+  });
+
+  it('the startup sweep removes a leftover without acting on it', () => {
+    const defaultFile = join(dir, 'map.json');
+    writeFileSync(quitFilePath(defaultFile), '{}');
+    sweepQuitRequest(defaultFile); // a pane opening cannot be the addressee
+    expect(existsSync(quitFilePath(defaultFile))).toBe(false);
+    expect(takeQuitRequest(defaultFile)).toBe(false);
+    sweepQuitRequest(defaultFile); // sweeping nothing is the state it was in
   });
 });
 

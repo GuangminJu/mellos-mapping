@@ -72,7 +72,14 @@ await build({
   banner: {},
   stdin: {
     contents: [
-      "export { STATE_FILE_RELATIVE_PATH, PAGES_DIR_NAME, FOCUS_FILE_NAME, focusFilePath } from './src/store/store.js';",
+      'export {',
+      '  STATE_FILE_RELATIVE_PATH,',
+      '  PAGES_DIR_NAME,',
+      '  FOCUS_FILE_NAME,',
+      '  focusFilePath,',
+      '  QUIT_FILE_NAME,',
+      '  quitFilePath,',
+      "} from './src/store/store.js';",
       "export { ID_RULE } from './src/domain/types.js';",
     ].join('\n'),
     resolveDir: root,
