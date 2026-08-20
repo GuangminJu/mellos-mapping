@@ -25,6 +25,7 @@ import {
 import {
   STATE_FILE_RELATIVE_PATH,
   configFilePath,
+  deletePageFile,
   describeMappingPolicy,
   describeStoreError,
   focusFilePath,
@@ -360,6 +361,66 @@ describe('pages — one effort, one file', () => {
     expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual([undefined, 'alpha', 'zeta']);
     // a page saved through the normal path loads back losslessly
     expect(must(loadMapFile(pageFilePath(defaultFile, must(makePageId('alpha')))))).toEqual(sampleMap());
+  });
+});
+
+/**
+ * Deleting a page is a GOAL STATE — "no file at this path" — not an act, so
+ * an already-absent file is success. The default page's file is optional by
+ * design, which makes deleting it as legal as deleting a named page.
+ */
+describe('deleting a page file', () => {
+  it('deletes a named page and leaves its siblings alone', () => {
+    const defaultFile = join(dir, '.mellos', 'map.json');
+    const alpha = pageFilePath(defaultFile, must(makePageId('alpha')));
+    saveMapFile(alpha, sampleMap());
+    saveMapFile(pageFilePath(defaultFile, must(makePageId('zeta'))), sampleMap());
+
+    expect(deletePageFile(alpha)).toEqual({ ok: true, value: undefined });
+    expect(existsSync(alpha)).toBe(false);
+    expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual(['zeta']);
+  });
+
+  it('deletes the default page — its file is optional, so its absence is a legal state', () => {
+    const defaultFile = join(dir, '.mellos', 'map.json');
+    saveMapFile(defaultFile, sampleMap());
+    saveMapFile(pageFilePath(defaultFile, must(makePageId('alpha'))), sampleMap());
+
+    expect(deletePageFile(defaultFile).ok).toBe(true);
+    expect(existsSync(defaultFile)).toBe(false);
+    expect(listPageFiles(defaultFile).map((p) => pageIdOfFile(defaultFile, p))).toEqual(['alpha']);
+  });
+
+  it('is idempotent: an absent file is already the goal state', () => {
+    const defaultFile = join(dir, '.mellos', 'map.json');
+    const ghost = pageFilePath(defaultFile, must(makePageId('never-existed')));
+    expect(deletePageFile(ghost).ok).toBe(true);
+    expect(deletePageFile(ghost).ok).toBe(true);
+  });
+
+  it('reports a deletion the filesystem refuses as a Result, never as an exception', () => {
+    // A DIRECTORY where a page file belongs: rm without `recursive` refuses
+    // it, and the caller must get the fault as a value instead of an errno
+    // thrown out of an MCP call or a pane's timer.
+    const wedged = join(dir, '.mellos', 'pages', 'alpha.json');
+    mkdirSync(wedged, { recursive: true });
+    const e = mustFail(deletePageFile(wedged));
+    expect(e.kind).toBe('delete-failed');
+    expect(describeStoreError(e)).toContain('could not delete');
+    expect(describeStoreError(e)).toContain('alpha.json');
+    expect(existsSync(wedged)).toBe(true);
+  });
+
+  it('leaves a stray temp sibling alone — a save in flight owns those', () => {
+    const defaultFile = join(dir, '.mellos', 'map.json');
+    const alpha = pageFilePath(defaultFile, must(makePageId('alpha')));
+    saveMapFile(alpha, sampleMap());
+    const stray = `${alpha}.4242.abcdef.tmp`;
+    writeFileSync(stray, 'a save in flight');
+
+    expect(deletePageFile(alpha).ok).toBe(true);
+    expect(existsSync(stray)).toBe(true); // deleting it would break that save
+    expect(pageDirFiles(dirname(alpha))).toEqual([]); // and it is no page
   });
 });
 
