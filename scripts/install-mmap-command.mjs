@@ -2,7 +2,7 @@
 /**
  * Put `mmap` on the PATH of a plugin install.
  *
- *   node scripts/install-mmap-command.mjs [--uninstall]
+ *   node scripts/install-mmap-command.mjs [--uninstall] [--json]
  *
  * npm users get `mmap` for free — package.json declares it in `bin`. Claude
  * Code installs this plugin by CLONING the repo, with no npm install and no
@@ -11,6 +11,14 @@
  * two tiny shims into `%LOCALAPPDATA%\mellos-mapping\bin` — `mmap.cmd` for
  * cmd/PowerShell, `mmap` for git-bash — and adds that one directory to the
  * USER PATH.
+ *
+ * Nobody has to run it by hand: the SessionStart hook
+ * (src/hook/session-start.ts) notices a missing or stale shim when a session
+ * starts and runs this script with `--json`, which prints the outcome as one
+ * JSON line instead of prose — that outcome object is the contract between
+ * the two files. The script stays a standalone command for the cases the
+ * hook does not cover: `--uninstall`, and re-adding a PATH entry the user
+ * removed while the shims still exist (the hook checks only the shims).
  *
  * What it will NEVER do, and says so instead:
  *
@@ -34,7 +42,7 @@ import { join } from 'node:path';
 
 import { launchedAsEntry, pluginRootOf } from './pane-core.mjs';
 
-export const USAGE = 'usage: node scripts/install-mmap-command.mjs [--uninstall]';
+export const USAGE = 'usage: node scripts/install-mmap-command.mjs [--uninstall] [--json]';
 
 /**
  * Longest value `setx` stores without truncating it, in characters. Documented
@@ -109,6 +117,18 @@ export function setxRefusal(rawValue, nextValue) {
 }
 
 /**
+ * What bringing the PATH from `raw` to `wanted` takes — decided, not done.
+ * The single place the write/refuse/no-op judgment lives; both the prose
+ * path and the `--json` path execute exactly this plan.
+ * @returns {{action: 'unchanged'} | {action: 'write'} | {action: 'refused', reason: string}}
+ */
+export function planPath(raw, wanted) {
+  if (wanted === raw) return { action: 'unchanged' };
+  const reason = setxRefusal(raw, wanted);
+  return reason === undefined ? { action: 'write' } : { action: 'refused', reason };
+}
+
+/**
  * The USER PATH exactly as the registry holds it — unexpanded, so a
  * `%USERPROFILE%` in it is still a `%USERPROFILE%` here.
  *
@@ -135,13 +155,13 @@ function writeUserPath(value) {
  * @param raw - the PATH value as it stands.
  */
 function applyPath(raw, wanted) {
-  if (wanted === raw) {
+  const plan = planPath(raw, wanted);
+  if (plan.action === 'unchanged') {
     console.log('Your user PATH already says what it should — leaving it alone.');
     return;
   }
-  const refusal = setxRefusal(raw, wanted);
-  if (refusal !== undefined) {
-    console.log(`NOT touching your user PATH: ${refusal}.`);
+  if (plan.action === 'refused') {
+    console.log(`NOT touching your user PATH: ${plan.reason}.`);
     console.log('Add (or remove) this entry yourself, in Settings > "Edit environment variables for your account":');
     console.log(`  ${wanted}`);
     return;
@@ -155,12 +175,63 @@ function applyPath(raw, wanted) {
   }
 }
 
+/**
+ * The install itself, with the narration stripped out: write the shims, bring
+ * the PATH in line, report what happened as data. This outcome object IS the
+ * `--json` output and the contract the SessionStart hook reads — change a
+ * field here and src/hook/session-start.ts must follow.
+ *
+ * @returns one of
+ *   {kind: 'not-built', missing}  — dist/mmap.mjs absent, nothing written;
+ *   {kind: 'installed', binDir, cmdPath, shPath, path, wanted, reason?} —
+ *     shims written; `path` says what happened to the USER PATH:
+ *       'unchanged' — the entry was already there,
+ *       'updated'   — the entry was appended,
+ *       'refused'   — setx would damage this PATH (`reason` says how); the
+ *                     entry in `wanted` must be added by hand,
+ *       'error'     — setx itself failed (`reason` is its message).
+ */
+export function install(localAppData, pluginRoot) {
+  const mmapPath = join(pluginRoot, 'dist', 'mmap.mjs');
+  if (!existsSync(mmapPath)) return { kind: 'not-built', missing: mmapPath };
+
+  const binDir = binDirIn(localAppData);
+  const cmdPath = join(binDir, 'mmap.cmd');
+  const shPath = join(binDir, 'mmap');
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(cmdPath, cmdShim(mmapPath));
+  writeFileSync(shPath, shShim(mmapPath));
+  try {
+    chmodSync(shPath, 0o755); // git-bash honors the execute bit it can see
+  } catch {
+    // A filesystem without POSIX modes still runs the shim through `sh`;
+    // refusing to install over a chmod would be theatre.
+  }
+
+  const raw = readUserPath();
+  const wanted = pathWith(raw, binDir);
+  const plan = planPath(raw, wanted);
+  if (plan.action === 'unchanged') return { kind: 'installed', binDir, cmdPath, shPath, path: 'unchanged', wanted };
+  if (plan.action === 'refused') {
+    return { kind: 'installed', binDir, cmdPath, shPath, path: 'refused', wanted, reason: plan.reason };
+  }
+  const written = writeUserPath(wanted);
+  return written.ok
+    ? { kind: 'installed', binDir, cmdPath, shPath, path: 'updated', wanted }
+    : { kind: 'installed', binDir, cmdPath, shPath, path: 'error', wanted, reason: written.error };
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const uninstall = argv.includes('--uninstall');
-  const unknown = argv.find((a) => a !== '--uninstall');
+  const json = argv.includes('--json');
+  const unknown = argv.find((a) => a !== '--uninstall' && a !== '--json');
   if (unknown !== undefined) {
     console.error(`unknown argument "${unknown}"\n${USAGE}`);
+    process.exit(1);
+  }
+  if (uninstall && json) {
+    console.error(`--uninstall talks to a human; it has no --json mode\n${USAGE}`);
     process.exit(1);
   }
   if (process.platform !== 'win32') {
@@ -173,13 +244,10 @@ function main() {
     process.exit(1);
   }
 
-  const binDir = binDirIn(localAppData);
-  const cmdPath = join(binDir, 'mmap.cmd');
-  const shPath = join(binDir, 'mmap');
-  const raw = readUserPath();
-
   if (uninstall) {
-    for (const path of [cmdPath, shPath]) {
+    const binDir = binDirIn(localAppData);
+    const raw = readUserPath();
+    for (const path of [join(binDir, 'mmap.cmd'), join(binDir, 'mmap')]) {
       rmSync(path, { force: true });
       console.log(`removed ${path}`);
     }
@@ -188,23 +256,34 @@ function main() {
     return;
   }
 
-  const mmapPath = join(pluginRootOf(import.meta.url), 'dist', 'mmap.mjs');
-  if (!existsSync(mmapPath)) {
-    console.error(`the plugin is not built — run "npm run build" (missing ${mmapPath})`);
+  const outcome = install(localAppData, pluginRootOf(import.meta.url));
+  if (json) {
+    console.log(JSON.stringify(outcome));
+    return;
+  }
+  if (outcome.kind === 'not-built') {
+    console.error(`the plugin is not built — run "npm run build" (missing ${outcome.missing})`);
     process.exit(1);
   }
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(cmdPath, cmdShim(mmapPath));
-  writeFileSync(shPath, shShim(mmapPath));
-  try {
-    chmodSync(shPath, 0o755); // git-bash honors the execute bit it can see
-  } catch {
-    // A filesystem without POSIX modes still runs the shim through `sh`;
-    // refusing to install over a chmod would be theatre.
+  console.log(`wrote ${outcome.cmdPath}`);
+  console.log(`wrote ${outcome.shPath}`);
+  switch (outcome.path) {
+    case 'unchanged':
+      console.log('Your user PATH already says what it should — leaving it alone.');
+      break;
+    case 'updated':
+      console.log('Changed ONE thing in your Windows user environment — your user PATH is now:');
+      console.log(`  ${outcome.wanted}`);
+      break;
+    case 'refused':
+      console.log(`NOT touching your user PATH: ${outcome.reason}.`);
+      console.log('Add this entry yourself, in Settings > "Edit environment variables for your account":');
+      console.log(`  ${outcome.binDir}`);
+      break;
+    case 'error':
+      console.error(`setx refused: ${outcome.reason}`);
+      process.exit(1);
   }
-  console.log(`wrote ${cmdPath}`);
-  console.log(`wrote ${shPath}`);
-  applyPath(raw, pathWith(raw, binDir));
   console.log('Open a new terminal, then type `mmap` in any project: it opens the map pane, or closes the open one.');
 }
 

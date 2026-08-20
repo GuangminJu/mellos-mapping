@@ -106,20 +106,28 @@ open. From then on the hook carries it into each new session by itself; there
 is no per-project setup step. See
 [Setup: choose when maps open](#setup-choose-when-maps-open).
 
-To type `mmap` in your own terminals, run this once:
+The `mmap` terminal command (the pane's open/close toggle) installs itself on
+Windows: the same hook notices on session start when the shim is missing or
+points at an older install, writes `mmap.cmd` (cmd, PowerShell) and `mmap`
+(git-bash) into `%LOCALAPPDATA%\mellos-mapping\bin`, appends that one
+directory to your **user** PATH, and tells you so through the assistant —
+terminals opened from then on have the command. The PATH edit keeps the
+installer's guarantees: nothing happens when the entry is already there, and
+a PATH that `setx` would damage (flattened `%VARIABLE%` references, truncation
+past its limit) is refused outright, with the entry to add by hand named
+instead.
+
+The step behind it is still a command of its own, for the cases the hook does
+not cover — `--uninstall`, or re-adding a PATH entry you removed while the
+shims stayed put:
 
 ```
-node "<plugin dir>/scripts/install-mmap-command.mjs"
+node "<plugin dir>/scripts/install-mmap-command.mjs" [--uninstall]
 ```
 
-It writes `mmap.cmd` (cmd, PowerShell) and `mmap` (git-bash) into
-`%LOCALAPPDATA%\mellos-mapping\bin`, and appends that one directory to your
-**user** PATH — printing the new value before writing it, doing nothing when
-the entry is already there, and refusing to touch the PATH at all where `setx`
-would flatten `%VARIABLE%` references or truncate a long one (it prints what
-to add by hand instead). Open a new terminal afterwards. `--uninstall`
-reverses both halves. `npm i -g mellos-mapping` provides the same command
-without this step.
+(`--json` prints the install outcome as one JSON line instead of prose — the
+mode the hook itself calls it in.) `npm i -g mellos-mapping` provides the
+same `mmap` via `bin`, no shims involved.
 
 ## Update
 

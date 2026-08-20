@@ -97,18 +97,24 @@ claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install
 "每个项目设置一遍"这回事。见
 [Setup：选择什么时候建图](#setup选择什么时候建图)。
 
-想在自己的终端里直接敲 `mmap`，跑一次：
+`mmap` 终端命令（面板的开关切换）在 Windows 上会自己装好：还是这个钩子，
+在会话启动时发现 shim 缺失或者还指向旧版本安装，就把 `mmap.cmd`（cmd、
+PowerShell）和 `mmap`（git-bash）写进 `%LOCALAPPDATA%\mellos-mapping\bin`，
+把这一个目录追加进你的**用户** PATH，并通过助手告诉你这件事——从那之后
+新开的终端就有这个命令。PATH 的改动保持安装器原有的承诺：条目已经在里面
+就什么都不做；遇到 `setx` 会损坏的 PATH（`%VARIABLE%` 被展平、超长被截
+断），它干脆拒绝，改为把要手动添加的条目说清楚。
+
+它背后的那一步仍然是个独立命令，留给钩子管不到的情形——`--uninstall`，
+或者 shim 还在、PATH 条目却被你删掉之后重新加回去：
 
 ```
-node "<插件目录>/scripts/install-mmap-command.mjs"
+node "<插件目录>/scripts/install-mmap-command.mjs" [--uninstall]
 ```
 
-它会把 `mmap.cmd`（cmd、PowerShell）和 `mmap`（git-bash）写进
-`%LOCALAPPDATA%\mellos-mapping\bin`，并把这一个目录追加进你的**用户**
-PATH——写之前先把新值打出来；已经在里面就什么都不做；遇到 `setx` 会把
-`%VARIABLE%` 展平、或者会被截断的过长 PATH，它干脆不碰，改为打印让你手动
-添加的内容。之后开一个新终端。`--uninstall` 把这两件事都撤销。
-`npm i -g mellos-mapping` 不用这一步就能得到同一个命令。
+（`--json` 把安装结果打成一行 JSON 而不是散文——钩子自己调用它时用的就是
+这个模式。）`npm i -g mellos-mapping` 通过 `bin` 提供同一个 `mmap`，不涉及
+shim。
 
 ## 更新
 

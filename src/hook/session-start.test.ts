@@ -6,10 +6,20 @@
  * that is easiest to break and hardest to notice — when it is told nothing.
  */
 
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { MappingPolicy } from '../store/store.js';
-import { type SessionContextInput, hookOutput, parseHookInput, sessionStartContext } from './session-start.js';
+import {
+  type SessionContextInput,
+  hookOutput,
+  installContextLine,
+  mmapShimCurrent,
+  mmapShimFilePath,
+  parseHookInput,
+  sessionStartContext,
+} from './session-start.js';
 
 const base: SessionContextInput = {
   policy: 'always',
@@ -130,5 +140,44 @@ describe('the hook payload', () => {
     expect(JSON.parse(hookOutput('hello'))).toEqual({
       hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'hello' },
     });
+  });
+});
+
+describe('the mmap command installs itself — the hook side of the installer contract', () => {
+  it('watches the exact file scripts/install-mmap-command.mjs owns (both specs pin these segments)', () => {
+    expect(mmapShimFilePath('C:\\Users\\ada\\AppData\\Local')).toBe(
+      join('C:\\Users\\ada\\AppData\\Local', 'mellos-mapping', 'bin', 'mmap.cmd'),
+    );
+  });
+
+  it('a shim quoting THIS install\'s bundle is current; anything else is stale', () => {
+    const mine = 'C:\\cache\\0.20.2\\dist\\mmap.mjs';
+    expect(mmapShimCurrent(`@echo off\r\nnode "${mine}" %*\r\n`, mine)).toBe(true);
+    expect(mmapShimCurrent(`@echo off\r\nnode "C:\\cache\\0.20.1\\dist\\mmap.mjs" %*\r\n`, mine)).toBe(false);
+    expect(mmapShimCurrent(undefined, mine)).toBe(false);
+  });
+
+  it('a PATH update is announced, and names the one thing the user must do', () => {
+    const line = installContextLine({ kind: 'installed', binDir: 'C:\\bin', path: 'updated', wanted: 'C:\\a;C:\\bin' })!;
+    expect(line).toContain('C:\\bin');
+    expect(line).toContain('new terminal');
+    expect(line).toContain('`mmap`');
+  });
+
+  it('a refusal is relayed with its reason and the manual step', () => {
+    for (const path of ['refused', 'error'] as const) {
+      const line = installContextLine({ kind: 'installed', binDir: 'C:\\bin', path, reason: 'because setx' })!;
+      expect(line).toContain('NOT changed');
+      expect(line).toContain('because setx');
+      expect(line).toContain('user PATH');
+    }
+  });
+
+  it('maintenance and noise are silent: unchanged, not-built, junk', () => {
+    expect(installContextLine({ kind: 'installed', binDir: 'C:\\bin', path: 'unchanged' })).toBeUndefined();
+    expect(installContextLine({ kind: 'not-built', missing: 'C:\\dist\\mmap.mjs' })).toBeUndefined();
+    for (const junk of [undefined, null, 'text', 42, {}, { kind: 'installed' }]) {
+      expect(installContextLine(junk)).toBeUndefined();
+    }
   });
 });

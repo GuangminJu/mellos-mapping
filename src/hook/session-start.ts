@@ -26,14 +26,27 @@
  * session is a session that has to know the policy just as much as a fresh
  * one, and compaction is exactly where a standing instruction gets lost.
  *
+ * One more duty lives here because it can live nowhere else: Claude Code has
+ * no install-time hook, so this — the only code of ours a session runs
+ * without anyone typing anything — is where the `mmap` terminal command gets
+ * installed. On Windows the hook checks that the PATH shim points at THIS
+ * install (one small file read); when it is missing or stale it runs
+ * scripts/install-mmap-command.mjs with `--json` and relays what changed
+ * through the context, so the user hears about their PATH from the
+ * assistant, not from silence. The outcome object is the contract between
+ * the two files.
+ *
  * Two promises this file keeps because a hook runs before the user has typed
  * anything:
- *   FAST — one config read and one existsSync, no map is parsed.
+ *   FAST — one config read, one existsSync, one shim read; no map is parsed.
+ *   The installer child process runs only when the shim is missing or stale —
+ *   in the steady state it never spawns.
  *   SILENT ON FAILURE — see main(). A hook that throws must not be the reason
  *   someone's session starts badly.
  */
 
-import { existsSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -116,6 +129,88 @@ export function sessionStartContext(input: SessionContextInput): string | undefi
   ].join('\n');
 }
 
+/**
+ * Where the `mmap` PATH shim lives, given a `%LOCALAPPDATA%`. The same
+ * directory scripts/install-mmap-command.mjs owns — each side's spec pins the
+ * identical literal, so the two cannot drift apart without a test failing.
+ */
+export function mmapShimFilePath(localAppData: string): string {
+  return join(localAppData, 'mellos-mapping', 'bin', 'mmap.cmd');
+}
+
+/**
+ * Does this shim already launch THIS install's `mmap`? The shim quotes the
+ * bundle's absolute path, so containing it is the whole test: a missing shim,
+ * another version's cache path, or a hand-edited file all read as stale — and
+ * a stale shim is re-installed, never trusted.
+ */
+export function mmapShimCurrent(shimContent: string | undefined, mmapPath: string): boolean {
+  return shimContent !== undefined && shimContent.includes(`"${mmapPath}"`);
+}
+
+/**
+ * What the session is told about an installer outcome (the `--json` object of
+ * scripts/install-mmap-command.mjs) — or undefined when there is nothing the
+ * user needs to hear. Silence is deliberate for 'unchanged' (a refreshed shim
+ * with the PATH already right is maintenance, not news) and for 'not-built'
+ * (a source clone without dist is the developer's own situation).
+ */
+export function installContextLine(outcome: unknown): string | undefined {
+  if (typeof outcome !== 'object' || outcome === null) return undefined;
+  const o = outcome as { readonly kind?: unknown; readonly binDir?: unknown; readonly path?: unknown; readonly reason?: unknown };
+  if (o.kind !== 'installed' || typeof o.binDir !== 'string') return undefined;
+  if (o.path === 'updated') {
+    return [
+      'mellos-mapping: the `mmap` terminal command was just installed for the user',
+      `(${o.binDir} was added to their user PATH). Typed in any project terminal, \`mmap\``,
+      'toggles the map pane. Only terminals opened from now on have it — if the user says',
+      '`mmap` is not recognized, have them open a new terminal.',
+    ].join('\n');
+  }
+  if (o.path === 'refused' || o.path === 'error') {
+    const reason = typeof o.reason === 'string' ? o.reason : 'the PATH edit failed';
+    return [
+      `mellos-mapping: the \`mmap\` command's launcher was written to ${o.binDir},`,
+      `but the user PATH was NOT changed: ${reason}.`,
+      'If the user wants the `mmap` pane-toggle command, tell them to add that directory to',
+      'their user PATH (Settings > "Edit environment variables for your account").',
+    ].join('\n');
+  }
+  return undefined;
+}
+
+/**
+ * Make sure the user's `mmap` command exists and points at this install; say
+ * what a session should hear about it, or undefined when there is nothing to
+ * do or to say. The fast path — the usual one — is a single small file read.
+ */
+function ensureMmapCommand(pluginRoot: string): string | undefined {
+  if (process.platform !== 'win32') return undefined;
+  const localAppData = process.env['LOCALAPPDATA'];
+  if (localAppData === undefined || localAppData === '') return undefined;
+  const mmapPath = join(pluginRoot, 'dist', 'mmap.mjs');
+  let shim: string | undefined;
+  try {
+    shim = readFileSync(mmapShimFilePath(localAppData), 'utf8');
+  } catch {
+    shim = undefined; // no shim yet — exactly what the install below fixes
+  }
+  if (mmapShimCurrent(shim, mmapPath)) return undefined;
+  const run = spawnSync(
+    process.execPath,
+    [join(pluginRoot, 'scripts', 'install-mmap-command.mjs'), '--json'],
+    { encoding: 'utf8', windowsHide: true, timeout: 15_000 },
+  );
+  if (run.status !== 0 || typeof run.stdout !== 'string') return undefined;
+  let outcome: unknown;
+  try {
+    outcome = JSON.parse(run.stdout);
+  } catch {
+    return undefined;
+  }
+  return installContextLine(outcome);
+}
+
 /** The one field of the hook payload this hook uses. */
 export interface HookInput {
   /** The session's working directory, or undefined when the payload had none. */
@@ -159,16 +254,26 @@ async function main(): Promise<void> {
   // mmap_setup, where the error is explained. Shouting it into every session
   // start would be a broken file taking the whole session hostage.
   if (!scopes.ok) return;
+  // The bundle lives at <plugin root>/dist/, so the root is two up. Derived
+  // rather than read from CLAUDE_PLUGIN_ROOT: the hook always knows where it
+  // was installed, and an env var is one host contract more than it needs.
+  const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const context = sessionStartContext({
     policy: scopes.value.effective,
     hasStore: existsSync(join(projectDir, STORE_DIR_NAME)),
     projectDir,
-    // The bundle lives at <plugin root>/dist/, so the root is two up. Derived
-    // rather than read from CLAUDE_PLUGIN_ROOT: the hook always knows where it
-    // was installed, and an env var is one host contract more than it needs.
-    pluginRoot: dirname(dirname(fileURLToPath(import.meta.url))),
+    pluginRoot,
   });
-  if (context !== undefined) process.stdout.write(hookOutput(context));
+  let installNote: string | undefined;
+  try {
+    installNote = ensureMmapCommand(pluginRoot);
+  } catch {
+    // A failed shim install must not cost the session its policy paragraph;
+    // the standalone installer script exists for exactly this user to run.
+    installNote = undefined;
+  }
+  const parts = [context, installNote].filter((p): p is string => p !== undefined);
+  if (parts.length > 0) process.stdout.write(hookOutput(parts.join('\n\n')));
 }
 
 /**

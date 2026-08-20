@@ -2,7 +2,8 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
 // src/hook/session-start.ts
-import { existsSync as existsSync2, realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname as dirname2, join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -117,6 +118,61 @@ function sessionStartContext(input) {
     "An explicit request from the user always outranks this."
   ].join("\n");
 }
+function mmapShimFilePath(localAppData) {
+  return join2(localAppData, "mellos-mapping", "bin", "mmap.cmd");
+}
+function mmapShimCurrent(shimContent, mmapPath) {
+  return shimContent !== void 0 && shimContent.includes(`"${mmapPath}"`);
+}
+function installContextLine(outcome) {
+  if (typeof outcome !== "object" || outcome === null) return void 0;
+  const o = outcome;
+  if (o.kind !== "installed" || typeof o.binDir !== "string") return void 0;
+  if (o.path === "updated") {
+    return [
+      "mellos-mapping: the `mmap` terminal command was just installed for the user",
+      `(${o.binDir} was added to their user PATH). Typed in any project terminal, \`mmap\``,
+      "toggles the map pane. Only terminals opened from now on have it \u2014 if the user says",
+      "`mmap` is not recognized, have them open a new terminal."
+    ].join("\n");
+  }
+  if (o.path === "refused" || o.path === "error") {
+    const reason = typeof o.reason === "string" ? o.reason : "the PATH edit failed";
+    return [
+      `mellos-mapping: the \`mmap\` command's launcher was written to ${o.binDir},`,
+      `but the user PATH was NOT changed: ${reason}.`,
+      "If the user wants the `mmap` pane-toggle command, tell them to add that directory to",
+      'their user PATH (Settings > "Edit environment variables for your account").'
+    ].join("\n");
+  }
+  return void 0;
+}
+function ensureMmapCommand(pluginRoot) {
+  if (process.platform !== "win32") return void 0;
+  const localAppData = process.env["LOCALAPPDATA"];
+  if (localAppData === void 0 || localAppData === "") return void 0;
+  const mmapPath = join2(pluginRoot, "dist", "mmap.mjs");
+  let shim;
+  try {
+    shim = readFileSync2(mmapShimFilePath(localAppData), "utf8");
+  } catch {
+    shim = void 0;
+  }
+  if (mmapShimCurrent(shim, mmapPath)) return void 0;
+  const run = spawnSync(
+    process.execPath,
+    [join2(pluginRoot, "scripts", "install-mmap-command.mjs"), "--json"],
+    { encoding: "utf8", windowsHide: true, timeout: 15e3 }
+  );
+  if (run.status !== 0 || typeof run.stdout !== "string") return void 0;
+  let outcome;
+  try {
+    outcome = JSON.parse(run.stdout);
+  } catch {
+    return void 0;
+  }
+  return installContextLine(outcome);
+}
 function parseHookInput(raw) {
   let parsed;
   try {
@@ -142,16 +198,21 @@ async function main() {
   const stateFile = join2(projectDir, STATE_FILE_RELATIVE_PATH);
   const scopes = effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir()));
   if (!scopes.ok) return;
+  const pluginRoot = dirname2(dirname2(fileURLToPath(import.meta.url)));
   const context = sessionStartContext({
     policy: scopes.value.effective,
     hasStore: existsSync2(join2(projectDir, STORE_DIR_NAME)),
     projectDir,
-    // The bundle lives at <plugin root>/dist/, so the root is two up. Derived
-    // rather than read from CLAUDE_PLUGIN_ROOT: the hook always knows where it
-    // was installed, and an env var is one host contract more than it needs.
-    pluginRoot: dirname2(dirname2(fileURLToPath(import.meta.url)))
+    pluginRoot
   });
-  if (context !== void 0) process.stdout.write(hookOutput(context));
+  let installNote;
+  try {
+    installNote = ensureMmapCommand(pluginRoot);
+  } catch {
+    installNote = void 0;
+  }
+  const parts = [context, installNote].filter((p) => p !== void 0);
+  if (parts.length > 0) process.stdout.write(hookOutput(parts.join("\n\n")));
 }
 function launchedAsEntry(argv1, moduleUrl) {
   if (argv1 === void 0) return false;
@@ -166,7 +227,10 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
 }
 export {
   hookOutput,
+  installContextLine,
   launchedAsEntry,
+  mmapShimCurrent,
+  mmapShimFilePath,
   parseHookInput,
   sessionStartContext
 };

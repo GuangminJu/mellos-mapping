@@ -20,6 +20,7 @@ import {
   pathContains,
   pathWith,
   pathWithout,
+  planPath,
   setxRefusal,
   shShim,
 } from './install-mmap-command.mjs';
@@ -86,5 +87,21 @@ describe('when setx would do damage, it refuses instead', () => {
 
   it('has nothing to say about a plain PATH that fits', () => {
     expect(setxRefusal('C:\\a;C:\\b', 'C:\\a;C:\\b;C:\\new')).toBeUndefined();
+  });
+});
+
+describe('the plan every mode executes — decided before anything is done', () => {
+  it('a PATH already right is a no-op, never a rewrite of the same value', () => {
+    expect(planPath('C:\\a;C:\\bin', 'C:\\a;C:\\bin')).toEqual({ action: 'unchanged' });
+  });
+
+  it('a safe change is a write', () => {
+    expect(planPath('C:\\a', 'C:\\a;C:\\bin')).toEqual({ action: 'write' });
+  });
+
+  it('a change setx would damage is a refusal that names the damage', () => {
+    const plan = planPath('%USERPROFILE%\\bin', '%USERPROFILE%\\bin;C:\\bin');
+    expect(plan.action).toBe('refused');
+    expect(plan.reason).toContain('%VARIABLE%');
   });
 });

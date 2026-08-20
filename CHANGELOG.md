@@ -64,12 +64,17 @@ the git history (`git log --oneline`), which is where this file starts.
   one can never close a fresh one. `mmap <slug>` opens on that page or
   retargets an open pane to it, and never closes. Every watcher flag is
   forwarded verbatim; an unknown one is refused. npm installs provide it as a
-  `bin`; a plugin install gets it from
-  `node scripts/install-mmap-command.mjs`, which writes a `.cmd` and a
-  git-bash shim into `%LOCALAPPDATA%\mellos-mapping\bin` and appends that one
-  directory to the user PATH — printing the new value first, doing nothing
-  when it is already there, and refusing outright where `setx` would flatten
-  a `%VARIABLE%` PATH or truncate a long one. `--uninstall` reverses it.
+  `bin`; a plugin install gets it from the `SessionStart` hook, which — there
+  being no install-time hook to do it in — notices a missing or stale shim at
+  session start and runs `scripts/install-mmap-command.mjs --json` itself:
+  a `.cmd` and a git-bash shim land in `%LOCALAPPDATA%\mellos-mapping\bin`,
+  that one directory is appended to the user PATH, and the change is announced
+  through the assistant's context (new terminals only — the hook says so). The
+  steady state costs the hook a single shim read; the PATH edit keeps the
+  installer's guarantees — nothing when the entry is already there, refusal
+  where `setx` would flatten a `%VARIABLE%` PATH or truncate a long one, with
+  the manual entry named instead. The script remains a standalone command for
+  `--uninstall` and for re-adding a PATH entry removed by hand.
 - **The mapping policy is chosen once, for the user, and injected into every
   session.** It was a per-project setting that something had to remember to
   ask about. It now has a USER scope — `<home>/.mellos/config.json`, the same
@@ -88,7 +93,9 @@ the git history (`git log --oneline`), which is where this file starts.
   pane, `x` — or the `×` the active tab now carries in mouse mode — asks, the
   footer says `press x again to delete <page>`, and a second press within
   three seconds removes that page's file; switching page, `Esc` or waiting
-  takes the request back. From a tool call, `mmap_remove` gained
+  takes the request back. The resting footer advertises the key —
+  `x delete page`, worded as the deletion it is, beside `q quit` — because a
+  key nothing names might as well not exist. From a tool call, `mmap_remove` gained
   `pages: ["slug", …]`, applied after that call's map edits. It refuses a page
   the same call targets with `page`, and an unknown slug — naming a page the
   project does not have is a typo far more often than a race — with the real
