@@ -111,6 +111,12 @@ usually mean the server was never registered: have the user run
    title (`null` removes it); `mmap_remove` drops edges, nodes, groups, lanes
    and bands you have emptied. A map that no longer matches your intent is
    the one failure mode this system cannot survive.
+7. **Clean up a finished effort.** Pages accumulate — one effort, one page —
+   so when an effort is over and its map has served its purpose, offer to
+   remove it: `mmap_remove {pages: ["slug"]}` deletes those page files for
+   good. Only with the user behind it, never on your own initiative, and
+   never a page someone might still be reading. (In the pane the user can do
+   it themselves: `x` twice, or the `×` on the active tab.)
 
 ## Modeling guidance
 

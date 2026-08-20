@@ -59,7 +59,9 @@ export type StoreError =
   | { readonly kind: 'bad-shape'; readonly path: string; readonly detail: string }
   | { readonly kind: 'invariant-violation'; readonly path: string; readonly violation: MapError }
   /** A write that did not land. The file still holds its previous content. */
-  | { readonly kind: 'save-failed'; readonly path: string; readonly detail: string };
+  | { readonly kind: 'save-failed'; readonly path: string; readonly detail: string }
+  /** A deletion the filesystem refused. The file is still there. */
+  | { readonly kind: 'delete-failed'; readonly path: string; readonly detail: string };
 
 export function describeStoreError(e: StoreError): string {
   switch (e.kind) {
@@ -73,6 +75,8 @@ export function describeStoreError(e: StoreError): string {
       return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
     case 'save-failed':
       return `could not write ${e.path}: ${e.detail}`;
+    case 'delete-failed':
+      return `could not delete ${e.path}: ${e.detail}`;
   }
 }
 

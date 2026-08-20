@@ -23,6 +23,9 @@
  *                  light their tab up instead of stealing the view
  *   wheel on the tab row / click ‹ ›   browse an overflowing tab strip
  *                  without switching pages
+ *   x, or click the × on the active tab   ask to delete the page on screen;
+ *                  press again within the confirmation window and its file
+ *                  is removed for good. Anything else takes the request back
  *   q              quit
  *
  * The bottom of the pane is a fixed-height detail panel: a separator, a
@@ -38,6 +41,13 @@
  * chose. Every promise about pages — a request beats follow, the startup
  * scan is not news, a torn file never costs the last good picture — is
  * specified over there.
+ *
+ * Writing contract: the pane is a READER of the store, with exactly one
+ * exception — it deletes a page file on a CONFIRMED delete request (`x`
+ * twice, or two clicks on the active tab's ×). Nothing else it does writes
+ * anything: no map is ever saved from here, and the focus file it consumes
+ * is a message addressed to it. A deletion the store refuses is a footer
+ * line, never a half-done state.
  *
  * Resilience contract: NOTHING a file or a picture does may take the pane
  * down. A torn or half-written file (only possible with foreign writers; our
@@ -88,6 +98,8 @@ import {
   PAGES_DIR_NAME,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
+  deletePageFile,
+  describeStoreError,
   listPageFiles,
   loadMapFile,
   makePageId,
@@ -101,6 +113,7 @@ import {
   type PageFault,
   type PaneState,
   describePageFault,
+  disarmDelete,
   entryOf,
   filesOf,
   initialPaneState,
@@ -108,6 +121,7 @@ import {
   mapsOf,
   popDive,
   pushDive,
+  requestDelete,
   scan,
   toggleFollow,
   userSwitch,
@@ -345,6 +359,16 @@ const FLASH_BACKGROUND_NEWS_MS = 4000;
 const DOUBLE_CLICK_MS = 450;
 
 /**
+ * How long an armed page deletion stands — and, the same number on purpose,
+ * how long its "press x again" message stays in the footer. The window a
+ * user can SEE is the window they have: a confirmation still armed after its
+ * question left the screen would turn some later keystroke into a deleted
+ * file. Long enough to read the page's name and decide, short enough that
+ * the answer is still about the question.
+ */
+const CONFIRM_WINDOW_MS = 3000;
+
+/**
  * Terminal size to assume when stdout reports none — a pipe, a CI log, a
  * terminal that answers late. Roughly a classic 100x30 window: wide enough
  * that the picture is not shredded, small enough that a real terminal will
@@ -423,7 +447,13 @@ export type TabAction =
   | { readonly kind: 'switch'; readonly index: number }
   | { readonly kind: 'scroll'; readonly delta: -1 | 1 }
   /** The breadcrumb inside a sub-map: the whole row climbs back out. */
-  | { readonly kind: 'back' };
+  | { readonly kind: 'back' }
+  /**
+   * The × on the ACTIVE tab: ask to delete the page on screen. It carries no
+   * index because it exists on no other tab — clicking an inactive tab
+   * switches to it first, and the × appears there on the next frame.
+   */
+  | { readonly kind: 'delete' };
 
 export interface TabSegment {
   readonly text: string;
@@ -438,6 +468,17 @@ export interface TabSegment {
 const TAB_INDICATOR_W = 3;
 
 /**
+ * The close button drawn on the ACTIVE tab: the glyph plus one trailing
+ * space, so the click target is two columns wide and cannot be hit by
+ * aiming at the neighbouring tab. The glyph is East-Asian AMBIGUOUS, which
+ * this repo's width table calls one column — same as ● ○ ■ ✗ and the rest of
+ * the pane's alphabet (render/width.ts).
+ */
+const CLOSE_TAB_TEXT: Readonly<Record<'unicode' | 'ascii', string>> = { unicode: '× ', ascii: 'x ' };
+/** The × is a secondary affordance: faint, never competing with the tab it sits on. */
+const CLOSE_TAB_SGR = '90';
+
+/**
  * Render the page tab bar as ANSI-free segments with column spans. The
  * active tab is bold in its map's aggregate status color; inactive tabs
  * are faint — unless fresh (changed since last viewed), which keep their
@@ -450,8 +491,23 @@ const TAB_INDICATOR_W = 3;
  * switches the page; the caller owns the scroll state and clicks a tab to
  * actually switch. Keeping the ACTIVE tab visible when the page changes
  * is also the caller's move: see tabScrollFor.
+ *
+ * @param closable - draw a × on the ACTIVE tab as its own segment (a
+ *   'delete' action). Only worth it where a click can land, so the caller
+ *   passes its mouse mode; the `x` key works either way. It is on the active
+ *   tab alone because deleting a page one is not even looking at is not a
+ *   thing a single click should be able to do — and because the confirming
+ *   press is bound to the page on screen anyway. Its columns are counted in
+ *   the width budget like any other segment, so the strip still measures
+ *   itself honestly.
  */
-export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boolean, scroll = 0): TabSegment[] {
+export function pageTabRow(
+  tabs: readonly PageTab[],
+  width: number,
+  unicode: boolean,
+  scroll = 0,
+  closable = false,
+): TabSegment[] {
   const texts = tabs.map((tab) => {
     const marker = tab.active ? (unicode ? '●' : '*') : unicode ? '○' : 'o';
     const glyph = statusGlyph(tab.status, unicode);
@@ -470,7 +526,11 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
         : tab.fresh
           ? statusSgr(tab.status)
           : '90';
-  const widths = texts.map(displayWidth);
+  const closeText = CLOSE_TAB_TEXT[unicode ? 'unicode' : 'ascii'];
+  const closeW = displayWidth(closeText);
+  /** Extra columns tab `i` costs for its close button — the active one only. */
+  const closeOf = (i: number): number => (closable && tabs[i]!.active ? closeW : 0);
+  const widths = texts.map((t, i) => displayWidth(t) + closeOf(i));
   const count = tabs.length;
 
   // -- window selection: everything, or as much as fits from `scroll` on --
@@ -498,8 +558,15 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
   if (lo > 0) push(unicode ? ' ‹ ' : ' < ', '90', { kind: 'scroll', delta: -1 });
   const tail = hi < count - 1 ? TAB_INDICATOR_W : 0;
   for (let i = lo; i <= hi; i++) {
+    const close = closeOf(i);
     // the window is chosen to fit; only a lone leading tab can still overflow
-    push(fitWidth(texts[i]!, Math.max(1, width - (col - 1) - tail)), sgrOf(tabs[i]!), { kind: 'switch', index: i });
+    push(fitWidth(texts[i]!, Math.max(1, width - (col - 1) - tail - close)), sgrOf(tabs[i]!), {
+      kind: 'switch',
+      index: i,
+    });
+    // ...and in that degenerate case the × is dropped rather than pushed past
+    // the last usable column, where it would shear the whole frame
+    if (close > 0 && col - 1 + close + tail <= width) push(closeText, CLOSE_TAB_SGR, { kind: 'delete' });
   }
   if (hi < count - 1) push(unicode ? ' › ' : ' > ', '90', { kind: 'scroll', delta: 1 });
   return segments;
@@ -517,10 +584,16 @@ export function tabScrollFor(
   unicode: boolean,
   scroll: number,
   index: number,
+  closable = false,
 ): number {
   if (index <= scroll) return Math.max(0, index);
+  // measured with the SAME closable setting the row will be painted with:
+  // the × costs columns, and a window computed without it can put the tab it
+  // was asked to reveal half off the strip
   const visibleAt = (s: number): boolean =>
-    pageTabRow(tabs, width, unicode, s).some((seg) => seg.action.kind === 'switch' && seg.action.index === index);
+    pageTabRow(tabs, width, unicode, s, closable).some(
+      (seg) => seg.action.kind === 'switch' && seg.action.index === index,
+    );
   let s = Math.max(0, Math.min(scroll, tabs.length - 1));
   while (s < index && !visibleAt(s)) s++;
   return s;
@@ -1006,7 +1079,12 @@ function main(): void {
   let dividerDrag = false;
   // sub-map navigation: double-click dives, Backspace climbs back out
   let lastClick: { id: string; at: number } | undefined;
-  let flash: { text: string; until: number } | undefined;
+  /**
+   * The footer message. `confirm` marks the one kind that is a QUESTION
+   * standing on live state — an armed page deletion: when the state goes,
+   * the question goes with it, however much of its window was left.
+   */
+  let flash: { text: string; until: number; confirm?: boolean } | undefined;
   /** Tab-bar files as painted (top-level pages only), for click hit-testing. */
   let lastTabFiles: string[] = [];
 
@@ -1089,7 +1167,9 @@ function main(): void {
     // the strip follows the switch — the active tab must never sit off-screen
     const top = topFiles();
     const tabIndex = top.indexOf(file);
-    if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
+    if (tabIndex >= 0) {
+      tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex, mouseActive);
+    }
   };
 
   /**
@@ -1249,7 +1329,8 @@ function main(): void {
         .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
         .join('');
     } else if (tabRows() > 0) {
-      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll);
+      // the × is clickable, so it is drawn only where clicks are reported
+      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll, mouseActive);
       lastTabSegments = segments;
       tabLine = segments
         .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
@@ -1326,6 +1407,9 @@ function main(): void {
     }
     adoptView(previous);
     adoptPage();
+    // the scan may have withdrawn an armed deletion (the view moved, the page
+    // vanished); its question must not stay on screen without it
+    if (flash?.confirm === true && pane.pendingDelete === undefined) flash = undefined;
 
     // a hidden sub-map changed — it has no tab to light, so surface it here
     const top = topFiles();
@@ -1339,6 +1423,42 @@ function main(): void {
     if (pane.pages.some((p) => mapOf(p)?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
     if (flash !== undefined && Date.now() > flash.until) flash = undefined; // footer message expires
     paint();
+  };
+
+  /** What a page is called in a message: its slug, or the default page's word. */
+  const pageName = (file: string): string =>
+    (pageIdOfFile(cfg.file, file) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL;
+
+  /**
+   * One delete press — the `x` key, or a click on the active tab's ×.
+   *
+   * The first press only ASKS: the footer carries the question for exactly as
+   * long as the request stands (CONFIRM_WINDOW_MS). A second press inside
+   * that window deletes the page's file, and the immediate re-scan hands the
+   * view to another page through the same fallback any vanished page uses. A
+   * store refusal is a footer line and nothing more — the pane never dies of
+   * one, and the request is already disarmed either way, so a failed delete
+   * cannot be completed by an unrelated later keystroke.
+   */
+  const askDelete = (): void => {
+    const now = Date.now();
+    const asked = requestDelete(pane, now, CONFIRM_WINDOW_MS);
+    pane = asked.state;
+    if (asked.request.kind === 'none') return;
+    if (asked.request.kind === 'armed') {
+      flash = {
+        text: `press x again to delete ${pageName(asked.request.file)} — its file is removed`,
+        until: asked.request.until,
+        confirm: true,
+      };
+      return;
+    }
+    const file = asked.request.file;
+    const removed = deletePageFile(file);
+    flash = removed.ok
+      ? { text: `deleted ${pageName(file)}`, until: now + FLASH_ACK_MS }
+      : { text: describeStoreError(removed.error), until: now + FLASH_NOTICE_MS };
+    tick(); // the store changed by our own hand: show it now, not next poll
   };
 
   if (interactive) {
@@ -1361,8 +1481,12 @@ function main(): void {
             dirty = true;
             break;
           case 'clear':
-            // Esc peels one layer: a pinned node first, then the dive itself
-            if (selectedId !== undefined) selectedId = undefined;
+            // Esc peels one layer, newest first: an armed deletion, then a
+            // pinned node, then the dive itself
+            if (pane.pendingDelete !== undefined) {
+              pane = disarmDelete(pane);
+              flash = undefined;
+            } else if (selectedId !== undefined) selectedId = undefined;
             else climbBack();
             dirty = true;
             break;
@@ -1460,6 +1584,8 @@ function main(): void {
                   climbBack();
                 } else if (tabHit.action.kind === 'scroll') {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
+                } else if (tabHit.action.kind === 'delete') {
+                  askDelete(); // the × sits on the active tab alone: same ask as the x key
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
                   if (target !== undefined && target !== pane.activeFile) handSwitch(target);
@@ -1531,6 +1657,10 @@ function main(): void {
           case 'follow-toggle':
             pane = toggleFollow(pane);
             flash = { text: pane.follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + FLASH_ACK_MS };
+            dirty = true;
+            break;
+          case 'delete-page':
+            askDelete();
             dirty = true;
             break;
         }

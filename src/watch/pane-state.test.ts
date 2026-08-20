@@ -16,12 +16,14 @@ import {
   type PageFault,
   type PaneState,
   type ScanInput,
+  disarmDelete,
   entryOf,
   filesOf,
   initialPaneState,
   mapOf,
   popDive,
   pushDive,
+  requestDelete,
   scan,
   toggleFollow,
   userSwitch,
@@ -267,6 +269,78 @@ describe('switching by hand', () => {
     expect(first.state.pendingFocusFile).toBeUndefined();
     expect(userSwitch(first.state, MAIN).followTurnedOff).toBe(false);
     expect(toggleFollow(first.state).follow).toBe(true);
+  });
+});
+
+/**
+ * Deleting a page is the only irreversible thing the pane can do, so the
+ * two-press rule is specified here rather than lived out in a closure: one
+ * press arms, a second on the SAME page inside the window confirms, and
+ * everything else — a switch, a scan that moved the view, silence — takes the
+ * request back.
+ */
+describe('the delete request', () => {
+  const WINDOW = 3000;
+
+  it('arms on the first press and confirms on a second inside the window', () => {
+    const store = new Store().put(MAIN, page('main'), 100).put(API, page('api'), 90);
+    const state = tick(initialPaneState(false, undefined), store);
+
+    const first = requestDelete(state, 1000, WINDOW);
+    expect(first.request).toEqual({ kind: 'armed', file: MAIN, until: 1000 + WINDOW });
+    expect(first.state.pendingDelete).toEqual({ file: MAIN, until: 1000 + WINDOW });
+
+    const second = requestDelete(first.state, 1500, WINDOW);
+    expect(second.request).toEqual({ kind: 'confirmed', file: MAIN });
+    expect(second.state.pendingDelete).toBeUndefined(); // one confirmation, one deletion
+  });
+
+  it('re-arms instead of deleting when the window has closed', () => {
+    const store = new Store().put(MAIN, page('main'), 100);
+    const state = tick(initialPaneState(false, undefined), store);
+    const armed = requestDelete(state, 1000, WINDOW).state;
+    const late = requestDelete(armed, 1000 + WINDOW + 1, WINDOW);
+    expect(late.request.kind).toBe('armed'); // silence was a "no"
+  });
+
+  it('a page switch withdraws it, so the next press starts over on the new page', () => {
+    const store = new Store().put(MAIN, page('main'), 100).put(API, page('api'), 90);
+    const state = tick(initialPaneState(false, undefined), store);
+    const armed = requestDelete(state, 1000, WINDOW).state;
+
+    const switched = userSwitch(armed, API).state;
+    expect(switched.pendingDelete).toBeUndefined();
+    expect(requestDelete(switched, 1100, WINDOW).request).toEqual({ kind: 'armed', file: API, until: 1100 + WINDOW });
+  });
+
+  it('a scan that moves the view withdraws it — a confirming press must not hit a page that just arrived', () => {
+    const store = new Store().put(MAIN, page('main'), 100).put(API, page('api'), 90);
+    let state = tick(initialPaneState(true, undefined), store); // follow on, sitting on MAIN
+    state = requestDelete(state, 1000, WINDOW).state;
+    expect(state.pendingDelete?.file).toBe(MAIN);
+
+    store.put(API, page('api v2'), 300); // follow takes the view to API
+    state = tick(state, store);
+    expect(state.activeFile).toBe(API);
+    expect(state.pendingDelete).toBeUndefined();
+  });
+
+  it('an armed request survives a scan that leaves the view where it was', () => {
+    const store = new Store().put(MAIN, page('main'), 100);
+    let state = tick(initialPaneState(false, undefined), store);
+    state = requestDelete(state, 1000, WINDOW).state;
+    state = tick(state, store);
+    expect(requestDelete(state, 1200, WINDOW).request).toEqual({ kind: 'confirmed', file: MAIN });
+  });
+
+  it('disarms on demand, and asks for nothing when there is no page on screen', () => {
+    const store = new Store().put(MAIN, page('main'), 100);
+    const state = tick(initialPaneState(false, undefined), store);
+    expect(disarmDelete(requestDelete(state, 1000, WINDOW).state).pendingDelete).toBeUndefined();
+    expect(disarmDelete(state)).toBe(state); // nothing armed: the same value
+
+    const empty = initialPaneState(false, undefined);
+    expect(requestDelete(empty, 1000, WINDOW).request).toEqual({ kind: 'none' });
   });
 });
 

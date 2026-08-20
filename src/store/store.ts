@@ -24,6 +24,9 @@
  *   - A rename can transiently fail while a reader holds the target open
  *     (EPERM/EBUSY on Windows), so it is retried with a short backoff before
  *     the save is reported as failed.
+ *   - A page can also be DELETED (deletePageFile). Deletion races a writer
+ *     the same way a save does, and the WRITER WINS: a save landing after it
+ *     recreates the page. Stated at the function, not defended against.
  *
  * Expected failures (missing file, malformed JSON, invariant violations, a
  * write that would not land) are Result values. A failed save changed
@@ -183,6 +186,42 @@ export function listPageFiles(defaultFile: string): string[] {
     if (e.endsWith('.json')) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
+}
+
+/**
+ * Delete one page's file — a named page, or the DEFAULT page (whose file is
+ * optional by design, so removing it is a legal state, not a mutilation).
+ *
+ * Preconditions: none. Postcondition on ok: no file at `path` — an already
+ * absent one is ok too, because the goal state is what is promised, not the
+ * act. Postcondition on error: the file is still there and the caller may
+ * retry or report; the errno is carried in the detail.
+ *
+ * Concurrency, stated plainly: deletion races a concurrent writer and THE
+ * WRITER WINS. A server saving that page while this runs simply recreates the
+ * file (its rename is atomic and needs no existing target), so the page comes
+ * back. That is accepted rather than defended against — the store has no
+ * lost-update protection anywhere (see the module header), and locking one
+ * operation would only make the race rarer, never absent, while claiming
+ * otherwise. Pages are the isolation unit: nobody deletes a page another
+ * session is writing.
+ *
+ * What it deliberately does NOT do: sweep `<path>.<pid>.<random>.tmp`
+ * siblings. Those temps are private to a save IN FLIGHT, and a live writer
+ * whose temp vanished would fail its rename — turning a harmless leftover
+ * into a broken save. A stray temp only exists when a write failed AND its
+ * own cleanup failed; it is inert, and the README documents it.
+ */
+export function deletePageFile(path: string): Result<void, StoreError> {
+  try {
+    // force: an absent file is the goal state already, not a failure.
+    // No `recursive`: a DIRECTORY where a page file belongs is a fault to
+    // report, never a tree to erase.
+    rmSync(path, { force: true });
+    return ok(undefined);
+  } catch (e) {
+    return err({ kind: 'delete-failed', path, detail: errnoOf(e) });
+  }
 }
 
 // ---------------------------------------------------------------------------

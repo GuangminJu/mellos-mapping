@@ -65,6 +65,11 @@ Follow the platform-appropriate route:
    floored at 50). An unknown flag is a usage error, never dropped in
    silence — relay the message rather than retrying blind.
 
+   A page the user is done with they can close from the pane itself: `x`, or
+   the `×` on the active tab, asks, and a second press within the window
+   deletes that page's file. `mmap_remove {pages: [...]}` does the same from
+   a tool call — with the user behind it, never on your own initiative.
+
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
    (same `--page` judgment as route 1; omit it when no page is the subject;

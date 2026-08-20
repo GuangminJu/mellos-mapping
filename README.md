@@ -220,6 +220,7 @@ htop and tmux speak):
 | `Tab` / `Shift+Tab` / `1-9` / click a tab | switch pages (parallel maps) |
 | wheel on the tab row / click `‹` `›` | browse an overflowing tab strip without switching pages |
 | `f` | toggle auto-follow (see [Pages](#pages)) |
+| `x`, or click the `×` on the active tab | ask to delete the page on screen; press again inside the window and its file is removed (see [Pages](#pages)) |
 | double-click a `⊞` node | dive into its sub-map (a child page) |
 | `Backspace` / `Esc` | climb back out of the last dive |
 | drag the `⋯` divider | resize the detail panel — pull it up to read long design notes in full |
@@ -314,6 +315,16 @@ lights its tab in status color instead of stealing your view. An explicit
 `--page` outranks follow, and a page requested before it exists is shown the
 moment it appears.
 
+**Deleting a page.** An effort ends; its page does not have to stay. In the
+pane, `x` — or the `×` the active tab carries when the mouse is on — *asks*:
+the footer says `press x again to delete <page>`, and a second press within
+three seconds removes that page's file. Switching page, `Esc` or simply
+waiting takes the request back. The `×` sits on the active tab only, so
+clicking an inactive one switches to it first and offers its `×` on the next
+frame. From a tool call it is `mmap_remove {pages: ["slug", …]}`, applied
+after that call's map edits. Either way the file is gone for good — the maps
+are plain JSON, so committing them is the only undo there is.
+
 State lives in the tool-owned `.mellos/` directory at the project root:
 
 | Path | What it is |
@@ -374,7 +385,7 @@ When a hidden sub-map changes in the background, the footer says so.
 | --- | --- |
 | `mmap_declare` | Grow the map: title (`null` removes it), diagram kind, layer bands, lanes, groups (subsystems), nodes — with `status`, `evidence`, `detail`, `kind`, `group`, `lane`, `submap` — and edges, optionally labeled (all-or-nothing batch) |
 | `mmap_update` | Record progress **and revise**: status (`planned → in-progress → done` +evidence, `regressed`), relabel a node, move it to another band (`layer`), join/leave a group or lane, set a node kind or a `submap`; rename and re-rank bands (`layers`), relabel groups (`groups`) and lanes (`lanes`); `null` clears any clearable field |
-| `mmap_remove` | Revise: drop edges, nodes, groups, lanes, empty bands |
+| `mmap_remove` | Revise: drop edges, nodes, groups, lanes, empty bands — and, with `pages`, whole pages, file and all (permanent; applied after this call's map edits) |
 | `mmap_view` | Render the current map as text inline (optional `zoom`, `-4`…`2`), ending with a `pages:` line naming every page the project has and which one you are looking at |
 | `mmap_setup` | Get/set the project's mapping policy — when maps open |
 
@@ -395,7 +406,11 @@ mean:
   cleared, never a blank that renders as a box nobody can tell from a real
   one;
 - **a node whose `submap` names the page the call itself targets** — a link
-  with no bottom, not a parent link.
+  with no bottom, not a parent link;
+- **a page deletion aimed at the page the same call targets, or at a slug the
+  project does not have** — one call must not edit a map it is deleting, and
+  a name matching no page is a typo far more often than a race; the refusal
+  lists the pages that do exist.
 
 A write that does not land answers `save failed, nothing changed (retry)`:
 the previous file is intact and calling again is the whole recovery.

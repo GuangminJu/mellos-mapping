@@ -47,6 +47,18 @@ the git history (`git log --oneline`), which is where this file starts.
 
 ### Added
 
+- **A page can be deleted — from the pane and from the tool surface.** Pages
+  accumulate (one effort is one page) and nothing could remove one. In the
+  pane, `x` — or the `×` the active tab now carries in mouse mode — asks, the
+  footer says `press x again to delete <page>`, and a second press within
+  three seconds removes that page's file; switching page, `Esc` or waiting
+  takes the request back. From a tool call, `mmap_remove` gained
+  `pages: ["slug", …]`, applied after that call's map edits. It refuses a page
+  the same call targets with `page`, and an unknown slug — naming a page the
+  project does not have is a typo far more often than a race — with the real
+  page list attached. Deleting is permanent: the map files are plain JSON, so
+  committing them is the only undo. A `submap` still pointing at a deleted
+  page stays legal; it simply has nowhere to dive.
 - **`mmap_update` revises everything `mmap_declare` declared.** Move a node to
   another band (`updates[].layer`), rename and re-rank bands (`layers`),
   relabel groups (`groups`) and lanes (`lanes`). A batch applies bands →

@@ -4,6 +4,7 @@
  *   mmap_declare  grow the map (title, bands, lanes, groups, nodes, edges)
  *   mmap_update   record progress AND revise (status, evidence, moves, renames)
  *   mmap_remove   take things off the map (edges, nodes, groups, lanes, bands)
+ *                 — and whole PAGES, file and all
  *   mmap_view     render the map as text, and name the project's pages
  *   mmap_setup    get/set the project's mapping policy (when maps open)
  *
@@ -13,6 +14,12 @@
  * stay consistent per call. A save that does not land changes nothing and is
  * reported as such — see saveFailed — so a refused write never leaves the
  * caller believing the ledger recorded something it did not.
+ *
+ * Deleting a PAGE is the one operation outside that transaction, and it lives
+ * here rather than in Layer 2 for exactly that reason: apply.ts revises ONE
+ * map as a value, and a page file is not in any map. So `mmap_remove {pages}`
+ * is orchestration — validate every slug, apply the call's map edits, then
+ * delete the files — and apply.ts stays pure of I/O.
  *
  * The state file lives in the project the CLIENT is working in, resolved in
  * this order: MELLOS_MAPPING_CWD (explicit override for manual runs),
@@ -48,6 +55,7 @@ import {
   STATE_FILE_RELATIVE_PATH,
   type StoreError,
   configFilePath,
+  deletePageFile,
   describeMappingPolicy,
   describeStoreError,
   listPageFiles,
@@ -285,6 +293,77 @@ export function buildServer(stateFile: string): McpServer {
     return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
+  /** The named pages this project has right now, read from the store. */
+  const knownPages = (): PageId[] =>
+    listPageFiles(stateFile)
+      .map((f) => pageIdOfFile(stateFile, f))
+      .filter((p): p is PageId => p !== undefined);
+
+  /**
+   * The VALIDATE half of `mmap_remove {pages}` — everything that can be
+   * refused while the store is still untouched.
+   * @returns the refusal, or undefined when every slug may be deleted.
+   *
+   * Two rules, both stricter than the store primitive underneath (which
+   * happily deletes a page that is already gone):
+   *
+   *   - A call may not delete the page it is itself editing. `page` chooses
+   *     the map this call loads, applies to and saves; deleting that same
+   *     page in the same call is a request with two answers, and the save
+   *     would simply recreate what the deletion removed.
+   *   - An unknown slug is a REFUSAL, not a no-op. deletePageFile treats an
+   *     absent file as the goal state already reached, which is right for a
+   *     primitive; at the tool surface the caller is a model that just typed
+   *     a name, and a name that matches no page is far more likely a typo
+   *     than a page someone else deleted a moment ago. The refusal names the
+   *     project's real pages, so the next call can be right.
+   */
+  const refusePageDeletion = (pages: readonly string[], target: string | undefined): ToolText | undefined => {
+    if (target !== undefined && pages.includes(target)) {
+      return text(
+        `refused (nothing changed): pages includes "${target}", the page this call targets — ` +
+          'one call must not edit a map it is deleting. Delete it from a call that does not target it.',
+        true,
+      );
+    }
+    const known = knownPages() as readonly string[];
+    const unknown = pages.filter((p) => !known.includes(p));
+    if (unknown.length > 0) {
+      return text(
+        `refused (nothing changed): no page named ${unknown.map((p) => `"${p}"`).join(', ')}. ` +
+          `This project's named pages: ${known.length > 0 ? known.join(', ') : '(none)'}.`,
+        true,
+      );
+    }
+    return undefined;
+  };
+
+  /**
+   * The COMMIT half of `mmap_remove {pages}`: every slug is known to exist
+   * and none is this call's own page. Deletions are not a transaction — a
+   * file that is gone cannot come back if the next one fails — so a partial
+   * batch reports exactly which pages went and which did not, rather than
+   * pretending it rolled anything back.
+   * @param summary - the map-edit summary to carry, already newline-ended.
+   */
+  const deletePages = (pages: readonly string[], summary: string): ToolText => {
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    for (const p of pages) {
+      const removed = deletePageFile(pageFilePath(stateFile, p as PageId));
+      if (removed.ok) deleted.push(p);
+      else failed.push(`${p} (${describeStoreError(removed.error)})`);
+    }
+    const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(', ') : '(none)'}`;
+    if (failed.length === 0) return text(`${summary}${gone}`);
+    return text(
+      `${summary}${gone}; could NOT delete: ${failed.join('; ')}. ` +
+        'Deleting files is not a transaction: what is named deleted above is gone for good, ' +
+        'and only the failures are worth retrying.',
+      true,
+    );
+  };
+
   /**
    * The setup flow enforces itself here: every declare on a project whose
    * policy was never chosen carries the nudge, so ANY client — skill loaded
@@ -472,7 +551,17 @@ export function buildServer(stateFile: string): McpServer {
         'Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). ' +
         'Removing a node also removes every edge touching it; removing a group merely ungroups ' +
         'its members. Use when the ghost design turns out wrong — the map is a hypothesis, ' +
-        'revising it is honest work.',
+        'revising it is honest work. ' +
+        '`pages` is the other scale: it DELETES whole page files, so a finished effort can be ' +
+        'cleaned up instead of accumulating tabs forever. A bare `{pages: ["slug"]}` with no ' +
+        'other field is the normal form; combined with map edits, the edits are applied first ' +
+        'and the pages are deleted after. The deletion is permanent and cannot be undone, so ' +
+        'delete only pages whose effort is over — and only ever with the user behind it. ' +
+        'An unknown slug is refused with the project\'s real page list (naming a page that does ' +
+        'not exist is a typo, not a request). The default page has no slug and is not deletable ' +
+        'here. A node elsewhere still pointing at a deleted page with `submap` stays legal — a ' +
+        'submap reference has no existence invariant — but it has nowhere to dive until the ' +
+        'page comes back.',
       inputSchema: closed({
         page: page(),
         edges: z.array(closed(edgeEnds())).optional(),
@@ -480,9 +569,41 @@ export function buildServer(stateFile: string): McpServer {
         groups: z.array(id('id of the group to remove; members stay, merely ungrouped')).optional(),
         lanes: z.array(id('id of the lane to remove; members stay, merely off-lane')).optional(),
         layers: z.array(id('id of the band to remove; it must hold no nodes and no groups')).optional(),
+        pages: z
+          .array(
+            id(
+              'slug of a page whose WHOLE map file is deleted — the page and everything drawn on ' +
+                'it. Not the page this same call targets with `page`.',
+            ),
+          )
+          .optional()
+          .describe('pages to delete entirely, after this call\'s map edits; permanent'),
       }),
     },
-    (input) => mutate(input.page, (map) => applyRemove(map, input)),
+    (input) => {
+      if (input.pages === undefined) return mutate(input.page, (map) => applyRemove(map, input));
+      // validate → prepare → commit: everything refusable is refused before
+      // the first file is touched, because a deletion has no rollback.
+      const refusal = refusePageDeletion(input.pages, input.page);
+      if (refusal !== undefined) return refusal;
+      const editsAnything =
+        (input.edges?.length ?? 0) +
+          (input.nodes?.length ?? 0) +
+          (input.groups?.length ?? 0) +
+          (input.lanes?.length ?? 0) +
+          (input.layers?.length ?? 0) >
+        0;
+      let summary = '';
+      if (editsAnything) {
+        // A call that only deletes pages must touch no map at all: mutate
+        // would load a missing default page as EMPTY_MAP and save it, so a
+        // bare `{pages: [...]}` would create the very file it never named.
+        const edited = mutate(input.page, (map) => applyRemove(map, input));
+        if (edited.isError === true) return edited; // edits refused: nothing deleted either
+        summary = `${edited.content[0]?.text ?? ''}\n`;
+      }
+      return deletePages(input.pages, summary);
+    },
   );
 
   server.registerTool(
