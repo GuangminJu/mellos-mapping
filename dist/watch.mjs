@@ -1862,6 +1862,17 @@ function scan(state, input) {
 }
 
 // src/watch/watch.ts
+function describeArgsError(e) {
+  switch (e.kind) {
+    case "unknown-flag":
+      return `unknown flag "${e.flag}"`;
+    case "missing-value":
+      return `${e.flag} needs a value`;
+    case "invalid-value":
+      return `${e.flag} got "${e.raw}" (expected: ${e.rule})`;
+  }
+}
+var USAGE = "usage: mellos-mapping-watch [--file <map.json>] [--page <slug>] [--interval <ms>] [--ascii] [--no-color] [--no-mouse] [--no-follow]";
 function parseArgs(argv, cwd) {
   let file = join2(cwd, STATE_FILE_RELATIVE_PATH);
   let intervalMs = POLL_INTERVAL_DEFAULT_MS;
@@ -1870,19 +1881,34 @@ function parseArgs(argv, cwd) {
   let mouse = true;
   let page;
   let follow = true;
+  const valueOf = (flag, raw) => raw === void 0 || raw.startsWith("--") ? err({ kind: "missing-value", flag }) : ok(raw);
   for (let i = 0; i < argv.length; i++) {
-    switch (argv[i]) {
-      case "--file":
-        file = argv[++i] ?? file;
-        break;
-      case "--page": {
-        const parsed = makePageId(argv[++i] ?? "");
-        if (parsed.ok) page = parsed.value;
+    const flag = argv[i];
+    switch (flag) {
+      case "--file": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        file = value.value;
         break;
       }
-      case "--interval":
-        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, Number(argv[++i]) || intervalMs);
+      case "--page": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed.error.rule });
+        page = parsed.value;
         break;
+      }
+      case "--interval": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const ms = Number(value.value);
+        if (!Number.isFinite(ms) || ms <= 0) {
+          return err({ kind: "invalid-value", flag, raw: value.value, rule: "a positive number of milliseconds" });
+        }
+        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, ms);
+        break;
+      }
       case "--ascii":
         unicode = false;
         break;
@@ -1896,10 +1922,10 @@ function parseArgs(argv, cwd) {
         follow = false;
         break;
       default:
-        break;
+        return err({ kind: "unknown-flag", flag });
     }
   }
-  return { file, intervalMs, unicode, color, mouse, page, follow };
+  return ok({ file, intervalMs, unicode, color, mouse, page, follow });
 }
 function readPage(file) {
   try {
@@ -2235,7 +2261,13 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
   return lines.slice(0, rows);
 }
 function main() {
-  const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  const parsed = parseArgs(process.argv.slice(2), process.cwd());
+  if (!parsed.ok) {
+    console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}
+${USAGE}`);
+    process.exit(1);
+  }
+  const cfg = parsed.value;
   if (migrateLegacyStore(cfg.file)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
@@ -2513,10 +2545,10 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
-      const parsed = parseInput(pendingInput + chunk);
-      pendingInput = parsed.rest;
+      const parsed2 = parseInput(pendingInput + chunk);
+      pendingInput = parsed2.rest;
       let dirty = false;
-      for (const event of parsed.events) {
+      for (const event of parsed2.events) {
         switch (event.kind) {
           case "quit":
             quit();
@@ -2707,10 +2739,12 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
 }
 export {
   PANEL_ROWS_MIN,
+  USAGE,
   WAVE_LEVELS,
   WAVE_NUMBER,
   anchorOffsets,
   clampPanelRows,
+  describeArgsError,
   describePageFault,
   diveOrigin,
   dividerRow,
