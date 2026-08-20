@@ -132,7 +132,36 @@ interface WatchConfig {
   readonly follow: boolean;
 }
 
-export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
+/** Every way a command line can be refused, as data. */
+export type ArgsError =
+  | { readonly kind: 'unknown-flag'; readonly flag: string }
+  | { readonly kind: 'missing-value'; readonly flag: string }
+  | { readonly kind: 'invalid-value'; readonly flag: string; readonly raw: string; readonly rule: string };
+
+export function describeArgsError(e: ArgsError): string {
+  switch (e.kind) {
+    case 'unknown-flag':
+      return `unknown flag "${e.flag}"`;
+    case 'missing-value':
+      return `${e.flag} needs a value`;
+    case 'invalid-value':
+      return `${e.flag} got "${e.raw}" (expected: ${e.rule})`;
+  }
+}
+
+export const USAGE =
+  'usage: mellos-mapping-watch [--file <map.json>] [--page <slug>] [--interval <ms>] ' +
+  '[--ascii] [--no-color] [--no-mouse] [--no-follow]';
+
+/**
+ * Parse the watcher's command line. A bad command line is REFUSED, never
+ * silently patched over: a typo'd flag, a misspelled page slug or a
+ * non-numeric interval used to be ignored ("the pane must come up"), which
+ * meant the pane came up showing the WRONG thing with no hint why. The
+ * launcher (scripts/open-pane.mjs) rejects unknown flags; both entry points
+ * now hold the same line.
+ */
+export function parseArgs(argv: readonly string[], cwd: string): Result<WatchConfig, ArgsError> {
   let file = join(cwd, STATE_FILE_RELATIVE_PATH);
   let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
@@ -140,19 +169,37 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
   let mouse = true;
   let page: PageId | undefined;
   let follow = true;
+  // A value that looks like a flag is a missing value: `--file --ascii` is a
+  // forgotten path, not a file named "--ascii".
+  const valueOf = (flag: string, raw: string | undefined): Result<string, ArgsError> =>
+    raw === undefined || raw.startsWith('--') ? err({ kind: 'missing-value', flag }) : ok(raw);
   for (let i = 0; i < argv.length; i++) {
-    switch (argv[i]) {
-      case '--file':
-        file = argv[++i] ?? file;
-        break;
-      case '--page': {
-        const parsed = makePageId(argv[++i] ?? '');
-        if (parsed.ok) page = parsed.value; // invalid slugs are ignored — the pane must come up
+    const flag = argv[i]!;
+    switch (flag) {
+      case '--file': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        file = value.value;
         break;
       }
-      case '--interval':
-        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, Number(argv[++i]) || intervalMs);
+      case '--page': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: 'invalid-value', flag, raw: value.value, rule: parsed.error.rule });
+        page = parsed.value;
         break;
+      }
+      case '--interval': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const ms = Number(value.value);
+        if (!Number.isFinite(ms) || ms <= 0) {
+          return err({ kind: 'invalid-value', flag, raw: value.value, rule: 'a positive number of milliseconds' });
+        }
+        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, ms);
+        break;
+      }
       case '--ascii':
         unicode = false;
         break;
@@ -166,10 +213,10 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
         follow = false;
         break;
       default:
-        break; // unknown flags are ignored; the pane must come up regardless
+        return err({ kind: 'unknown-flag', flag });
     }
   }
-  return { file, intervalMs, unicode, color, mouse, page, follow };
+  return ok({ file, intervalMs, unicode, color, mouse, page, follow });
 }
 
 // ---------------------------------------------------------------------------
@@ -903,7 +950,12 @@ export function mapPanel(
  * covers the panel, the tab strip, the divider and the standby screen.
  */
 function main(): void {
-  const cfg = parseArgs(process.argv.slice(2), process.cwd());
+  const parsed = parseArgs(process.argv.slice(2), process.cwd());
+  if (!parsed.ok) {
+    console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}\n${USAGE}`);
+    process.exit(1);
+  }
+  const cfg = parsed.value;
   // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
   // Announce it on stderr before the alternate screen opens, so the move is
   // not something the user only discovers from `git status`.

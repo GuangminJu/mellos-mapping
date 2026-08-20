@@ -39,6 +39,7 @@ import {
   mapPanel,
   nearestHit,
   nodePanel,
+  describeArgsError,
   parseArgs,
   pageTabRow,
   panelRowsFromDividerY,
@@ -565,18 +566,62 @@ describe('standby splash', () => {
 });
 
 describe('page selection', () => {
-  it('parseArgs accepts --page with a valid slug and drops invalid ones', () => {
-    expect(parseArgs(['--page', 'page-focus'], '/w').page).toBe('page-focus');
-    expect(parseArgs(['--page', 'NOT A SLUG'], '/w').page).toBeUndefined();
-    expect(parseArgs(['--page'], '/w').page).toBeUndefined();
-    expect(parseArgs([], '/w').page).toBeUndefined();
+  const config = (argv: readonly string[]) => {
+    const parsed = parseArgs(argv, '/w');
+    if (!parsed.ok) throw new Error(describeArgsError(parsed.error));
+    return parsed.value;
+  };
+
+  it('parseArgs accepts --page with a valid slug', () => {
+    expect(config(['--page', 'page-focus']).page).toBe('page-focus');
+    expect(config([]).page).toBeUndefined();
+  });
+
+  // A bad command line is refused, never silently patched over: the pane
+  // coming up on the WRONG page (a typo'd slug ignored) misled harder than
+  // not coming up at all. Same line as scripts/open-pane.mjs.
+  it('parseArgs refuses an invalid slug, a missing value and an unknown flag', () => {
+    const badSlug = parseArgs(['--page', 'NOT A SLUG'], '/w');
+    expect(badSlug.ok).toBe(false);
+    if (!badSlug.ok) expect(badSlug.error).toMatchObject({ kind: 'invalid-value', flag: '--page' });
+
+    const missing = parseArgs(['--page'], '/w');
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error).toMatchObject({ kind: 'missing-value', flag: '--page' });
+
+    // `--file --ascii` is a forgotten path, not a file named "--ascii".
+    const flagAsValue = parseArgs(['--file', '--ascii'], '/w');
+    expect(flagAsValue.ok).toBe(false);
+    if (!flagAsValue.ok) expect(flagAsValue.error).toMatchObject({ kind: 'missing-value', flag: '--file' });
+
+    const badInterval = parseArgs(['--interval', 'abc'], '/w');
+    expect(badInterval.ok).toBe(false);
+    if (!badInterval.ok) expect(badInterval.error).toMatchObject({ kind: 'invalid-value', flag: '--interval' });
+
+    const unknown = parseArgs(['--folow'], '/w');
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.error).toMatchObject({ kind: 'unknown-flag', flag: '--folow' });
+      expect(describeArgsError(unknown.error)).toContain('--folow');
+    }
+  });
+
+  it('parseArgs clamps a small interval to the floor instead of refusing it', () => {
+    expect(config(['--interval', '10']).intervalMs).toBe(50);
+    expect(config(['--interval', '400']).intervalMs).toBe(400);
   });
 });
 
 describe('auto-follow', () => {
+  const config = (argv: readonly string[]) => {
+    const parsed = parseArgs(argv, '/w');
+    if (!parsed.ok) throw new Error(describeArgsError(parsed.error));
+    return parsed.value;
+  };
+
   it('parseArgs defaults follow on; --no-follow starts it off', () => {
-    expect(parseArgs([], '/w').follow).toBe(true);
-    expect(parseArgs(['--no-follow'], '/w').follow).toBe(false);
+    expect(config([]).follow).toBe(true);
+    expect(config(['--no-follow']).follow).toBe(false);
   });
 
   it('dividerRow keeps the grip centered and right-aligns the follow tag', () => {

@@ -70,7 +70,10 @@ the git history (`git log --oneline`), which is where this file starts.
 - **The pane's `f` key toggles auto-follow**, and the launcher and watcher
   take `--no-follow`. The launcher now forwards the whole watcher flag set
   (`--ascii --no-color --no-mouse --no-follow --interval <ms>`) and rejects an
-  unknown flag instead of dropping it.
+  unknown flag instead of dropping it. The watcher itself now holds the same
+  line: an unknown flag, a misspelled `--page` slug, a non-numeric
+  `--interval` or a missing value is refused with the usage line instead of
+  being silently ignored (the pane used to come up showing the wrong thing).
 
 ### Fixed
 
