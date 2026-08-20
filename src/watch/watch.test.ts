@@ -250,6 +250,62 @@ describe('pageTabRow', () => {
     expect(tabScrollFor(five, 30, true, 1, 2)).toBe(1); // already visible — untouched
     expect(tabScrollFor(five, 30, true, 3, 0)).toBe(0); // reveal to the left = jump there
   });
+
+  /**
+   * The close button: a click target on the ACTIVE tab only, and — because
+   * the strip measures itself honestly — two columns budgeted like every
+   * other segment rather than smuggled in past the last usable one.
+   */
+  describe('the × that deletes the page', () => {
+    it('rides the active tab alone, as its own segment with its own action', () => {
+      const segments = pageTabRow(tabs, 200, true, 0, true);
+      expect(segments.map((s) => s.text)).toEqual([' ● ■ 开发回放 ', '× ', ' ○ ⠿ 多页支持 ', ' ○ · idle ']);
+      expect(segments[1]!.action).toEqual({ kind: 'delete' });
+      expect(segments[1]!.sgr).toBe('90'); // faint: a secondary affordance
+      // no other tab offers one — clicking an inactive tab switches to it first
+      expect(segments.filter((s) => s.action.kind === 'delete')).toHaveLength(1);
+    });
+
+    it('is absent unless asked for — a pane with no mouse has nothing to click', () => {
+      expect(pageTabRow(tabs, 200, true).some((s) => s.action.kind === 'delete')).toBe(false);
+      expect(pageTabRow(tabs, 200, true, 0, false).some((s) => s.action.kind === 'delete')).toBe(false);
+    });
+
+    it('shows an ASCII face where the unicode one would not draw', () => {
+      expect(pageTabRow(tabs, 200, false, 0, true)[1]!.text).toBe('x ');
+    });
+
+    it('keeps the spans contiguous and inside the width, CJK titles included', () => {
+      const segments = pageTabRow(tabs, 200, true, 0, true);
+      expect(segments[0]!.lo).toBe(1);
+      for (let i = 1; i < segments.length; i++) expect(segments[i]!.lo).toBe(segments[i - 1]!.hi + 1);
+      expect(segments[1]!.hi - segments[1]!.lo + 1).toBe(2); // '× ' is two columns, not one, not three
+      expect(segments[segments.length - 1]!.hi).toBe(14 + 2 + 14 + 10);
+    });
+
+    it('costs the strip two columns, so an overflowing row still fits its indicator', () => {
+      const segments = pageTabRow(tabs, 20, true, 0, true);
+      expect(segments.map((s) => s.text)).toEqual([' ● ■ 开发回放 ', '× ', ' › ']);
+      for (let i = 1; i < segments.length; i++) expect(segments[i]!.lo).toBe(segments[i - 1]!.hi + 1);
+      expect(segments[segments.length - 1]!.hi).toBeLessThanOrEqual(20);
+    });
+
+    it('is dropped rather than pushed past the last usable column', () => {
+      // A pane too narrow for a truncated tab, an indicator AND a ×: the
+      // frame's width promise outranks the button, because a glyph in the
+      // last column shears the whole row.
+      const segments = pageTabRow(tabs, 5, true, 0, true);
+      expect(segments.some((s) => s.action.kind === 'delete')).toBe(false);
+      expect(segments[segments.length - 1]!.hi).toBeLessThanOrEqual(5);
+    });
+
+    it('tabScrollFor measures with the × the row will actually be painted with', () => {
+      // the button costs the window two columns, so revealing the far tab
+      // needs one more slide than it would on a strip without one
+      expect(tabScrollFor(five, 28, true, 0, 4, false)).toBe(2);
+      expect(tabScrollFor(five, 28, true, 0, 4, true)).toBe(3);
+    });
+  });
 });
 
 describe('diagram kinds in the panel', () => {

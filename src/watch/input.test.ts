@@ -27,7 +27,7 @@ describe('keyboard', () => {
   });
 
   it('ignores unknown characters', () => {
-    expect(parseInput('zx!').events).toEqual([]);
+    expect(parseInput('zy!').events).toEqual([]);
   });
 });
 
@@ -73,6 +73,14 @@ describe('SGR mouse', () => {
   it('maps f to the auto-follow toggle', () => {
     expect(parseInput('f').events).toEqual([{ kind: 'follow-toggle' }]);
     expect(parseInput('F').events).toEqual([{ kind: 'follow-toggle' }]);
+  });
+
+  it('maps x to a page-delete REQUEST, once per press — the parser never counts them', () => {
+    expect(parseInput('x').events).toEqual([{ kind: 'delete-page' }]);
+    expect(parseInput('X').events).toEqual([{ kind: 'delete-page' }]);
+    // two presses in one chunk are two requests; whether the second confirms
+    // the first is the reducer's judgement, and it needs a clock this has not
+    expect(parseInput('xx').events).toEqual([{ kind: 'delete-page' }, { kind: 'delete-page' }]);
   });
 
   it('maps Tab / Shift+Tab to page cycling and digits 1-9 to page jumps', () => {

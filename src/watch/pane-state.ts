@@ -32,6 +32,12 @@
  *   - A page that changed while it was not on screen is FRESH until viewed —
  *     the pane lights its tab instead of stealing the view.
  *
+ * And the one thing the pane can ask the store to UNDO rather than read: a
+ * page deletion. The request is a value here too — armed by one press,
+ * confirmed only by a second press on the SAME page inside its window,
+ * withdrawn by a switch, by the scan moving the view, or by silence. This
+ * module never touches a file; it only decides what a press meant.
+ *
  * The shape mirrors packages/dsh-client's pages.ts, which folds the same
  * store for a browser: one page set, keep-last-good merging, fresh marking,
  * most-recently-written selection. Two media, one set of rules — but no
@@ -118,6 +124,21 @@ export function faultOf(entry: PageEntry | undefined): PageFault | undefined {
   return entry?.state.kind === 'faulted' ? entry.state.fault : undefined;
 }
 
+/**
+ * A page deletion the user has ASKED for and not yet confirmed.
+ *
+ * Deleting a page removes its file for good, so it takes two presses — and
+ * the wait between them is a value like every other state here. As a `let`
+ * in the pane's shell it would be a piece of the pane's behavior that
+ * nothing could test, on the one action that cannot be undone.
+ */
+export interface PendingDelete {
+  /** The page the request is bound to; a request against another page replaces it. */
+  readonly file: string;
+  /** Epoch ms the request expires at — silence is a "no". */
+  readonly until: number;
+}
+
 export interface PaneState {
   /** Every page file the store lists, in store order (default page first). */
   readonly pages: readonly PageEntry[];
@@ -131,6 +152,8 @@ export interface PaneState {
   readonly diveStack: readonly string[];
   /** Whether the startup scan has happened; before it, nothing is news. */
   readonly scanned: boolean;
+  /** An armed, unconfirmed page deletion; undefined the rest of the time. */
+  readonly pendingDelete: PendingDelete | undefined;
 }
 
 /**
@@ -139,7 +162,15 @@ export interface PaneState {
  * @param requestedFile - the page file `--page` asked for, if any.
  */
 export function initialPaneState(follow: boolean, requestedFile: string | undefined): PaneState {
-  return { pages: [], activeFile: undefined, pendingFocusFile: requestedFile, follow, diveStack: [], scanned: false };
+  return {
+    pages: [],
+    activeFile: undefined,
+    pendingFocusFile: requestedFile,
+    follow,
+    diveStack: [],
+    scanned: false,
+    pendingDelete: undefined,
+  };
 }
 
 export function entryOf(state: PaneState, file: string | undefined): PageEntry | undefined {
@@ -176,9 +207,61 @@ function markViewed(state: PaneState, file: string | undefined): PaneState {
 export function userSwitch(state: PaneState, file: string): { state: PaneState; followTurnedOff: boolean } {
   const followTurnedOff = state.follow;
   return {
-    state: markViewed({ ...state, activeFile: file, pendingFocusFile: undefined, follow: false }, file),
+    state: markViewed(
+      // Looking elsewhere withdraws an armed deletion: it was aimed at the
+      // page that was on screen, and the confirming press must never land on
+      // whichever page took its place.
+      { ...state, activeFile: file, pendingFocusFile: undefined, follow: false, pendingDelete: undefined },
+      file,
+    ),
     followTurnedOff,
   };
+}
+
+/**
+ * Take back an armed deletion — Esc, or any input that means "never mind".
+ * Idempotent: disarming nothing is the state it already was.
+ */
+export function disarmDelete(state: PaneState): PaneState {
+  return state.pendingDelete === undefined ? state : { ...state, pendingDelete: undefined };
+}
+
+/** What one delete press meant, read against what the pane was already holding. */
+export type DeleteRequest =
+  /** Nothing to delete: the pane has no page on screen. */
+  | { readonly kind: 'none' }
+  /** First press: the request waits for a second one until `until`. */
+  | { readonly kind: 'armed'; readonly file: string; readonly until: number }
+  /** Second press on the same page inside the window: delete it. */
+  | { readonly kind: 'confirmed'; readonly file: string };
+
+/**
+ * Fold a delete press (the `x` key, or a click on the active tab's ×) into
+ * the pane's state.
+ *
+ * Preconditions: none. The FIRST press against a page arms the request; a
+ * second press against the SAME page within `windowMs` confirms it and
+ * disarms; anything else — an expired window, a different active page,
+ * nothing on screen — starts over rather than deleting something the user
+ * did not just look at.
+ * @param now - epoch ms of the press (the caller owns the clock).
+ * @param windowMs - how long the armed request stands.
+ * @returns the next state, and what this press meant. The caller performs
+ *   the deletion on 'confirmed': this fold touches no filesystem.
+ */
+export function requestDelete(
+  state: PaneState,
+  now: number,
+  windowMs: number,
+): { state: PaneState; request: DeleteRequest } {
+  const file = state.activeFile;
+  if (file === undefined) return { state: disarmDelete(state), request: { kind: 'none' } };
+  const armed = state.pendingDelete;
+  if (armed !== undefined && armed.file === file && now <= armed.until) {
+    return { state: { ...state, pendingDelete: undefined }, request: { kind: 'confirmed', file } };
+  }
+  const until = now + windowMs;
+  return { state: { ...state, pendingDelete: { file, until } }, request: { kind: 'armed', file, until } };
 }
 
 /** Toggle auto-follow by hand. */
@@ -317,6 +400,11 @@ export function scan(state: PaneState, input: ScanInput): ScanOutcome {
     follow: state.follow,
     diveStack: state.diveStack.filter((f) => files.has(f)),
     scanned: true,
+    // An armed deletion belongs to the page it was armed on. If the scan
+    // moved the view (follow, a request, a page that vanished), the request
+    // is stale — the confirming press must never hit a page that merely
+    // arrived under the cursor.
+    pendingDelete: state.pendingDelete?.file === activeFile ? state.pendingDelete : undefined,
   };
   return { state: markViewed(next, activeFile), freshened };
 }
