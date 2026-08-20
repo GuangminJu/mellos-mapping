@@ -20,11 +20,18 @@ import { buildServer, launchedAsEntry, resolveStateFile } from './server.js';
 let dir: string;
 let client: Client;
 let stateFile: string;
+/**
+ * The USER-scope configuration, inside the temp tree. Every server this spec
+ * builds is handed one: a spec must never be able to read, let alone write,
+ * the developer's real configuration.
+ */
+let userConfigFile: string;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mellos-mapping-server-'));
   stateFile = join(dir, '.mellos', 'map.json');
-  const server = buildServer(stateFile);
+  userConfigFile = join(dir, 'home', '.mellos', 'config.json');
+  const server = buildServer(stateFile, userConfigFile);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'spec-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -687,50 +694,77 @@ describe('control characters at the tool boundary', () => {
   });
 });
 
-describe('mapping policy setup — the flow enforces itself over the wire', () => {
+describe('mapping policy setup — chosen once, per user, over the wire', () => {
   const DECLARE = {
     layers: [{ id: 'base', name: 'Base', rank: 0 }],
     nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
   };
+  const projectConfigFile = (): string => join(dir, '.mellos', 'config.json');
+  const readConfig = (path: string): unknown => JSON.parse(readFileSync(path, 'utf8'));
 
-  it('a declare on an unconfigured project carries the setup nudge; configuring stops it', async () => {
-    const first = await callText('mmap_declare', DECLARE);
-    expect(first.isError).toBe(false);
-    expect(first.text).toContain('mapping policy not set');
-    for (const option of ['always', 'complex', 'on-request']) expect(first.text).toContain(option);
-    expect(first.text).toContain('Ask the user');
-
+  it('saves to the USER scope by default — the question is asked once ever, not once per project', async () => {
     const set = await callText('mmap_setup', { policy: 'complex' });
     expect(set.isError).toBe(false);
-    expect(set.text).toContain('mapping policy set: complex');
-    const configFile = join(dir, '.mellos', 'config.json');
-    expect(JSON.parse(readFileSync(configFile, 'utf8'))).toEqual({ version: 1, policy: 'complex' });
+    expect(set.text).toContain('(user scope)');
+    expect(set.text).toContain('EVERY project');
+    expect(set.text).toContain('scope: "project"'); // and how to override it here
+    expect(readConfig(userConfigFile)).toEqual({ version: 1, policy: 'complex' });
+    expect(existsSync(projectConfigFile())).toBe(false); // the project was not touched
+  });
 
+  it('saves to the PROJECT scope only when asked to', async () => {
+    const set = await callText('mmap_setup', { policy: 'always', scope: 'project' });
+    expect(set.text).toContain('(project scope)');
+    expect(set.text).toContain('THIS project only');
+    expect(readConfig(projectConfigFile())).toEqual({ version: 1, policy: 'always' });
+    expect(existsSync(userConfigFile)).toBe(false);
+  });
+
+  it('reads both scopes and names which one governs', async () => {
+    const unset = await callText('mmap_setup', {});
+    expect(unset.isError).toBe(false);
+    expect(unset.text).toContain('user: not set; project: not set');
+    expect(unset.text).toContain('Ask the user');
+
+    await callText('mmap_setup', { policy: 'always' });
+    expect((await callText('mmap_setup', {})).text).toBe(
+      'mapping policy — user: always; project: not set. In effect: always (user scope) — ' +
+        'map every structured task — workflows, designs, architecture, technical dependencies',
+    );
+
+    await callText('mmap_setup', { policy: 'on-request', scope: 'project' });
+    const both = await callText('mmap_setup', {});
+    expect(both.text).toContain('user: always; project: on-request');
+    expect(both.text).toContain('In effect: on-request (project scope)');
+  });
+
+  it('the nudge fires while NEITHER scope has a policy, and never again after the user chose', async () => {
+    const first = await callText('mmap_declare', DECLARE);
+    expect(first.isError).toBe(false);
+    expect(first.text).toContain('no mapping policy has been chosen yet');
+    for (const option of ['always', 'complex', 'on-request']) expect(first.text).toContain(option);
+    expect(first.text).toContain('asked once ever');
+
+    await callText('mmap_setup', { policy: 'complex' }); // user scope, this project untouched
     const second = await callText('mmap_declare', { nodes: [{ id: 'more', label: 'More', layer: 'base' }] });
     expect(second.isError).toBe(false);
     expect(second.text).not.toContain('note:');
   });
 
-  it('reads back: unconfigured hands the question to the user, configured reports the choice', async () => {
-    const unset = await callText('mmap_setup', {});
-    expect(unset.isError).toBe(false);
-    expect(unset.text).toContain('mapping policy not set');
-    expect(unset.text).toContain('Ask the user');
-
-    await callText('mmap_setup', { policy: 'on-request' });
-    const read = await callText('mmap_setup', {});
-    expect(read.text).toBe('mapping policy: on-request — map only when the user explicitly asks');
+  it('a PROJECT policy alone also silences the nudge', async () => {
+    await callText('mmap_setup', { policy: 'complex', scope: 'project' });
+    const declared = await callText('mmap_declare', DECLARE);
+    expect(declared.text).not.toContain('note:');
   });
 
-  it('rejects a policy outside the enum at the schema boundary', async () => {
-    const bad = await callText('mmap_setup', { policy: 'sometimes' });
-    expect(bad.isError).toBe(true);
+  it('rejects a policy, or a scope, outside the enum at the schema boundary', async () => {
+    expect((await callText('mmap_setup', { policy: 'sometimes' })).isError).toBe(true);
+    expect((await callText('mmap_setup', { policy: 'always', scope: 'machine' })).isError).toBe(true);
   });
 
   it('a broken config file is surfaced on declare and on read, never treated as unset', async () => {
-    const configFile = join(dir, '.mellos', 'config.json');
     await callText('mmap_declare', DECLARE); // creates .mellos/
-    writeFileSync(configFile, 'not json');
+    writeFileSync(projectConfigFile(), 'not json');
 
     const read = await callText('mmap_setup', {});
     expect(read.isError).toBe(true);

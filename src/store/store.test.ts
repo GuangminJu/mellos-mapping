@@ -24,10 +24,12 @@ import {
 } from '../domain/types.js';
 import {
   STATE_FILE_RELATIVE_PATH,
+  STORE_DIR_NAME,
   configFilePath,
   deletePageFile,
   describeMappingPolicy,
   describeStoreError,
+  effectiveMappingPolicy,
   focusFilePath,
   listPageFiles,
   loadMapFile,
@@ -45,6 +47,7 @@ import {
   sweepQuitRequest,
   takeFocusRequest,
   takeQuitRequest,
+  userConfigFilePath,
 } from './store.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -318,7 +321,7 @@ describe('boundary validation (P1)', () => {
     const defaultFile = join(dir, STATE_FILE_RELATIVE_PATH);
     mkdirSync(dirname(defaultFile), { recursive: true });
     writeFileSync(configFilePath(defaultFile), '﻿{"version":1,"policy":"always"}', 'utf8');
-    expect(must(loadMappingPolicy(defaultFile))).toBe('always');
+    expect(must(loadMappingPolicy(configFilePath(defaultFile)))).toBe('always');
   });
 
   it("parses this repository's own map pages — the format's living fixture", () => {
@@ -521,18 +524,18 @@ describe('mapping policy — project setup choice', () => {
 
   it('save then load round-trips, atomically and with no temp file behind', () => {
     const defaultFile = join(dir, 'mellos-mapping.json');
-    saveMappingPolicy(defaultFile, 'on-request');
-    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: 'on-request' });
+    saveMappingPolicy(configFilePath(defaultFile), 'on-request');
+    expect(loadMappingPolicy(configFilePath(defaultFile))).toEqual({ ok: true, value: 'on-request' });
     expect(readdirSync(dir)).toEqual(['config.json']);
-    saveMappingPolicy(defaultFile, 'always'); // a re-run of setup overwrites
-    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: 'always' });
+    saveMappingPolicy(configFilePath(defaultFile), 'always'); // a re-run of setup overwrites
+    expect(loadMappingPolicy(configFilePath(defaultFile))).toEqual({ ok: true, value: 'always' });
   });
 
   it('an unconfigured project is ok(undefined), never an error', () => {
     const defaultFile = join(dir, 'mellos-mapping.json');
-    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: undefined }); // no file
+    expect(loadMappingPolicy(configFilePath(defaultFile))).toEqual({ ok: true, value: undefined }); // no file
     writeFileSync(configFilePath(defaultFile), '{"version":1}\n');
-    expect(loadMappingPolicy(defaultFile)).toEqual({ ok: true, value: undefined }); // no key
+    expect(loadMappingPolicy(configFilePath(defaultFile))).toEqual({ ok: true, value: undefined }); // no key
   });
 
   it('a config file that exists but is broken is an error, never silently ignored', () => {
@@ -545,7 +548,7 @@ describe('mapping policy — project setup choice', () => {
     ];
     for (const [content, kind] of cases) {
       writeFileSync(configFilePath(defaultFile), content);
-      const loaded = loadMappingPolicy(defaultFile);
+      const loaded = loadMappingPolicy(configFilePath(defaultFile));
       expect(loaded.ok).toBe(false);
       if (!loaded.ok) expect(loaded.error.kind).toBe(kind);
     }
@@ -555,6 +558,87 @@ describe('mapping policy — project setup choice', () => {
     expect(describeMappingPolicy('always')).toContain('every structured task');
     expect(describeMappingPolicy('complex')).toContain('medium or complex');
     expect(describeMappingPolicy('on-request')).toContain('explicitly asks');
+  });
+});
+
+describe('mapping policy — the two scopes', () => {
+  /** A project store and a user store side by side, neither configured yet. */
+  const scopes = () => {
+    const projectConfig = configFilePath(join(dir, 'project', STATE_FILE_RELATIVE_PATH));
+    const userConfig = userConfigFilePath(join(dir, 'home'));
+    return { projectConfig, userConfig };
+  };
+
+  it('the user file is the same store directory under the user\'s own base', () => {
+    expect(userConfigFilePath(join('C:', 'Users', 'ada'))).toBe(join('C:', 'Users', 'ada', STORE_DIR_NAME, 'config.json'));
+  });
+
+  it('takes the base directory as a parameter — nothing here knows a real home', () => {
+    // Two different bases give two different files: no hidden os.homedir().
+    expect(userConfigFilePath(join(dir, 'a'))).not.toBe(userConfigFilePath(join(dir, 'b')));
+  });
+
+  it('one loader and one writer serve both scopes', () => {
+    const { projectConfig, userConfig } = scopes();
+    must(saveMappingPolicy(userConfig, 'always'));
+    must(saveMappingPolicy(projectConfig, 'on-request'));
+    expect(must(loadMappingPolicy(userConfig))).toBe('always');
+    expect(must(loadMappingPolicy(projectConfig))).toBe('on-request');
+  });
+
+  it('nobody has chosen: no policy, no source', () => {
+    const { projectConfig, userConfig } = scopes();
+    expect(must(effectiveMappingPolicy(projectConfig, userConfig))).toEqual({
+      project: undefined,
+      user: undefined,
+      effective: undefined,
+      source: undefined,
+    });
+  });
+
+  it('the user choice governs every project that has none of its own', () => {
+    const { projectConfig, userConfig } = scopes();
+    must(saveMappingPolicy(userConfig, 'always'));
+    expect(must(effectiveMappingPolicy(projectConfig, userConfig))).toEqual({
+      project: undefined,
+      user: 'always',
+      effective: 'always',
+      source: 'user',
+    });
+  });
+
+  it('a project overrides the user, and both are still reported', () => {
+    const { projectConfig, userConfig } = scopes();
+    must(saveMappingPolicy(userConfig, 'always'));
+    must(saveMappingPolicy(projectConfig, 'on-request'));
+    expect(must(effectiveMappingPolicy(projectConfig, userConfig))).toEqual({
+      project: 'on-request',
+      user: 'always',
+      effective: 'on-request',
+      source: 'project',
+    });
+  });
+
+  it('a project choice alone governs, with no user file at all', () => {
+    const { projectConfig, userConfig } = scopes();
+    must(saveMappingPolicy(projectConfig, 'complex'));
+    expect(must(effectiveMappingPolicy(projectConfig, userConfig))).toMatchObject({
+      effective: 'complex',
+      source: 'project',
+      user: undefined,
+    });
+  });
+
+  it('a broken file in EITHER scope is an error, never a silent fall-through', () => {
+    const { projectConfig, userConfig } = scopes();
+    mkdirSync(dirname(userConfig), { recursive: true });
+    writeFileSync(userConfig, '{"version":1,"policy":"sometimes"}');
+    expect(mustFail(effectiveMappingPolicy(projectConfig, userConfig)).kind).toBe('bad-shape');
+
+    must(saveMappingPolicy(userConfig, 'always'));
+    mkdirSync(dirname(projectConfig), { recursive: true });
+    writeFileSync(projectConfig, 'not json');
+    expect(mustFail(effectiveMappingPolicy(projectConfig, userConfig)).kind).toBe('malformed-json');
   });
 });
 

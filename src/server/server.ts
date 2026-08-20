@@ -6,7 +6,8 @@
  *   mmap_remove   take things off the map (edges, nodes, groups, lanes, bands)
  *                 — and whole PAGES, file and all
  *   mmap_view     render the map as text, and name the project's pages
- *   mmap_setup    get/set the project's mapping policy (when maps open)
+ *   mmap_setup    get/set the mapping policy (when maps open), user-wide by
+ *                 default and per-project where a project must differ
  *
  * Every mutating call is load -> apply (all-or-nothing, Layer 2) -> save
  * (atomic, Layer 1). The server holds no map state between calls: the file
@@ -25,9 +26,15 @@
  * this order: MELLOS_MAPPING_CWD (explicit override for manual runs),
  * CLAUDE_PROJECT_DIR (set by Claude Code for plugin MCP servers — the
  * documented contract), then this process's cwd as the last resort.
+ *
+ * The mapping policy is the one piece of state that also lives OUTSIDE the
+ * project, in the user's own configuration. Both paths are resolved at the
+ * entry point and handed to buildServer; nothing below reads an environment
+ * variable or a home directory for itself.
  */
 
 import { realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -51,21 +58,24 @@ import { ZOOM_MAX, ZOOM_MIN, clampZoom, renderMap } from '../render/render.js';
 import {
   MAPPING_POLICIES,
   type MappingPolicy,
+  POLICY_SCOPES,
   type PageId,
+  type PolicyScope,
   STATE_FILE_RELATIVE_PATH,
   type StoreError,
   configFilePath,
   deletePageFile,
   describeMappingPolicy,
   describeStoreError,
+  effectiveMappingPolicy,
   listPageFiles,
   migrateLegacyStore,
   loadMapFile,
-  loadMappingPolicy,
   pageFilePath,
   pageIdOfFile,
   saveMapFile,
   saveMappingPolicy,
+  userConfigFilePath,
 } from '../store/store.js';
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
@@ -274,9 +284,19 @@ function loadOrEmpty(stateFile: string): Result<MellosMap, string> {
   return { ok: false, error: describeStoreError(loaded.error) };
 }
 
-/** Build the MCP server bound to one default-page state file. Exported for tests. */
-export function buildServer(stateFile: string): McpServer {
+/**
+ * Build the MCP server bound to one project's store.
+ *
+ * @param stateFile - the project's DEFAULT page file; every page and the
+ *   project-scope configuration are derived from it.
+ * @param userConfigFile - the USER-scope configuration file
+ *   ({@link userConfigFilePath}). Passed in rather than resolved here, so a
+ *   spec's server can never read — or write — the developer's real one.
+ * Exported for tests.
+ */
+export function buildServer(stateFile: string, userConfigFile: string): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const projectConfigFile = configFilePath(stateFile);
 
   // The zod PAGE schema enforces the exact PageId grammar, so the cast at
   // this boundary cannot smuggle in an invalid slug.
@@ -365,20 +385,27 @@ export function buildServer(stateFile: string): McpServer {
   };
 
   /**
-   * The setup flow enforces itself here: every declare on a project whose
-   * policy was never chosen carries the nudge, so ANY client — skill loaded
-   * or not — is told to run setup exactly until the user has answered. It
-   * never blocks (the ledger is not a judge); a broken config file is
-   * surfaced the same way instead of being silently treated as unset.
+   * The last-resort acquisition path for the setup question.
+   *
+   * A declare carries this note only while NEITHER scope has a policy — so it
+   * fires at most until the user's one-time, user-level answer, and after that
+   * it is silent forever, in every project they ever open.
+   *
+   * Why it survives at all now that Claude Code asks the question from a
+   * SessionStart hook (src/hook/session-start.ts): other hosts have no hooks.
+   * Under Codex CLI, or any bare MCP client, this note is the ONLY thing that
+   * ever tells the assistant to ask. It never blocks (the ledger is not a
+   * judge); a broken config file is surfaced here the same way instead of
+   * being silently treated as unset.
    */
   const setupNudge = (): string => {
-    const policy = loadMappingPolicy(stateFile);
-    if (!policy.ok) return `\nnote: ${describeStoreError(policy.error)} — fix it or rerun setup (mmap_setup).`;
-    if (policy.value !== undefined) return '';
+    const scopes = effectiveMappingPolicy(projectConfigFile, userConfigFile);
+    if (!scopes.ok) return `\nnote: ${describeStoreError(scopes.error)} — fix it or rerun setup (mmap_setup).`;
+    if (scopes.value.effective !== undefined) return '';
     return (
-      '\nnote: mapping policy not set for this project. Ask the user when maps should open — ' +
+      '\nnote: no mapping policy has been chosen yet. Ask the user when maps should open — ' +
       MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join('; ') +
-      ' — then record the answer with mmap_setup.'
+      ' — then record the answer with mmap_setup. It is asked once ever, not once per project.'
     );
   };
 
@@ -611,41 +638,67 @@ export function buildServer(stateFile: string): McpServer {
     {
       title: 'Configure when maps open',
       description:
-        "Get or set this project's mapping policy — WHEN the assistant opens a Mellos map. " +
-        'Call with no arguments to read it. If it reports "not set", ask the USER to choose ' +
-        '(never pick for them): always = ' +
+        'Get or set the mapping policy — WHEN the assistant opens a Mellos map. ' +
+        'Call with no arguments to read it: the reply names the policy chosen for the USER ' +
+        '(every project), the one this PROJECT overrides it with if any, and which of them is ' +
+        'in effect. If it reports "not set", ask the USER to choose (never pick for them): ' +
+        'always = ' +
         describeMappingPolicy('always') +
         '; complex = ' +
         describeMappingPolicy('complex') +
         '; on-request = ' +
         describeMappingPolicy('on-request') +
-        '. Then call again with their choice to persist it. The policy guides you; it never ' +
-        'blocks the tools, and an explicit user request for a map always wins.',
+        '. Then call again with their choice to persist it. It defaults to user scope, which ' +
+        'is the normal one — the question is about how someone works, so it is asked once ever, ' +
+        'not once per repository. Pass scope: "project" only when the user wants THIS project ' +
+        'to differ from that habit. The policy guides you; it never blocks the tools, and an ' +
+        'explicit user request for a map always wins.',
       inputSchema: closed({
         policy: z
           .enum(MAPPING_POLICIES)
           .optional()
           .describe("the user's choice to persist; omit to read the current policy"),
+        scope: z
+          .enum(POLICY_SCOPES)
+          .optional()
+          .describe(
+            'where to record the choice: "user" (default) applies to every project this user ' +
+              'opens; "project" overrides that for this project alone. Ignored when reading.',
+          ),
       }),
     },
     (input) => {
+      // zod enforced both enums; the casts at this boundary cannot widen them
+      const scope = (input.scope ?? 'user') as PolicyScope;
+      const configFile = scope === 'project' ? projectConfigFile : userConfigFile;
       if (input.policy !== undefined) {
-        // zod enforced the enum; the cast at this boundary cannot widen it
         const policy = input.policy as MappingPolicy;
-        const saved = saveMappingPolicy(stateFile, policy);
+        const saved = saveMappingPolicy(configFile, policy);
         if (!saved.ok) return saveFailed(saved.error);
-        return text(`mapping policy set: ${policy} — ${describeMappingPolicy(policy)} [${configFilePath(stateFile)}]`);
-      }
-      const loaded = loadMappingPolicy(stateFile);
-      if (!loaded.ok) return text(describeStoreError(loaded.error), true);
-      if (loaded.value === undefined) {
+        const reach =
+          scope === 'user'
+            ? 'applies to EVERY project this user opens; a single project can still override it with ' +
+              'mmap_setup {policy, scope: "project"}'
+            : 'applies to THIS project only, overriding the user-level choice';
         return text(
-          'mapping policy not set. Ask the user to choose one of: ' +
-            MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join('; ') +
-            ' — then call mmap_setup with their choice. Until then act as complex.',
+          `mapping policy set (${scope} scope): ${policy} — ${describeMappingPolicy(policy)}. ` +
+            `${reach}. [${configFile}]`,
         );
       }
-      return text(`mapping policy: ${loaded.value} — ${describeMappingPolicy(loaded.value)}`);
+      const scopes = effectiveMappingPolicy(projectConfigFile, userConfigFile);
+      if (!scopes.ok) return text(describeStoreError(scopes.error), true);
+      const { user, project, effective, source } = scopes.value;
+      const said = (p: MappingPolicy | undefined): string => (p === undefined ? 'not set' : p);
+      const heading = `mapping policy — user: ${said(user)}; project: ${said(project)}`;
+      if (effective === undefined) {
+        return text(
+          `${heading}. Nobody has chosen yet. Ask the user to choose one of: ` +
+            MAPPING_POLICIES.map((p) => `${p} (${describeMappingPolicy(p)})`).join('; ') +
+            ' — then call mmap_setup with their choice (scope defaults to user, which is what you want: ' +
+            'the question is asked once ever). Until then act as complex.',
+        );
+      }
+      return text(`${heading}. In effect: ${effective} (${source} scope) — ${describeMappingPolicy(effective)}`);
     },
   );
 
@@ -688,13 +741,24 @@ export function resolveStateFile(env: NodeJS.ProcessEnv, cwd: string): string {
   return join(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 
+/**
+ * Resolve where the USER-scope configuration lives. The home directory is
+ * read HERE, at the entry point, and nowhere else: everything below takes the
+ * resolved path, so no spec can be one refactor away from writing the
+ * developer's own configuration.
+ */
+export function resolveUserConfigFile(home: string): string {
+  return userConfigFilePath(home);
+}
+
 async function main(): Promise<void> {
   const stateFile = resolveStateFile(process.env, process.cwd());
+  const userConfigFile = resolveUserConfigFile(homedir());
   // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
   // Say so on stderr — stdout is the MCP protocol — or the move looks like the
   // server deleting a tracked directory behind the user's back.
   if (migrateLegacyStore(stateFile)) console.error('mellos-mapping: moved the legacy .claude map store to .mellos/ — commit the move.');
-  const server = buildServer(stateFile);
+  const server = buildServer(stateFile, userConfigFile);
   await server.connect(new StdioServerTransport());
 }
 
