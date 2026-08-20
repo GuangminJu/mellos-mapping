@@ -67,7 +67,8 @@ Follow the platform-appropriate route:
 
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
-   (same `--page` judgment as route 1; omit it when no page is the subject).
+   (same `--page` judgment as route 1; omit it when no page is the subject;
+   `-l 42%` is just a starting width — honor whatever pane size the user asks for).
 
 3. **Neither**: print the command
    `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
