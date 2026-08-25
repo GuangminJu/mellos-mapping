@@ -17,6 +17,7 @@ import {
   declareLayer,
   declareNode,
   linkNodes,
+  moveNode,
   removeEdge,
   removeGroup,
   removeLane,
@@ -24,6 +25,9 @@ import {
   removeNode,
   setKind,
   setTitle,
+  updateGroup,
+  updateLane,
+  updateLayer,
   updateNode,
 } from '../domain/ops.js';
 import {
@@ -32,6 +36,7 @@ import {
   type MellosMap,
   type NodeKind,
   type NodeStatus,
+  type Rank,
   type Result,
   type SubmapRef,
   describeMapError,
@@ -43,14 +48,31 @@ import {
   makeNodeId,
   makeNodeKind,
   makeNodeStatus,
+  makeRank,
   makeSubmapRef,
   ok,
 } from '../domain/types.js';
 
+/**
+ * A node may not dive into the page it lives on. Pages are the one structure
+ * outside Layer 0 (the domain has no notion of a page at all), so the rule
+ * lands here, on the batch's own `page` field: a submap is a CHILD map, and
+ * a page that is its own child is a loop with no bottom — the page-level
+ * form of the self-edge linkNodes already refuses.
+ */
+function refuseSelfDive(where: string, submap: string, page: string | undefined): string | undefined {
+  return submap === page
+    ? `${where}: a node cannot dive into its own page ("${submap}"); a submap links a CHILD page`
+    : undefined;
+}
+
 // The `| undefined` on every optional field keeps these assignable from
 // zod-inferred tool inputs under exactOptionalPropertyTypes.
 export interface DeclareInput {
-  readonly title?: string | undefined;
+  /** The page this batch targets (undefined = the default page); see refuseSelfDive. */
+  readonly page?: string | undefined;
+  /** Text sets the title; null removes it (the map keeps everything else). */
+  readonly title?: string | null | undefined;
   /** Diagram kind (dev | architecture | dataflow | behavior-tree | sequence). */
   readonly kind?: string | undefined;
   readonly layers?: ReadonlyArray<{ readonly id: string; readonly name: string; readonly rank: number }> | undefined;
@@ -64,6 +86,7 @@ export interface DeclareInput {
         readonly label: string;
         readonly layer: string;
         readonly status?: string | undefined;
+        readonly evidence?: string | undefined;
         readonly detail?: string | undefined;
         readonly group?: string | undefined;
         readonly kind?: string | undefined;
@@ -76,22 +99,46 @@ export interface DeclareInput {
     | undefined;
 }
 
+/**
+ * One revision batch. Every list is optional and the batch must carry at
+ * least one item: a revision that revises nothing is a caller mistake worth
+ * naming, not a silent no-op that reports "map now: ..." as if something
+ * had happened.
+ */
 export interface UpdateInput {
-  readonly updates: ReadonlyArray<{
-    readonly id: string;
-    readonly status?: string | undefined;
-    readonly label?: string | undefined;
-    readonly evidence?: string | undefined;
-    readonly detail?: string | undefined;
-    /** A group id joins that group; null leaves the current one. */
-    readonly group?: string | null | undefined;
-    /** A kind slug sets the node kind; null clears it. */
-    readonly kind?: string | null | undefined;
-    /** A lane id joins that lane; null leaves the current one. */
-    readonly lane?: string | null | undefined;
-    /** A page slug links a child map; null unlinks it. */
-    readonly submap?: string | null | undefined;
-  }>;
+  /** The page this batch targets (undefined = the default page); see refuseSelfDive. */
+  readonly page?: string | undefined;
+  readonly updates?:
+    | ReadonlyArray<{
+        readonly id: string;
+        readonly status?: string | undefined;
+        readonly label?: string | undefined;
+        /** Text replaces the evidence; null clears it. */
+        readonly evidence?: string | null | undefined;
+        /** Text replaces the design notes; null clears them. */
+        readonly detail?: string | null | undefined;
+        /** A layer id moves the node to that band — applied BEFORE this item's other fields. */
+        readonly layer?: string | undefined;
+        /** A group id joins that group; null leaves the current one. */
+        readonly group?: string | null | undefined;
+        /** A kind slug sets the node kind; null clears it. */
+        readonly kind?: string | null | undefined;
+        /** A lane id joins that lane; null leaves the current one. */
+        readonly lane?: string | null | undefined;
+        /** A page slug links a child map; null unlinks it. */
+        readonly submap?: string | null | undefined;
+      }>
+    | undefined;
+  /** Bands to rename and/or re-rank; an item must carry a name, a rank, or both. */
+  readonly layers?:
+    | ReadonlyArray<{
+        readonly id: string;
+        readonly name?: string | undefined;
+        readonly rank?: number | undefined;
+      }>
+    | undefined;
+  readonly groups?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
+  readonly lanes?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
 }
 
 export interface RemoveInput {
@@ -114,7 +161,9 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
   for (const [i, l] of (input.layers ?? []).entries()) {
     const id = makeLayerId(l.id);
     if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
-    const declared = declareLayer(next, { id: id.value, name: l.name, rank: l.rank });
+    const rank = makeRank(l.rank);
+    if (!rank.ok) return err(`layers[${i}]: ${describeMapError(rank.error)}`);
+    const declared = declareLayer(next, { id: id.value, name: l.name, rank: rank.value });
     if (!declared.ok) return err(`layers[${i}]: ${describeMapError(declared.error)}`);
     next = declared.value;
   }
@@ -170,6 +219,8 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
     if (n.submap !== undefined) {
       const parsed = makeSubmapRef(n.submap);
       if (!parsed.ok) return err(`nodes[${i}]: ${describeMapError(parsed.error)}`);
+      const selfDive = refuseSelfDive(`nodes[${i}]`, n.submap, input.page);
+      if (selfDive !== undefined) return err(selfDive);
       submap = parsed.value;
     }
     const declared = declareNode(next, {
@@ -177,6 +228,7 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
       label: n.label,
       layer: layer.value,
       ...(status !== undefined ? { status } : {}),
+      ...(n.evidence !== undefined ? { evidence: n.evidence } : {}),
       ...(n.detail !== undefined ? { detail: n.detail } : {}),
       ...(group !== undefined ? { group } : {}),
       ...(kind !== undefined ? { kind } : {}),
@@ -200,12 +252,74 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
   return ok(next);
 }
 
-/** Record progress: status, label and evidence changes on existing nodes. */
+/**
+ * Revise an existing map: rename and re-rank bands, relabel groups and
+ * lanes, then record progress on nodes — status, label, evidence, design
+ * notes, band, group, kind, lane and submap.
+ *
+ * Order is part of the contract, because a batch may depend on it:
+ *   1. layers, 2. groups, 3. lanes, 4. node updates — structure settles
+ *      before the nodes that live in it are touched, so a node can move into
+ *      a band the same batch just re-ranked;
+ *   - within ONE node update, `layer` moves the node BEFORE its other fields
+ *     apply, so "move to band B and join group G on B" is one item. The
+ *     reverse trip (leave a group, then move off its band) is two items in
+ *     the same batch — moveNode never silently ungroups, so the caller says
+ *     it out loud.
+ * @returns the fully revised map, or the first refusal with its item index.
+ */
 export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMap, string> {
   let next = map;
-  for (const [i, u] of input.updates.entries()) {
+  const items =
+    (input.updates?.length ?? 0) + (input.layers?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0);
+  if (items === 0) return err('nothing to revise: pass updates, layers, groups or lanes');
+
+  for (const [i, l] of (input.layers ?? []).entries()) {
+    const id = makeLayerId(l.id);
+    if (!id.ok) return err(`layers[${i}]: ${describeMapError(id.error)}`);
+    if (l.name === undefined && l.rank === undefined) {
+      return err(`layers[${i}]: nothing to change; give a name, a rank, or both`);
+    }
+    let rank: Rank | undefined;
+    if (l.rank !== undefined) {
+      const parsed = makeRank(l.rank);
+      if (!parsed.ok) return err(`layers[${i}]: ${describeMapError(parsed.error)}`);
+      rank = parsed.value;
+    }
+    const updated = updateLayer(next, id.value, {
+      ...(l.name !== undefined ? { name: l.name } : {}),
+      ...(rank !== undefined ? { rank } : {}),
+    });
+    if (!updated.ok) return err(`layers[${i}]: ${describeMapError(updated.error)}`);
+    next = updated.value;
+  }
+
+  for (const [i, g] of (input.groups ?? []).entries()) {
+    const id = makeGroupId(g.id);
+    if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    const updated = updateGroup(next, id.value, g.label);
+    if (!updated.ok) return err(`groups[${i}]: ${describeMapError(updated.error)}`);
+    next = updated.value;
+  }
+
+  for (const [i, l] of (input.lanes ?? []).entries()) {
+    const id = makeLaneId(l.id);
+    if (!id.ok) return err(`lanes[${i}]: ${describeMapError(id.error)}`);
+    const updated = updateLane(next, id.value, l.label);
+    if (!updated.ok) return err(`lanes[${i}]: ${describeMapError(updated.error)}`);
+    next = updated.value;
+  }
+
+  for (const [i, u] of (input.updates ?? []).entries()) {
     const id = makeNodeId(u.id);
     if (!id.ok) return err(`updates[${i}]: ${describeMapError(id.error)}`);
+    if (u.layer !== undefined) {
+      const layer = makeLayerId(u.layer);
+      if (!layer.ok) return err(`updates[${i}]: ${describeMapError(layer.error)}`);
+      const moved = moveNode(next, id.value, layer.value);
+      if (!moved.ok) return err(`updates[${i}]: ${describeMapError(moved.error)}`);
+      next = moved.value;
+    }
     let status: NodeStatus | undefined;
     if (u.status !== undefined) {
       const parsed = makeNodeStatus(u.status);
@@ -238,6 +352,8 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
     else if (u.submap !== undefined) {
       const parsed = makeSubmapRef(u.submap);
       if (!parsed.ok) return err(`updates[${i}]: ${describeMapError(parsed.error)}`);
+      const selfDive = refuseSelfDive(`updates[${i}]`, u.submap, input.page);
+      if (selfDive !== undefined) return err(selfDive);
       submap = parsed.value;
     }
     const updated = updateNode(next, {

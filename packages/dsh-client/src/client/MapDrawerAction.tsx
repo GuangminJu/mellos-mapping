@@ -53,7 +53,16 @@ export function MapDrawerAction(props: MapDrawerActionProps): ReactNode {
           <button type="button" className={css.drawerClose} onClick={() => { setOpen(false) }} title={t('close')}>✕</button>
           {/* The view's props contract is slot-generic (locale, store, hooks,
               read); only the slot name differs, so the header-action seat
-              satisfies it structurally. */}
+              satisfies it structurally.
+              VIOLATION: state-explicit-in-types - `as unknown as` erases that
+              difference instead of expressing it. PropsRuntime is generic in
+              the slot NAME, and MmapView names 'aux' because that is the slot
+              it was written for; this seat is 'conversation.session.header
+              .actions'. Typing MmapViewProps over the slot name would push a
+              framework type parameter through the component, its store, its
+              locale bindings and both registration sites, to describe a field
+              the component never reads. The two prop sets are otherwise the
+              same object, and the slot renderer supplies both. */}
           <MmapView {...(props as unknown as MmapViewProps)} autoOpen={autoOpen} />
         </div>,
         document.body,

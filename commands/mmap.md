@@ -6,21 +6,38 @@ allowed-tools: Bash(wt *), Bash(node *), Bash(tmux *)
 
 If `$ARGUMENTS` contains `setup`, do NOT open the pane. Run the setup
 questionnaire instead: call `mmap_setup` (no arguments) to read the current
-policy, then ask the user which mode they want — `always` (map every
-structured task: workflows, designs, architecture, technical dependencies),
-`complex` (only medium or complex tasks), `on-request` (only when explicitly
-asked) — using AskUserQuestion where available, mentioning the current
-policy if one is set. Persist their choice with `mmap_setup {policy}` and
-confirm what was saved and where. Then stop.
+policy — the reply names the USER-level choice, this project's override if it
+has one, and which of them is in effect. Then ask the user which mode they
+want — `always` (map every structured task: workflows, designs, architecture,
+technical dependencies), `complex` (only medium or complex tasks),
+`on-request` (only when explicitly asked) — using AskUserQuestion where
+available, mentioning whatever is already set.
+
+Persist with `mmap_setup {policy, scope}`. `scope` defaults to `user`, which
+is almost always right: the question is about how this person works, so it is
+answered once and applies to every project they open. Use
+`scope: "project"` only when they say they want THIS project to differ from
+that — ask which they mean if `$ARGUMENTS` does not make it obvious. Confirm
+what was saved, at which scope, and where. Then stop.
 
 Otherwise: open the live Mellos map watcher for this project in a separate terminal pane.
+
+The `mmap_open` tool does exactly this and is the shorter route — pass the page
+this conversation is working on (`mmap_open {page: "<slug>"}`), or `window: true`
+for the dedicated window. It reports whether a pane actually came up afterwards.
+Use the platform routes below when the mmap tools are not available in this
+session, or when the tool reports it could not open one. (You do not need this
+command to keep the map visible day to day: every write answers with a `pane:`
+line, and a `pane: CLOSED` is the assistant's cue to call `mmap_open` itself.)
 The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`. The store is
 MULTI-PAGE: the default page lives at `.mellos/map.json` and named
 pages at `.mellos/pages/<slug>.json` — the watcher takes the
 default path as its base, polls ALL of these files, and redraws on change.
 The default file is optional; a project whose work lives on named pages has
 no `.mellos/map.json` at all. So never probe that single file to
-decide whether a map exists — call `mmap_view`, which reads the real store.
+decide whether a map exists — call `mmap_view`, which reads the real store
+and ends every response with a `pages:` line naming the pages that exist
+(marking the default page absent when it is) and the one it just rendered.
 
 Follow the platform-appropriate route:
 
@@ -58,11 +75,25 @@ Follow the platform-appropriate route:
    user prefers the map separate from the chat (second monitor, small
    screens). `--ascii` for fonts without box-drawing characters. `--force`
    opens another pane even though a watcher for this project is already
-   running (default is to skip).
+   running (default is to skip). The remaining watcher flags are forwarded
+   verbatim: `--no-color`, `--no-mouse`, `--interval <ms>` (default 250,
+   floored at 50). An unknown flag is a usage error, never dropped in
+   silence — relay the message rather than retrying blind.
+
+   A page the user is done with they can close from the pane itself: `x`, or
+   the `×` on the active tab, asks, and a second press within the window
+   deletes that page's file. `mmap_remove {pages: [...]}` does the same from
+   a tool call — with the user behind it, never on your own initiative.
+
+   The user also has the pane on a toggle of their own: `mmap` typed in any
+   terminal of the project opens it, and `mmap` again closes it. So a pane
+   that disappears mid-session is a decision, not a crash — say so rather
+   than reopening it uninvited.
 
 2. **tmux session**: run
    `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
-   (same `--page` judgment as route 1; omit it when no page is the subject).
+   (same `--page` judgment as route 1; omit it when no page is the subject;
+   `-l 42%` is just a starting width — honor whatever pane size the user asks for).
 
 3. **Neither**: print the command
    `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
@@ -71,7 +102,8 @@ Follow the platform-appropriate route:
 
 If launching fails (e.g. no graphical session), fall back to route 3. After
 the pane is up, confirm briefly; only when neither the default file nor any
-page file exists does the pane show "waiting for <file>", until the first
-`mmap_declare`.
+page file exists does the pane sit on its standby screen ("waiting for the
+first mmap_declare ...", or "waiting for &lt;file&gt; ..." when `--page` named a
+page that does not exist yet), until the first `mmap_declare`.
 
 $ARGUMENTS

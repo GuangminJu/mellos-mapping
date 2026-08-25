@@ -23,7 +23,12 @@
  *                  light their tab up instead of stealing the view
  *   wheel on the tab row / click ‹ ›   browse an overflowing tab strip
  *                  without switching pages
- *   q              quit
+ *   x, or click the × on the active tab   ask to delete the page on screen;
+ *                  press again within the confirmation window and its file
+ *                  is removed for good. Anything else takes the request back
+ *   q              quit — as does `mmap` typed in any terminal of this
+ *                  project, which writes the store's one-shot quit request
+ *                  (the pane is a toggle from outside as well as from inside)
  *
  * The bottom of the pane is a fixed-height detail panel: a separator, a
  * status-colored header, evidence, both wire directions (each neighbour
@@ -31,9 +36,30 @@
  * With nothing focused it shows the map dashboard instead. Fixed height —
  * details never float over the map and the layout never jumps.
  *
- * Resilience contract: a torn or half-written file (only possible with
- * foreign writers; our own saves are atomic) must never crash the pane —
- * the last good picture stays up and the next poll retries.
+ * WHICH page is shown, and what is known about the others, is not decided
+ * here: ./pane-state.js folds one look at the store into the next page set,
+ * and this file is the shell around it — stdin, stdout, timers, the
+ * filesystem, and the view (pan, zoom, pin) of whatever page that fold
+ * chose. Every promise about pages — a request beats follow, the startup
+ * scan is not news, a torn file never costs the last good picture — is
+ * specified over there.
+ *
+ * Writing contract: the pane is a READER of the store, with exactly one
+ * exception — it deletes a page file on a CONFIRMED delete request (`x`
+ * twice, or two clicks on the active tab's ×). Nothing else it does writes
+ * anything: no map is ever saved from here, and the focus and quit files it
+ * consumes are messages addressed to it. A deletion the store refuses is a
+ * footer line, never a half-done state.
+ *
+ * Resilience contract: NOTHING a file or a picture does may take the pane
+ * down. A torn or half-written file (only possible with foreign writers; our
+ * own saves are atomic) leaves the last good picture up and the next poll
+ * retries; a page that cannot be read at all, and a map the renderer refuses
+ * to draw, become a visible error line on an otherwise live pane. The
+ * terminal is handed back — mouse reporting off, cursor shown — however this
+ * process ends, including a fault nobody foresaw: a pane that dies owing the
+ * shell its mouse mode leaves the user with a terminal that reports every
+ * mouse move as garbage until they reset it by hand.
  *
  * Usage: node watch.mjs [--file <path>] [--interval <ms>] [--ascii]
  *                       [--no-color] [--no-mouse] [--page <slug>] [--no-follow]
@@ -44,10 +70,20 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { mapStatus } from '../domain/ops.js';
-import { type MellosMap, type NodeStatus } from '../domain/types.js';
-import { type NeighborRef, diveParent, focusInfo, mostRecentKey, submapRefs } from '../semantics/semantics.js';
+import { type MellosMap, type NodeStatus, type Result, err, ok } from '../domain/types.js';
+import {
+  type NeighborRef,
+  SPINNER_FRAMES,
+  diveParent,
+  focusInfo,
+  interiorPages,
+  statusGlyph,
+} from '../semantics/semantics.js';
 import {
   type BoxHit,
+  type RenderOptions,
+  type Viewport,
+  type WindowedRender,
   type ZoomStep,
   ZOOM_DEFAULT,
   clampZoom,
@@ -56,6 +92,7 @@ import {
   isNeutralKind,
   kindGlyph,
   renderMapWindow,
+  statusSgr,
   wrapWidth,
   zoomLabel,
 } from '../render/render.js';
@@ -63,6 +100,9 @@ import {
   PAGES_DIR_NAME,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
+  VIEWER_HEARTBEAT_MS,
+  type ViewerReport,
+  deletePageFile,
   describeStoreError,
   listPageFiles,
   loadMapFile,
@@ -70,9 +110,34 @@ import {
   migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
+  publishViewer,
+  retireViewer,
+  sweepQuitRequest,
   takeFocusRequest,
+  takeQuitRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
+import {
+  type PageFault,
+  type PaneState,
+  describePageFault,
+  disarmDelete,
+  entryOf,
+  filesOf,
+  initialPaneState,
+  mapOf,
+  mapsOf,
+  popDive,
+  pushDive,
+  requestDelete,
+  scan,
+  toggleFollow,
+  userSwitch,
+} from './pane-state.js';
+
+// The page-set rules and their fault vocabulary live in ./pane-state.js;
+// re-exported here so the pane has one import site, as it always had.
+export { type PageFault, type PageEntry, type PaneState, describePageFault } from './pane-state.js';
 
 // Width helpers live with the renderer now; re-exported for panel tests.
 export { fitWidth, wrapWidth };
@@ -89,27 +154,74 @@ interface WatchConfig {
   readonly follow: boolean;
 }
 
-export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
+/** Every way a command line can be refused, as data. */
+export type ArgsError =
+  | { readonly kind: 'unknown-flag'; readonly flag: string }
+  | { readonly kind: 'missing-value'; readonly flag: string }
+  | { readonly kind: 'invalid-value'; readonly flag: string; readonly raw: string; readonly rule: string };
+
+export function describeArgsError(e: ArgsError): string {
+  switch (e.kind) {
+    case 'unknown-flag':
+      return `unknown flag "${e.flag}"`;
+    case 'missing-value':
+      return `${e.flag} needs a value`;
+    case 'invalid-value':
+      return `${e.flag} got "${e.raw}" (expected: ${e.rule})`;
+  }
+}
+
+export const USAGE =
+  'usage: mellos-mapping-watch [--file <map.json>] [--page <slug>] [--interval <ms>] ' +
+  '[--ascii] [--no-color] [--no-mouse] [--no-follow]';
+
+/**
+ * Parse the watcher's command line. A bad command line is REFUSED, never
+ * silently patched over: a typo'd flag, a misspelled page slug or a
+ * non-numeric interval used to be ignored ("the pane must come up"), which
+ * meant the pane came up showing the WRONG thing with no hint why. The
+ * launcher (scripts/open-pane.mjs) rejects unknown flags; both entry points
+ * now hold the same line.
+ */
+export function parseArgs(argv: readonly string[], cwd: string): Result<WatchConfig, ArgsError> {
   let file = join(cwd, STATE_FILE_RELATIVE_PATH);
-  let intervalMs = 250;
+  let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
   let color = true;
   let mouse = true;
   let page: PageId | undefined;
   let follow = true;
+  // A value that looks like a flag is a missing value: `--file --ascii` is a
+  // forgotten path, not a file named "--ascii".
+  const valueOf = (flag: string, raw: string | undefined): Result<string, ArgsError> =>
+    raw === undefined || raw.startsWith('--') ? err({ kind: 'missing-value', flag }) : ok(raw);
   for (let i = 0; i < argv.length; i++) {
-    switch (argv[i]) {
-      case '--file':
-        file = argv[++i] ?? file;
-        break;
-      case '--page': {
-        const parsed = makePageId(argv[++i] ?? '');
-        if (parsed.ok) page = parsed.value; // invalid slugs are ignored — the pane must come up
+    const flag = argv[i]!;
+    switch (flag) {
+      case '--file': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        file = value.value;
         break;
       }
-      case '--interval':
-        intervalMs = Math.max(50, Number(argv[++i]) || intervalMs);
+      case '--page': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: 'invalid-value', flag, raw: value.value, rule: parsed.error.rule });
+        page = parsed.value;
         break;
+      }
+      case '--interval': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const ms = Number(value.value);
+        if (!Number.isFinite(ms) || ms <= 0) {
+          return err({ kind: 'invalid-value', flag, raw: value.value, rule: 'a positive number of milliseconds' });
+        }
+        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, ms);
+        break;
+      }
       case '--ascii':
         unicode = false;
         break;
@@ -123,10 +235,49 @@ export function parseArgs(argv: readonly string[], cwd: string): WatchConfig {
         follow = false;
         break;
       default:
-        break; // unknown flags are ignored; the pane must come up regardless
+        return err({ kind: 'unknown-flag', flag });
     }
   }
-  return { file, intervalMs, unicode, color, mouse, page, follow };
+  return ok({ file, intervalMs, unicode, color, mouse, page, follow });
+}
+
+// ---------------------------------------------------------------------------
+// fault boundaries — the two places a live pane can be handed something it
+// cannot process: a file it cannot read, and a map it cannot draw
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a page file, turning EVERY fault into a value.
+ *
+ * loadMapFile answers the expected faults (missing file, malformed JSON,
+ * broken invariants) with a Result and rethrows the rest — a page path that
+ * is a DIRECTORY (`pages/x.json/`, EISDIR), one the user may not read
+ * (EACCES), a name the filesystem refuses. Inside the poll timer such an
+ * exception has nowhere to go: it killed the pane and left the terminal in
+ * mouse-reporting mode. A page the watcher cannot read is news to show, not
+ * a reason to stop showing anything.
+ */
+export function readPage(file: string): Result<MellosMap, PageFault> {
+  try {
+    return loadMapFile(file);
+  } catch (e) {
+    return err({ kind: 'unreadable', path: file, detail: (e as NodeJS.ErrnoException).code ?? (e as Error).message });
+  }
+}
+
+/**
+ * renderMapWindow, with a renderer fault turned into a value.
+ *
+ * The picture is pure and total for every map the store admits, but it is
+ * also the longest computation in this process; a fault in it must cost the
+ * frame, not the pane. The caller shows the message where the map would be.
+ */
+export function renderWindow(map: MellosMap, opts: RenderOptions, viewport: Viewport): Result<WindowedRender, string> {
+  try {
+    return ok(renderMapWindow(map, opts, viewport));
+  } catch (e) {
+    return err(`this map could not be drawn: ${(e as Error).message}`);
+  }
 }
 
 /**
@@ -149,19 +300,6 @@ export function dividerRow(width: number, unicode: boolean, follow: boolean): st
   return bar;
 }
 
-/**
- * The page a pane shows when nobody asked for one: the most recently WRITTEN
- * page — the ledger last touched is almost always the effort under way. Files
- * without a readable mtime lose; an empty store falls back to list order
- * (default page first, then slug order).
- */
-export function mostRecentPageFile(
-  files: readonly string[],
-  mtimeOf: (file: string) => number | undefined,
-): string | undefined {
-  return mostRecentKey(files, mtimeOf);
-}
-
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
 const CLEAR_ALL = '\x1b[H\x1b[2J';
@@ -172,11 +310,87 @@ const MOUSE_ON = '\x1b[?1003h\x1b[?1006h';
 const MOUSE_OFF = '\x1b[?1003l\x1b[?1006l';
 const RESET = '\x1b[0m';
 
+/**
+ * The escape sequences that hand the terminal back exactly as it was found:
+ * mouse reporting off (only if this pane turned it on), cursor visible,
+ * attributes reset. Written on every exit path there is — a pane that dies
+ * without them leaves the shell reporting every mouse move as garbage.
+ */
+export function terminalRestoreSequence(mouseActive: boolean): string {
+  return (mouseActive ? MOUSE_OFF : '') + SHOW_CURSOR + RESET + '\n';
+}
+
 /** Default detail-panel height; the divider drag adjusts it at runtime. */
 const PANEL_CONTENT_ROWS = 6;
 export const PANEL_ROWS_MIN = 2;
 /** The map keeps at least this many body rows however far the divider is pulled. */
 const MAP_ROWS_MIN = 4;
+
+// ---------------------------------------------------------------------------
+// the pane's clock and its fallbacks — every number a reader would ask about
+// ---------------------------------------------------------------------------
+
+/**
+ * How often the store is polled, in ms. A quarter second reads as
+ * "immediately" beside a conversation, and a stat per page at that rate costs
+ * nothing.
+ */
+const POLL_INTERVAL_DEFAULT_MS = 250;
+/**
+ * Floor for `--interval`. Below this the poll costs more than the picture is
+ * worth, and a hand-typed `--interval 0` would spin a core.
+ */
+const POLL_INTERVAL_MIN_MS = 50;
+
+/**
+ * How often the standby screen repaints while no map exists (~12fps). The
+ * water animation is the only moving thing there, and it is decoration.
+ */
+const SPLASH_FRAME_MS = 80;
+
+/**
+ * How long a footer message stays up, in three tiers by how much the reader
+ * has to do about it: a state change they just caused is an acknowledgement;
+ * a state change with a consequence, or a request that could not be served,
+ * needs a beat longer; news from a page they cannot see has to survive a
+ * glance elsewhere.
+ */
+const FLASH_ACK_MS = 2500;
+const FLASH_NOTICE_MS = 3000;
+const FLASH_BACKGROUND_NEWS_MS = 4000;
+
+/**
+ * Two clicks on one node within this window are a double-click (dive). Just
+ * under the ~500ms platform default, because the second click must also land
+ * on the same box, which already rules out most accidents.
+ */
+const DOUBLE_CLICK_MS = 450;
+
+/**
+ * How long an armed page deletion stands — and, the same number on purpose,
+ * how long its "press x again" message stays in the footer. The window a
+ * user can SEE is the window they have: a confirmation still armed after its
+ * question left the screen would turn some later keystroke into a deleted
+ * file. Long enough to read the page's name and decide, short enough that
+ * the answer is still about the question.
+ */
+const CONFIRM_WINDOW_MS = 3000;
+
+/**
+ * Terminal size to assume when stdout reports none — a pipe, a CI log, a
+ * terminal that answers late. Roughly a classic 100x30 window: wide enough
+ * that the picture is not shredded, small enough that a real terminal will
+ * not clip it later.
+ */
+const FALLBACK_COLUMNS = 100;
+const FALLBACK_ROWS = 30;
+
+/**
+ * What a tab or a breadcrumb calls the DEFAULT page when its map carries no
+ * title. The default page has no slug to fall back on — it is the one page a
+ * node's `submap` cannot name — so it needs a word of its own.
+ */
+const DEFAULT_PAGE_TAB_LABEL = 'main';
 
 /**
  * Usable frame width: one column narrower than the terminal. A glyph written
@@ -201,20 +415,6 @@ export function clampPanelRows(wanted: number, totalRows: number, tabRows: numbe
 export function panelRowsFromDividerY(termY: number, totalRows: number, tabRows: number): number {
   return clampPanelRows(totalRows - termY - 1, totalRows, tabRows);
 }
-
-const STATUS_GLYPH: Readonly<Record<NodeStatus, [unicode: string, ascii: string]>> = {
-  planned: ['·', '.'],
-  'in-progress': ['⠿', '*'],
-  done: ['■', '#'],
-  regressed: ['✗', 'X'],
-};
-
-const STATUS_SGR: Readonly<Record<NodeStatus, string>> = {
-  planned: '2',
-  'in-progress': '33',
-  done: '32',
-  regressed: '31',
-};
 
 /**
  * Keep a zoom change visually anchored. With an anchor node (same id hit
@@ -255,7 +455,13 @@ export type TabAction =
   | { readonly kind: 'switch'; readonly index: number }
   | { readonly kind: 'scroll'; readonly delta: -1 | 1 }
   /** The breadcrumb inside a sub-map: the whole row climbs back out. */
-  | { readonly kind: 'back' };
+  | { readonly kind: 'back' }
+  /**
+   * The × on the ACTIVE tab: ask to delete the page on screen. It carries no
+   * index because it exists on no other tab — clicking an inactive tab
+   * switches to it first, and the × appears there on the next frame.
+   */
+  | { readonly kind: 'delete' };
 
 export interface TabSegment {
   readonly text: string;
@@ -270,6 +476,17 @@ export interface TabSegment {
 const TAB_INDICATOR_W = 3;
 
 /**
+ * The close button drawn on the ACTIVE tab: the glyph plus one trailing
+ * space, so the click target is two columns wide and cannot be hit by
+ * aiming at the neighbouring tab. The glyph is East-Asian AMBIGUOUS, which
+ * this repo's width table calls one column — same as ● ○ ■ ✗ and the rest of
+ * the pane's alphabet (render/width.ts).
+ */
+const CLOSE_TAB_TEXT: Readonly<Record<'unicode' | 'ascii', string>> = { unicode: '× ', ascii: 'x ' };
+/** The × is a secondary affordance: faint, never competing with the tab it sits on. */
+const CLOSE_TAB_SGR = '90';
+
+/**
  * Render the page tab bar as ANSI-free segments with column spans. The
  * active tab is bold in its map's aggregate status color; inactive tabs
  * are faint — unless fresh (changed since last viewed), which keep their
@@ -282,11 +499,26 @@ const TAB_INDICATOR_W = 3;
  * switches the page; the caller owns the scroll state and clicks a tab to
  * actually switch. Keeping the ACTIVE tab visible when the page changes
  * is also the caller's move: see tabScrollFor.
+ *
+ * @param closable - draw a × on the ACTIVE tab as its own segment (a
+ *   'delete' action). Only worth it where a click can land, so the caller
+ *   passes its mouse mode; the `x` key works either way. It is on the active
+ *   tab alone because deleting a page one is not even looking at is not a
+ *   thing a single click should be able to do — and because the confirming
+ *   press is bound to the page on screen anyway. Its columns are counted in
+ *   the width budget like any other segment, so the strip still measures
+ *   itself honestly.
  */
-export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boolean, scroll = 0): TabSegment[] {
+export function pageTabRow(
+  tabs: readonly PageTab[],
+  width: number,
+  unicode: boolean,
+  scroll = 0,
+  closable = false,
+): TabSegment[] {
   const texts = tabs.map((tab) => {
     const marker = tab.active ? (unicode ? '●' : '*') : unicode ? '○' : 'o';
-    const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
+    const glyph = statusGlyph(tab.status, unicode);
     // Neutral (documentation) pages carry no status: no glyph, activity in cyan.
     return tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `;
   });
@@ -298,11 +530,15 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
           ? '36'
           : '90'
       : tab.active
-        ? `${STATUS_SGR[tab.status]};1`
+        ? `${statusSgr(tab.status)};1`
         : tab.fresh
-          ? STATUS_SGR[tab.status]
+          ? statusSgr(tab.status)
           : '90';
-  const widths = texts.map(displayWidth);
+  const closeText = CLOSE_TAB_TEXT[unicode ? 'unicode' : 'ascii'];
+  const closeW = displayWidth(closeText);
+  /** Extra columns tab `i` costs for its close button — the active one only. */
+  const closeOf = (i: number): number => (closable && tabs[i]!.active ? closeW : 0);
+  const widths = texts.map((t, i) => displayWidth(t) + closeOf(i));
   const count = tabs.length;
 
   // -- window selection: everything, or as much as fits from `scroll` on --
@@ -330,8 +566,15 @@ export function pageTabRow(tabs: readonly PageTab[], width: number, unicode: boo
   if (lo > 0) push(unicode ? ' ‹ ' : ' < ', '90', { kind: 'scroll', delta: -1 });
   const tail = hi < count - 1 ? TAB_INDICATOR_W : 0;
   for (let i = lo; i <= hi; i++) {
+    const close = closeOf(i);
     // the window is chosen to fit; only a lone leading tab can still overflow
-    push(fitWidth(texts[i]!, Math.max(1, width - (col - 1) - tail)), sgrOf(tabs[i]!), { kind: 'switch', index: i });
+    push(fitWidth(texts[i]!, Math.max(1, width - (col - 1) - tail - close)), sgrOf(tabs[i]!), {
+      kind: 'switch',
+      index: i,
+    });
+    // ...and in that degenerate case the × is dropped rather than pushed past
+    // the last usable column, where it would shear the whole frame
+    if (close > 0 && col - 1 + close + tail <= width) push(closeText, CLOSE_TAB_SGR, { kind: 'delete' });
   }
   if (hi < count - 1) push(unicode ? ' › ' : ' > ', '90', { kind: 'scroll', delta: 1 });
   return segments;
@@ -349,30 +592,41 @@ export function tabScrollFor(
   unicode: boolean,
   scroll: number,
   index: number,
+  closable = false,
 ): number {
   if (index <= scroll) return Math.max(0, index);
+  // measured with the SAME closable setting the row will be painted with:
+  // the × costs columns, and a window computed without it can put the tab it
+  // was asked to reveal half off the strip
   const visibleAt = (s: number): boolean =>
-    pageTabRow(tabs, width, unicode, s).some((seg) => seg.action.kind === 'switch' && seg.action.index === index);
+    pageTabRow(tabs, width, unicode, s, closable).some(
+      (seg) => seg.action.kind === 'switch' && seg.action.index === index,
+    );
   let s = Math.max(0, Math.min(scroll, tabs.length - 1));
   while (s < index && !visibleAt(s)) s++;
   return s;
 }
 
 /**
- * Pages that deserve a tab: those NO node of any page dives into. A page
- * referenced as some node's submap is interior detail — it is reached by
- * double-clicking that node, never by sitting beside its parent as a
- * sibling. The default page is never hidden.
+ * Pages that deserve a tab: everything not INTERIOR. A page some other page
+ * dives into is interior detail — reached by double-clicking that node, never
+ * by sitting beside its parent as a sibling. The default page is never
+ * hidden.
+ *
+ * The rule needs each page's own slug, not just its map: a page that links
+ * ITSELF, or two pages that link each other, are loops with no outside, and
+ * "hide everything anyone dives into" erased their tabs — in the mutual case,
+ * the whole strip. interiorPages (../semantics) owns that judgement.
  */
 export function topLevelFiles(
   defaultFile: string,
   files: readonly string[],
   mapOf: ReadonlyMap<string, MellosMap | undefined>,
 ): string[] {
-  const refs = submapRefs(mapOf.values());
+  const interior = interiorPages(files.map((f) => [pageIdOfFile(defaultFile, f), mapOf.get(f)] as const));
   return files.filter((f) => {
     const id = pageIdOfFile(defaultFile, f);
-    return id === undefined || !refs.has(id as string);
+    return id === undefined || !interior.has(id as string);
   });
 }
 
@@ -426,7 +680,7 @@ export function nodePanel(
   pinned: boolean,
   rows: number = PANEL_CONTENT_ROWS,
 ): PanelLine[] | undefined {
-  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const g = (s: NodeStatus): string => statusGlyph(s, unicode);
   const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
   const focus = focusInfo(map, focusId);
   if (focus === undefined) return undefined;
@@ -444,7 +698,7 @@ export function nodePanel(
           `${g(status)} ${group.label} [${group.id}] · ${layerName} · ${status} · ${members.length} member(s)${pinMark}`,
           width,
         ),
-        sgr: `${STATUS_SGR[status]};1`,
+        sgr: `${statusSgr(status)};1`,
       },
       {
         text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join('  ') || '—'}`, width),
@@ -484,7 +738,7 @@ export function nodePanel(
   const lines: PanelLine[] = [
     {
       text: fitWidth(`${headParts.join(' · ')}${pin}`, width),
-      sgr: neutral ? '1' : `${STATUS_SGR[node.status]};1`,
+      sgr: neutral ? '1' : `${statusSgr(node.status)};1`,
     },
     { text: fitWidth(`evidence: ${node.evidence ?? '—'}`, width), sgr: '90' },
     { text: fitWidth(`${usesWord} ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
@@ -503,42 +757,15 @@ export function nodePanel(
 }
 
 /**
- * The standby state — open water and diagnostics.
+ * The standby state — a spinner and diagnostics, nothing else.
  *
  * Before any map exists the pane used to spell the plugin name in a block
- * font; field feedback preferred information over decoration, so the letters
- * are gone. The ripple engine (community PR#1) now paints bare water: rings
- * born at a randomized corner every WAVE_INTERVAL frames expand as damped
- * fronts, the ink of a cell is the SUM of every live ring over it — crests
- * reinforce, a crest meeting a trough cancels — and STILL water stays blank,
- * so only the moving interference pattern shows. Surface height drives one
- * continuous indigo→cyan→white ramp; without color the same field shades the
- * ink instead, so a --no-color --ascii pane still ripples. Below the water:
- * the spinner line and the waiting diagnostics (what is being watched, for
- * how long, and any file that exists but refuses to load).
- *
- * Everything here is a pure function of `frame` — no Math.random, so the
- * animation is reproducible and testable.
+ * font, and later to animate open water in its place; field feedback retired
+ * both — the decoration rendered as noise on real terminals, and the
+ * information was always the part that earned the screen. What remains is
+ * the spinner line and the waiting diagnostics: what is being watched, for
+ * how long, and any file that exists but refuses to load.
  */
-const WATER_ROWS = 7;
-const WATER_COLS_MAX = 60;
-
-/** Ink shades by |level| 0..WAVE_LEVELS for the no-color path. */
-const SPLASH_SHADES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
-  unicode: ['░', '░', '▒', '▒', '▓', '▓', '█', '█'],
-  ascii: ['.', '.', ':', ':', '=', '=', '#', '#'],
-};
-/**
- * One continuous xterm-256 ramp, deep trough to high crest, indexed by
- * WAVE_LEVELS + level. Monotonic in lightness and confined to indigo→cyan→white
- * so neighbouring cells are always neighbouring colors: the ripple reads as a
- * gradient over the letters instead of confetti. Still water sits mid-ramp.
- */
-const WAVE_RAMP: readonly number[] = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
-const SPINNER_FRAMES: Readonly<Record<'unicode' | 'ascii', readonly string[]>> = {
-  unicode: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  ascii: ['|', '/', '-', '\\'],
-};
 
 /** m:ss below an hour, h:mm:ss beyond — how long the pane has been waiting. */
 export function elapsedLabel(ms: number): string {
@@ -582,99 +809,10 @@ export function waitingInfo(s: WaitingStatus, width: number): string[] {
 }
 
 /**
- * frames between births · frames a ring survives · art columns per frame.
- * Tuned so three or four rings share the water: enough for collisions to
- * happen often, few enough that the picture still reads as waves.
- */
-const WAVE_INTERVAL = 18;
-const WAVE_LIFETIME = 64;
-const WAVE_SPEED = 0.9;
-/** Ring half-width in cells, and the angular wavenumber of its lobes. */
-const WAVE_ENVELOPE = 10;
-export const WAVE_NUMBER = 0.42;
-/**
- * Levels either side of still water, and the surface-height-to-level gain.
- * The gain is deliberately short of the top: one ring alone peaks around
- * level 5, so the last two rungs of the ramp — the near-white glare — can
- * only be reached where rings actually pile onto each other.
- */
-export const WAVE_LEVELS = 7;
-const WAVE_GAIN = 4.5;
-
-/**
- * Deterministic scramble standing in for a die roll — wave `n` always picks
- * the same corner and the same birth jitter, on every machine and every run.
- */
-export function waveHash(n: number): number {
-  let h = Math.imul(n + 1, 2654435761) >>> 0;
-  h ^= h >>> 15;
-  h = Math.imul(h, 2246822519) >>> 0;
-  h ^= h >>> 13;
-  return h >>> 0;
-}
-
-/** Corner origins as (x, y) fractions of the art block: TL, TR, BL, BR. */
-const WAVE_CORNERS: readonly (readonly [number, number])[] = [
-  [0, 0],
-  [1, 0],
-  [0, 1],
-  [1, 1],
-];
-
-export interface Ripple {
-  readonly ox: number;
-  readonly oy: number;
-  /** current radius of the ring front */
-  readonly r: number;
-  /** 1 at birth, 0 at the end of life */
-  readonly fade: number;
-}
-
-/** Every ring alive at `frame`, oldest first. */
-export function liveRipples(frame: number, width: number, height: number): Ripple[] {
-  const out: Ripple[] = [];
-  // a birth jitters up to WAVE_INTERVAL-1 frames late, so scan one slot wider
-  const first = Math.floor((frame - WAVE_LIFETIME - WAVE_INTERVAL) / WAVE_INTERVAL);
-  const last = Math.floor(frame / WAVE_INTERVAL);
-  for (let n = Math.max(0, first); n <= last; n++) {
-    const h = waveHash(n);
-    const age = frame - (n * WAVE_INTERVAL + (h % WAVE_INTERVAL));
-    if (age < 0 || age > WAVE_LIFETIME) continue;
-    const [fx, fy] = WAVE_CORNERS[h % WAVE_CORNERS.length]!;
-    out.push({
-      ox: fx * (width - 1),
-      oy: fy * (height - 1),
-      r: age * WAVE_SPEED,
-      fade: 1 - age / WAVE_LIFETIME,
-    });
-  }
-  return out;
-}
-
-/**
- * Superpose the rings over one cell into a signed surface height: + crest,
- * - trough, ~0 still water or two rings cancelling. Rows are half the height
- * of columns in a terminal cell, so y is doubled to keep the rings round.
- */
-export function waveAt(ripples: readonly Ripple[], x: number, y: number): number {
-  let value = 0;
-  for (const w of ripples) {
-    const front = Math.hypot(x - w.ox, (y - w.oy) * 2) - w.r;
-    value += Math.cos(front * WAVE_NUMBER) * Math.exp(-(front * front) / (2 * WAVE_ENVELOPE ** 2)) * w.fade;
-  }
-  return value;
-}
-
-/** Quantize surface height to a ramp index in [-WAVE_LEVELS, WAVE_LEVELS]. */
-export function waveLevel(value: number): number {
-  return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
-}
-
-/**
- * The full standby frame — water, spinner line, diagnostics — centered in a
- * `width` x `height` viewport, ANSI already applied. Returns undefined when
- * the pane is too small for it all; the caller then falls back to plain
- * text lines.
+ * The full standby frame — the spinner line and the diagnostics, centered in
+ * a `width` x `height` viewport, ANSI already applied. Returns undefined
+ * when the pane is too small for it all; the caller then falls back to
+ * plain text lines.
  */
 export function splashFrame(
   notice: string,
@@ -685,46 +823,15 @@ export function splashFrame(
   unicode: boolean,
   color: boolean,
 ): string[] | undefined {
-  const fieldW = Math.min(width - 4, WATER_COLS_MAX);
-  if (fieldW < 24 || height < WATER_ROWS + info.length + 3) return undefined;
-
-  const mode = unicode ? 'unicode' : 'ascii';
-  const shades = SPLASH_SHADES[mode];
-  const indent = ' '.repeat(Math.max(0, Math.floor((width - fieldW) / 2)));
-  const ripples = liveRipples(frame, fieldW, WATER_ROWS);
-
-  // Open water: still cells stay blank; only where rings pass does ink appear,
-  // shade by |level| so the crest-trough texture survives even in color mode.
-  const paintRow = (y: number): string => {
-    const levels = Array.from({ length: fieldW }, (_, x) => waveLevel(waveAt(ripples, x, y)));
-    let out = '';
-    for (let i = 0; i < fieldW; ) {
-      const level = levels[i]!;
-      let j = i;
-      while (j < fieldW && levels[j] === level) j++;
-      if (level === 0) out += ' '.repeat(j - i);
-      else {
-        const ink = shades[Math.abs(level)]!.repeat(j - i);
-        out += color ? `\x1b[38;5;${WAVE_RAMP[WAVE_LEVELS + level]!}m${ink}${RESET}` : ink;
-      }
-      i = j;
-    }
-    return out;
-  };
+  if (width < 24 || height < info.length + 3) return undefined;
 
   const dim = (s: string): string => (color ? `\x1b[90m${s}${RESET}` : s);
-  const spinner = SPINNER_FRAMES[mode];
+  const spinner = SPINNER_FRAMES[unicode ? 'unicode' : 'ascii'];
   const status = fitWidth(`${spinner[frame % spinner.length]!} ${notice}`, Math.max(1, width - 2));
   const statusIndent = ' '.repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
   const infoWidth = Math.max(0, ...info.map((l) => displayWidth(l)));
   const infoIndent = ' '.repeat(Math.max(0, Math.floor((width - infoWidth) / 2)));
-  const block = [
-    ...Array.from({ length: WATER_ROWS }, (_, y) => indent + paintRow(y)),
-    '',
-    statusIndent + dim(status),
-    '',
-    ...info.map((l) => infoIndent + dim(l)),
-  ];
+  const block = [statusIndent + dim(status), '', ...info.map((l) => infoIndent + dim(l))];
   return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ''), ...block];
 }
 
@@ -735,7 +842,7 @@ export function mapPanel(
   width: number,
   rows: number = PANEL_CONTENT_ROWS,
 ): PanelLine[] {
-  const g = (s: NodeStatus): string => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const g = (s: NodeStatus): string => statusGlyph(s, unicode);
   const count = (s: NodeStatus): number => map.nodes.filter((n) => n.status === s).length;
   const statuses: NodeStatus[] = ['done', 'in-progress', 'planned', 'regressed'];
   const counts = statuses
@@ -756,10 +863,65 @@ export function mapPanel(
   return lines.slice(0, rows);
 }
 
+/**
+ * VIOLATION: single-responsibility, state-control - main() is one ~600-line
+ * closure holding the pane's whole VIEW state (pan, zoom, pin, hover, drag
+ * anchors, panel height, flash, tab scroll, last click) as mutable locals,
+ * with paint() reading all of them and writing to stdout.
+ *
+ * Half of what used to live here is already out: WHICH page is shown and what
+ * is known about the others is a fold over a value (./pane-state.ts), input
+ * is a pure parse (./input.ts), and the picture is pure (../render/). What is
+ * left is genuinely the shell — stdin, stdout, timers, the filesystem — plus
+ * the view, and the view is the half that has not moved yet.
+ *
+ * Why it stays for now: every remaining local is read by paint(), so
+ * extracting them means designing the view VALUE (one per page, parked on
+ * switch, clamped on resize) and a reducer over the same InputEvent stream
+ * pane-state already folds — a change the size of the page-set extraction,
+ * with every interaction of the pane as its blast radius. Landing both in one
+ * pass would have left neither reviewable.
+ *
+ * Follow-up: a PaneView value + reducer beside PaneState, leaving main() with
+ * the I/O and the two folds. Until then this function is specified from the
+ * outside: every pure helper it calls has its own spec, and watch.test.ts
+ * covers the panel, the tab strip, the divider and the standby screen.
+ */
+/**
+ * What this pane would tell the store about itself right now.
+ *
+ * Before the first scan there is no active page yet; the report then names the
+ * page the pane was ASKED for (`--page`, or a focus request it has not been
+ * able to apply), because that is the page it will show the moment the file
+ * appears. Naming the default page instead would be a small lie told from a
+ * standby screen — and a lie a reader would act on, since "the pane is on the
+ * page I am writing" is exactly what it wants to know.
+ *
+ * @param defaultFile - the store's base path; the page id is relative to it.
+ */
+export function viewerReportOf(pane: PaneState, defaultFile: string): ViewerReport {
+  const shown = pane.activeFile ?? pane.pendingFocusFile ?? defaultFile;
+  return { page: pageIdOfFile(defaultFile, shown), follow: pane.follow };
+}
+
 function main(): void {
-  const cfg = parseArgs(process.argv.slice(2), process.cwd());
-  // One-time move of a pre-0.19 `.claude` store into `.mellos` (store.ts).
-  migrateLegacyStore(cfg.file);
+  const parsed = parseArgs(process.argv.slice(2), process.cwd());
+  if (!parsed.ok) {
+    console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}\n${USAGE}`);
+    process.exit(1);
+  }
+  const cfg = parsed.value;
+  // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
+  // Announce it on stderr before the alternate screen opens, so the move is
+  // not something the user only discovers from `git status`.
+  if (migrateLegacyStore(cfg.file)) console.error('mellos-mapping: moved the legacy .claude map store to .mellos/ — commit the move.');
+  // A quit request written before this pane existed was addressed to a pane
+  // that is gone — a toggle whose watcher crashed, a window closed from its
+  // titlebar. Consuming it on the first tick would close the pane the user
+  // just asked for, so it is swept here instead. The LAUNCHER deliberately
+  // does not sweep: it cannot know when the watcher it spawns will boot, and
+  // the only moment a leftover is provably not for this pane is this one.
+  sweepQuitRequest(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
 
@@ -773,29 +935,20 @@ function main(): void {
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
 
-  // pages — one map file each; the active page owns the mutable view below
-  interface PageEntry {
-    map: MellosMap | undefined;
-    mtimeMs: number;
-    fresh: boolean;
-    /** Store error of a file that exists but does not load — never hide it. */
-    error?: string;
-  }
+  // Pages — one map file each. Which page is shown and what is known about
+  // the others is a value the reducer folds (./pane-state.js); this shell
+  // owns only the I/O around it and the VIEW of the page on screen.
   interface PageView {
     offsetX: number;
     offsetY: number;
     zoom: ZoomStep;
     selectedId: string | undefined;
   }
-  let pageFiles: string[] = [cfg.file];
-  const pageData = new Map<string, PageEntry>();
+  let pane: PaneState = initialPaneState(
+    cfg.follow,
+    cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page),
+  );
   const pageViews = new Map<string, PageView>();
-  let activeFile: string | undefined;
-  let firstScan = true;
-  /** A requested page whose file may not exist yet — shown the moment it appears. */
-  let pendingFocusFile: string | undefined = cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page);
-  /** Auto-follow: the pane switches to the page last written. 'f' toggles. */
-  let follow = cfg.follow;
   let lastTabSegments: readonly TabSegment[] = [];
   /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
   let tabScroll = 0;
@@ -815,85 +968,113 @@ function main(): void {
   let dividerDrag = false;
   // sub-map navigation: double-click dives, Backspace climbs back out
   let lastClick: { id: string; at: number } | undefined;
-  const diveStack: string[] = [];
-  let flash: { text: string; until: number } | undefined;
+  /**
+   * The footer message. `confirm` marks the one kind that is a QUESTION
+   * standing on live state — an armed page deletion: when the state goes,
+   * the question goes with it, however much of its window was left.
+   */
+  let flash: { text: string; until: number; confirm?: boolean } | undefined;
   /** Tab-bar files as painted (top-level pages only), for click hit-testing. */
   let lastTabFiles: string[] = [];
 
-  const maps = (): ReadonlyMap<string, MellosMap | undefined> =>
-    new Map([...pageData].map(([f, e]) => [f, e.map]));
-  const topFiles = (): string[] => topLevelFiles(cfg.file, pageFiles, maps());
+  const topFiles = (): string[] => topLevelFiles(cfg.file, filesOf(pane), mapsOf(pane));
   /** Inside a sub-map the tab row becomes the breadcrumb instead. */
-  const inSubmap = (): boolean => activeFile !== undefined && !topFiles().includes(activeFile);
+  const inSubmap = (): boolean => pane.activeFile !== undefined && !topFiles().includes(pane.activeFile);
   const tabRows = (): number => (topFiles().length > 1 || inSubmap() ? 1 : 0);
   /** Climb out of the last dive; with no stack, derive the parent by scan. */
   const climbBack = (): boolean => {
-    let parent = diveStack.pop();
-    while (parent !== undefined && !pageFiles.includes(parent)) parent = diveStack.pop();
-    if (parent === undefined && activeFile !== undefined) {
-      parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
-    }
-    if (parent !== undefined && parent !== activeFile) {
+    const climbed = popDive(pane);
+    pane = climbed.state;
+    const parent =
+      climbed.parent ??
+      (pane.activeFile !== undefined
+        ? diveOrigin(cfg.file, pane.activeFile, filesOf(pane), mapsOf(pane))?.parent
+        : undefined);
+    if (parent !== undefined && parent !== pane.activeFile) {
       handSwitch(parent);
       return true;
     }
     return false;
   };
-  const viewWidth = (): number => usableColumns(process.stdout.columns ?? 100);
+  const viewWidth = (): number => usableColumns(process.stdout.columns ?? FALLBACK_COLUMNS);
   const viewHeight = (): number =>
-    Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
+    Math.max(1, (process.stdout.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
   /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
   const dividerY = (): number => tabRows() + viewHeight() + 1;
 
   /** The tab strip's view models for `files`, in tab order. */
   const pageTabsOf = (files: readonly string[]): PageTab[] =>
     files.map((f) => {
-      const m = pageData.get(f)?.map;
+      const entry = entryOf(pane, f);
+      const m = mapOf(entry);
       return {
-        title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? 'main'),
+        title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL),
         status: m !== undefined ? mapStatus(m) : 'planned',
-        active: f === activeFile,
-        fresh: pageData.get(f)?.fresh ?? false,
+        active: f === pane.activeFile,
+        fresh: entry?.fresh ?? false,
         neutral: m !== undefined && isNeutralKind(m),
       };
     });
 
-  /** Park the current view, activate `file`, restore its view (or defaults). */
-  const switchPage = (file: string): void => {
-    if (activeFile !== undefined) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
-    activeFile = file;
+  /**
+   * What the pane says when it cannot show a map: a fault outranks
+   * everything, a missing DEFAULT file is the virgin-project standby (the
+   * diagnostics block already names the watched paths), and a missing PAGE
+   * file is transient until the next scan. A fault with a last good map
+   * behind it is worth saying too — unless it is a torn read, which the next
+   * tick will most likely undo.
+   */
+  const noticeFor = (file: string | undefined): string => {
+    const entry = entryOf(pane, file);
+    if (entry === undefined || entry.state.kind === 'absent') {
+      return file === undefined || file === cfg.file ? standbyNotice : `waiting for ${file} ...`;
+    }
+    if (entry.state.kind === 'loaded') return '';
+    return entry.state.transient && entry.state.lastGood !== undefined ? '' : describePageFault(entry.state.fault);
+  };
+
+  /** Adopt what the pane state now says: the active page's map and message. */
+  const adoptPage = (): void => {
+    map = mapOf(entryOf(pane, pane.activeFile));
+    notice = noticeFor(pane.activeFile);
+  };
+
+  /**
+   * Follow a page change: park the view of the page being left, restore the
+   * one being entered (or defaults), and keep the active tab on screen.
+   */
+  const adoptView = (previous: string | undefined): void => {
+    const file = pane.activeFile;
+    if (file === undefined || file === previous) return;
+    if (previous !== undefined) pageViews.set(previous, { offsetX, offsetY, zoom, selectedId });
     const view = pageViews.get(file);
     offsetX = view?.offsetX ?? 0;
     offsetY = view?.offsetY ?? 0;
     zoom = view?.zoom ?? ZOOM_DEFAULT;
     selectedId = view?.selectedId;
     hoverId = undefined;
-    const entry = pageData.get(file);
-    if (entry !== undefined && entry.fresh) pageData.set(file, { ...entry, fresh: false });
-    map = entry?.map;
-    // no map: a recorded store error outranks everything; a missing DEFAULT
-    // file is the virgin-project standby (the diagnostics block already names
-    // the watched paths); a missing PAGE file is transient until the next scan.
-    notice =
-      map !== undefined ? '' : (entry?.error ?? (file === cfg.file ? standbyNotice : `waiting for ${file} ...`));
     // the strip follows the switch — the active tab must never sit off-screen
     const top = topFiles();
     const tabIndex = top.indexOf(file);
-    if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
+    if (tabIndex >= 0) {
+      tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex, mouseActive);
+    }
   };
 
   /**
-   * A page switch the USER made — it withdraws any pending focus request and
-   * turns auto-follow off: a pane that yanks the view back while its user is
-   * deliberately looking elsewhere would make follow its own enemy.
+   * A page switch the USER made — the reducer withdraws any pending focus
+   * request and turns auto-follow off: a pane that yanks the view back while
+   * its user is deliberately looking elsewhere would make follow its enemy.
    */
   const handSwitch = (file: string): void => {
-    pendingFocusFile = undefined;
-    if (follow) {
-      follow = false;
-      flash = { text: 'auto-follow off — press f to re-enable', until: Date.now() + 3000 };
+    const previous = pane.activeFile;
+    const switched = userSwitch(pane, file);
+    pane = switched.state;
+    if (switched.followTurnedOff) {
+      flash = { text: 'auto-follow off — press f to re-enable', until: Date.now() + FLASH_NOTICE_MS };
     }
-    switchPage(file);
+    adoptView(previous);
+    adoptPage();
   };
 
   /** Terminal cell (1-based) -> node under it, honoring tab row and pan. */
@@ -907,19 +1088,52 @@ function main(): void {
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
 
-  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ''));
-  const restore = (): void => {
-    process.stdout.write((mouseActive ? MOUSE_OFF : '') + SHOW_CURSOR + '\n');
-    process.exit(0);
+  /**
+   * Tell the store that this pane exists, and what it has on screen.
+   *
+   * The one thing a map file cannot say is whether anybody is LOOKING at it.
+   * Without this report an assistant declared a design, lit nodes up as the
+   * work went, and never learned that it was writing into a store nobody had
+   * open — so it never offered to open one either. This is the answer the MCP
+   * server reads back on every write, and the same answer the launcher and
+   * the `mmap` toggle now use instead of asking the operating system which
+   * processes happen to exist.
+   *
+   * The write's Result is deliberately dropped. The next heartbeat is the
+   * whole recovery — and a store this pane cannot write to is one whose map
+   * saves are failing too, which the MCP server already reports at the
+   * surface the user actually reads.
+   */
+  const publishPresence = (): void => {
+    publishViewer(cfg.file, process.pid, viewerReportOf(pane, cfg.file));
   };
-  process.on('SIGINT', restore);
-  process.on('SIGTERM', restore);
+
+  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ''));
+  // ONE cleanup, on the one event every exit path passes through: signals,
+  // the q key, a timer callback that threw, a bug nobody predicted. Handlers
+  // that each restored the terminal themselves covered only the exits their
+  // author thought of, and the pane has more of them than that.
+  process.on('exit', () => {
+    process.stdout.write(terminalRestoreSequence(mouseActive));
+    // The pane takes its report back on the way out, so a reader learns
+    // NOW that nobody is watching instead of waiting out VIEWER_STALE_MS.
+    retireViewer(cfg.file, process.pid);
+  });
+  const quit = (): void => process.exit(0);
+  process.on('SIGINT', quit);
+  process.on('SIGTERM', quit);
+  process.on('uncaughtException', (e: unknown) => {
+    // Nothing here is recoverable — but the terminal is the user's, not ours,
+    // so it goes back before the report does. exit() runs the hook above.
+    process.stderr.write(`\nthe map pane stopped: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}\n`);
+    process.exit(1);
+  });
 
   const paint = (): void => {
-    const cols = process.stdout.columns ?? 100;
+    const cols = process.stdout.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
     // a shrunken terminal may no longer afford the dragged panel height
-    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
+    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
 
@@ -927,25 +1141,33 @@ function main(): void {
     let panned = '';
     let pannable = false;
     if (map !== undefined) {
-      const windowed = renderMapWindow(
+      const rendered = renderWindow(
         map,
         { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
         { x: offsetX, y: offsetY, width: viewW, height: viewH },
       );
-      // clamp AFTER measuring so a shrinking map pulls the view back in
-      const maxX = Math.max(0, windowed.contentWidth - viewW);
-      const maxY = Math.max(0, windowed.contentHeight - viewH);
-      if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
-        offsetX = Math.min(Math.max(0, offsetX), maxX);
-        offsetY = Math.min(Math.max(0, offsetY), maxY);
-        paint();
-        return;
+      if (!rendered.ok) {
+        // A picture this pane cannot draw is a visible line, never a dead
+        // pane: the tabs, the panel and the keys all keep working.
+        body = ['', fitWidth(`  ! ${rendered.error}`, viewW), ''];
+        lastHits = [];
+      } else {
+        const windowed = rendered.value;
+        // clamp AFTER measuring so a shrinking map pulls the view back in
+        const maxX = Math.max(0, windowed.contentWidth - viewW);
+        const maxY = Math.max(0, windowed.contentHeight - viewH);
+        if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
+          offsetX = Math.min(Math.max(0, offsetX), maxX);
+          offsetY = Math.min(Math.max(0, offsetY), maxY);
+          paint();
+          return;
+        }
+        pannable = maxX > 0 || maxY > 0;
+        body = windowed.lines;
+        lastHits = windowed.hits;
+        lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
+        if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
       }
-      pannable = maxX > 0 || maxY > 0;
-      body = windowed.lines;
-      lastHits = windowed.hits;
-      lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
-      if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
       // No map yet: waiting diagnostics, with the water animation only on a
       // real TTY — a piped run must not stream an animation.
@@ -955,7 +1177,9 @@ function main(): void {
           pagesDir: join(dirname(cfg.file), PAGES_DIR_NAME),
           intervalMs: cfg.intervalMs,
           elapsedMs: interactive ? Date.now() - startedAt : undefined,
-          broken: [...pageData.values()].flatMap((e) => (e.map === undefined && e.error !== undefined ? [e.error] : [])),
+          broken: pane.pages.flatMap((p) =>
+            p.state.kind === 'faulted' && p.state.lastGood === undefined ? [describePageFault(p.state.fault)] : [],
+          ),
         },
         Math.max(1, viewW - 2),
       );
@@ -980,7 +1204,7 @@ function main(): void {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
     // the separator doubles as the drag handle and carries the follow tag
-    const separator = dividerRow(viewW, cfg.unicode, follow);
+    const separator = dividerRow(viewW, cfg.unicode, pane.follow);
     const panelRows = [
       cfg.color ? `\x1b[90m${separator}${RESET}` : separator,
       ...panel.map((l) =>
@@ -991,19 +1215,19 @@ function main(): void {
     // -- top row: tab bar over top-level pages, or the breadcrumb of a dive --
     let tabLine: string | undefined;
     lastTabFiles = topFiles();
-    if (inSubmap() && activeFile !== undefined) {
+    if (inSubmap() && pane.activeFile !== undefined) {
       // ⌫ parent title ▸ node label — the whole row is one "back" target.
       // The stack knows where we dived from; the scan supplies the linking
       // node's label and survives a restart with an empty stack.
-      const stackParent = [...diveStack].reverse().find((f) => pageFiles.includes(f));
-      const scanned = diveOrigin(cfg.file, activeFile, pageFiles, maps());
-      const parentFile = stackParent ?? scanned?.parent;
+      const stackParent = pane.diveStack[pane.diveStack.length - 1];
+      const origin = diveOrigin(cfg.file, pane.activeFile, filesOf(pane), mapsOf(pane));
+      const parentFile = stackParent ?? origin?.parent;
       const parentTitle =
         parentFile !== undefined
-          ? (pageData.get(parentFile)?.map?.title ??
-            ((pageIdOfFile(cfg.file, parentFile) as string | undefined) ?? 'main'))
-          : 'main';
-      const nodeLabel = scanned?.label ?? map?.title ?? '';
+          ? (mapOf(entryOf(pane, parentFile))?.title ??
+            ((pageIdOfFile(cfg.file, parentFile) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL))
+          : DEFAULT_PAGE_TAB_LABEL;
+      const nodeLabel = origin?.label ?? map?.title ?? '';
       const crumbHead = ` ${cfg.unicode ? '⌫' : '<'} ${parentTitle} ${cfg.unicode ? '▸' : '>'} `;
       const head: TabSegment = { text: crumbHead, sgr: '90', lo: 1, hi: displayWidth(crumbHead), action: { kind: 'back' } };
       const tailText = fitWidth(`${nodeLabel} `, Math.max(1, viewW - displayWidth(crumbHead)));
@@ -1019,7 +1243,8 @@ function main(): void {
         .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
         .join('');
     } else if (tabRows() > 0) {
-      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll);
+      // the × is clickable, so it is drawn only where clicks are reported
+      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll, mouseActive);
       lastTabSegments = segments;
       tabLine = segments
         .map((s) => (cfg.color && s.sgr !== '' ? `\x1b[${s.sgr}m${s.text}${RESET}` : s.text))
@@ -1034,7 +1259,7 @@ function main(): void {
       : (flash !== undefined ? `${flash.text} · ` : '') +
         `${zoomTag} · wheel zoom · ` +
         (pannable ? 'drag pan · ' : '') +
-        'hover/click · 0 reset · q quit';
+        'hover/click · 0 reset · x delete page · q quit';
     // A footer wider than the pane would wrap and shear the whole frame.
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;
@@ -1066,95 +1291,105 @@ function main(): void {
   };
 
   const tick = (): void => {
+    // The `mmap` toggle's OFF half. First thing in the tick, and outside the
+    // map/standby split below: a pane about to close needs to measure, read
+    // and paint nothing, and a pane still waiting for its first declare has
+    // to answer the toggle exactly like one showing a map. quit() is the same
+    // clean shutdown the `q` key runs — the exit hook hands the terminal back.
+    if (takeQuitRequest(cfg.file)) quit();
+
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
 
     // discover pages; a project without page files still watches the default
     const discovered = listPageFiles(cfg.file);
-    pageFiles = discovered.length > 0 ? discovered : [cfg.file];
-    for (const known of [...pageData.keys()]) {
-      if (!pageFiles.includes(known)) {
-        pageData.delete(known);
-        pageViews.delete(known);
-      }
-    }
-
-    const changedFiles: string[] = []; // pages successfully (re)loaded this tick, startup scan excluded
-    for (const file of pageFiles) {
-      let mtimeMs: number | undefined;
-      try {
-        mtimeMs = statSync(file).mtimeMs;
-      } catch {
-        continue; // file absent — keep waiting
-      }
-      const entry = pageData.get(file);
-      if (mtimeMs === entry?.mtimeMs) continue;
-      const loaded = loadMapFile(file);
-      if (loaded.ok) {
-        if (!firstScan) changedFiles.push(file);
-        // background pages light their tab up; the startup scan is not news
-        const becameFresh = !firstScan && file !== activeFile;
-        pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
-        if (file === activeFile) {
-          map = loaded.value;
-          notice = '';
-        } else if (becameFresh && !topFiles().includes(file)) {
-          // a hidden sub-map changed — it has no tab to light, so surface it here
-          const title = loaded.value.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? '?');
-          flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + 4000 };
-        }
-      } else if (loaded.error.kind === 'malformed-json') {
-        // Plausible torn read from a foreign writer — keep retrying (mtime is
-        // NOT recorded, so every tick reloads), but say what was seen: a file
-        // that stays junk must not hide behind "waiting" forever.
-        pageData.set(file, {
-          map: entry?.map,
-          mtimeMs: entry?.mtimeMs ?? -1,
-          fresh: entry?.fresh ?? false,
-          error: describeStoreError(loaded.error),
-        });
-        if (file === activeFile && entry?.map === undefined) notice = describeStoreError(loaded.error);
-      } else {
-        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describeStoreError(loaded.error) });
-        if (file === activeFile) notice = describeStoreError(loaded.error);
-      }
-    }
-    // An explicit focus request (--page, or the one-shot focus file) outranks
-    // every default. On the spawn tick the --page argument is the newest
-    // intent — a leftover focus file from a dead watcher merely gets swept;
-    // afterwards the file channel is how a running pane is retargeted.
+    const files = discovered.length > 0 ? discovered : [cfg.file];
     const request = takeFocusRequest(cfg.file);
-    if (request !== undefined && !(firstScan && pendingFocusFile !== undefined)) {
-      pendingFocusFile = pageFilePath(cfg.file, request.page);
+    const previous = pane.activeFile;
+    const scanned = scan(pane, {
+      files,
+      mtimeAt: (file) => {
+        try {
+          return statSync(file).mtimeMs;
+        } catch {
+          return undefined; // file absent — keep waiting
+        }
+      },
+      load: readPage,
+      focusRequest: request === undefined ? undefined : pageFilePath(cfg.file, request.page),
+      // a drag in progress holds auto-follow off: the user is engaged with
+      // THIS page, and a missed switch is re-triggered by the next save
+      engaged: dragAnchor !== undefined,
+    });
+    pane = scanned.state;
+    for (const known of [...pageViews.keys()]) {
+      if (!files.includes(known)) pageViews.delete(known); // the page is gone; so is its view
     }
-    let requestApplied = false;
-    if (pendingFocusFile !== undefined && pageFiles.includes(pendingFocusFile)) {
-      if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
-      pendingFocusFile = undefined;
-      requestApplied = true;
-    }
+    adoptView(previous);
+    adoptPage();
+    // the scan may have withdrawn an armed deletion (the view moved, the page
+    // vanished); its question must not stay on screen without it
+    if (flash?.confirm === true && pane.pendingDelete === undefined) flash = undefined;
 
-    // Auto-follow: the pane switches to the page last WRITTEN — the map being
-    // operated on right now. An explicit focus request outranks it this tick;
-    // a drag in progress skips it (the user is engaged with THIS page, and a
-    // missed switch is re-triggered by the writer's next save anyway).
-    if (follow && !requestApplied && changedFiles.length > 0 && dragAnchor === undefined) {
-      const target = mostRecentPageFile(changedFiles, (f) => pageData.get(f)?.mtimeMs)!;
-      if (target !== activeFile) switchPage(target);
-    }
-    firstScan = false;
-
-    // nobody asked for a page: the most recently written one is the effort
-    // under way — never just "first in the list"
-    if (activeFile === undefined || !pageFiles.includes(activeFile)) {
-      switchPage(mostRecentPageFile(pageFiles, (f) => pageData.get(f)?.mtimeMs)!);
+    // a hidden sub-map changed — it has no tab to light, so surface it here
+    const top = topFiles();
+    for (const file of scanned.freshened) {
+      if (top.includes(file)) continue;
+      const title = mapOf(entryOf(pane, file))?.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? '?');
+      flash = { text: `${cfg.unicode ? '⊞ ' : ''}${title} updated`, until: Date.now() + FLASH_BACKGROUND_NEWS_MS };
     }
 
     // any page spinning keeps the animation alive
-    if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
+    if (pane.pages.some((p) => mapOf(p)?.nodes.some((n) => n.status === 'in-progress'))) spinnerFrame++;
     if (flash !== undefined && Date.now() > flash.until) flash = undefined; // footer message expires
     paint();
+  };
+
+  /** What a page is called in a message: its slug, or the default page's word. */
+  const pageName = (file: string): string =>
+    (pageIdOfFile(cfg.file, file) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL;
+
+  /**
+   * One delete press — the `x` key, or a click on the active tab's ×.
+   *
+   * The first press only ASKS: the footer carries the question for exactly as
+   * long as the request stands (CONFIRM_WINDOW_MS). A second press inside
+   * that window deletes the page's file, and the immediate re-scan hands the
+   * view to another page through the same fallback any vanished page uses. A
+   * store refusal is a footer line and nothing more — the pane never dies of
+   * one, and the request is already disarmed either way, so a failed delete
+   * cannot be completed by an unrelated later keystroke.
+   */
+  const askDelete = (): void => {
+    const now = Date.now();
+    const asked = requestDelete(pane, now, CONFIRM_WINDOW_MS);
+    pane = asked.state;
+    if (asked.request.kind === 'none') return;
+    if (asked.request.kind === 'absent') {
+      // the standby fallback page, or a --page still waiting for its first
+      // declare: nothing exists to delete, and the footer says so instead of
+      // running a confirmation that could only pretend
+      flash = {
+        text: `nothing to delete — ${pageName(asked.request.file)} has no file`,
+        until: now + FLASH_NOTICE_MS,
+      };
+      return;
+    }
+    if (asked.request.kind === 'armed') {
+      flash = {
+        text: `press x again to delete ${pageName(asked.request.file)} — its file is removed`,
+        until: asked.request.until,
+        confirm: true,
+      };
+      return;
+    }
+    const file = asked.request.file;
+    const removed = deletePageFile(file);
+    flash = removed.ok
+      ? { text: `deleted ${pageName(file)}`, until: now + FLASH_ACK_MS }
+      : { text: describeStoreError(removed.error), until: now + FLASH_NOTICE_MS };
+    tick(); // the store changed by our own hand: show it now, not next poll
   };
 
   if (interactive) {
@@ -1168,7 +1403,7 @@ function main(): void {
       for (const event of parsed.events) {
         switch (event.kind) {
           case 'quit':
-            restore();
+            quit();
             return;
           case 'reset':
             offsetX = 0;
@@ -1177,8 +1412,12 @@ function main(): void {
             dirty = true;
             break;
           case 'clear':
-            // Esc peels one layer: a pinned node first, then the dive itself
-            if (selectedId !== undefined) selectedId = undefined;
+            // Esc peels one layer, newest first: an armed deletion, then a
+            // pinned node, then the dive itself
+            if (pane.pendingDelete !== undefined) {
+              pane = disarmDelete(pane);
+              flash = undefined;
+            } else if (selectedId !== undefined) selectedId = undefined;
             else climbBack();
             dirty = true;
             break;
@@ -1201,11 +1440,16 @@ function main(): void {
               hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
             zoom = next;
-            const sized = renderMapWindow(
+            const measured = renderWindow(
               map,
               { color: false, unicode: cfg.unicode, spinnerFrame: 0, zoom },
               { x: 0, y: 0, width: 0, height: 0 },
             );
+            if (!measured.ok) {
+              dirty = true; // the new zoom stands; paint() reports why it is blank
+              break;
+            }
+            const sized = measured.value;
             const after = before === undefined ? undefined : sized.hits.find((h) => h.id === before.id);
             const moved = anchorOffsets(
               before !== undefined && after !== undefined ? { before, after } : undefined,
@@ -1236,7 +1480,7 @@ function main(): void {
             break;
           case 'mouse-drag':
             if (dividerDrag) {
-              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? 30, tabRows());
+              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
                 dirty = true;
@@ -1271,9 +1515,11 @@ function main(): void {
                   climbBack();
                 } else if (tabHit.action.kind === 'scroll') {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
+                } else if (tabHit.action.kind === 'delete') {
+                  askDelete(); // the × sits on the active tab alone: same ask as the x key
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
-                  if (target !== undefined && target !== activeFile) handSwitch(target);
+                  if (target !== undefined && target !== pane.activeFile) handSwitch(target);
                 }
               } else {
                 // a press that never dragged is a click: pin, or unpin on empty.
@@ -1281,15 +1527,25 @@ function main(): void {
                 // double-click — dive into its sub-map when it links one.
                 const id = hitTest(event.x, event.y);
                 const now = Date.now();
-                if (id !== undefined && lastClick?.id === id && now - lastClick.at <= 450) {
+                if (id !== undefined && lastClick?.id === id && now - lastClick.at <= DOUBLE_CLICK_MS) {
                   const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
-                  if (submap !== undefined && activeFile !== undefined) {
+                  if (submap !== undefined && pane.activeFile !== undefined) {
+                    // VIOLATION: no-primitive-obsession - SubmapRef and PageId
+                    // are two brands over ONE grammar (ID_RULE), and this is
+                    // the seam where a map's reference becomes a store
+                    // identity. Neither layer may own the other's brand —
+                    // Layer 0 would then name a persistence concept, and the
+                    // store would name a map field — so the crossing is a
+                    // cast wherever it happens; here it is one line, checked
+                    // against the real page set on the very next statement (a
+                    // slug naming no file only flashes a notice).
                     const target = pageFilePath(cfg.file, submap as unknown as PageId);
-                    if (pageFiles.includes(target) && target !== activeFile) {
-                      diveStack.push(activeFile);
+                    const files = filesOf(pane);
+                    if (files.includes(target) && target !== pane.activeFile) {
+                      pane = pushDive(pane, pane.activeFile);
                       handSwitch(target);
-                    } else if (!pageFiles.includes(target)) {
-                      flash = { text: `submap "${submap as string}" has no page yet`, until: now + 2500 };
+                    } else if (!files.includes(target)) {
+                      flash = { text: `submap "${submap as string}" has no page yet`, until: now + FLASH_ACK_MS };
                     }
                   }
                   lastClick = undefined;
@@ -1307,11 +1563,11 @@ function main(): void {
           case 'prev-page': {
             // pages cycle over the TOP-LEVEL tabs; sub-maps are reached by diving
             const top = topFiles();
-            if (top.length > 0 && activeFile !== undefined) {
-              const current = top.indexOf(activeFile); // -1 inside a sub-map — steps to an end tab
+            if (top.length > 0 && pane.activeFile !== undefined) {
+              const current = top.indexOf(pane.activeFile); // -1 inside a sub-map — steps to an end tab
               const step = event.kind === 'next-page' ? 1 : -1;
               const target = top[(current + step + top.length) % top.length]!;
-              if (target !== activeFile) {
+              if (target !== pane.activeFile) {
                 handSwitch(target);
                 dirty = true;
               }
@@ -1320,7 +1576,7 @@ function main(): void {
           }
           case 'page': {
             const target = topFiles()[event.index];
-            if (target !== undefined && target !== activeFile) {
+            if (target !== undefined && target !== pane.activeFile) {
               handSwitch(target);
               dirty = true;
             }
@@ -1330,8 +1586,12 @@ function main(): void {
             if (climbBack()) dirty = true;
             break;
           case 'follow-toggle':
-            follow = !follow;
-            flash = { text: follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + 2500 };
+            pane = toggleFollow(pane);
+            flash = { text: pane.follow ? 'auto-follow on' : 'auto-follow off', until: Date.now() + FLASH_ACK_MS };
+            dirty = true;
+            break;
+          case 'delete-page':
+            askDelete();
             dirty = true;
             break;
         }
@@ -1343,6 +1603,13 @@ function main(): void {
 
   tick();
   setInterval(tick, cfg.intervalMs);
+
+  // The heartbeat is on its OWN timer, not the file poll: --interval is the
+  // user's to set (it may be seconds), while what counts as a live pane is
+  // the store's constant. Publishing right after the first tick means the
+  // launcher that spawned this pane can confirm it came up.
+  publishPresence();
+  setInterval(publishPresence, VIEWER_HEARTBEAT_MS);
   // The splash sweep runs faster than the file poll — its own timer, idle
   // (one comparison) the moment a map exists.
   if (interactive) {
@@ -1350,7 +1617,7 @@ function main(): void {
       if (map !== undefined) return;
       splashTick++;
       paint();
-    }, 80);
+    }, SPLASH_FRAME_MS);
   }
 }
 

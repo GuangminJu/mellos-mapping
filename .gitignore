@@ -13,3 +13,11 @@ lib/
 !packages/*/lib/
 !packages/*/lib/**
 *.tgz
+
+# The store is committed — the maps are this project's own history. Its
+# runtime channels are not: `focus` and `quit` are one-shot messages to a
+# running pane, and `viewers/` is what the live panes report about
+# themselves, rewritten every second for as long as one is open.
+.mellos/focus
+.mellos/quit
+.mellos/viewers/

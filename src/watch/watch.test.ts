@@ -1,10 +1,15 @@
 /**
- * Spec for the watcher's pure helpers: width fitting/wrapping and the
- * resizable detail panel (node view and map dashboard) with its divider math.
+ * Spec for the watcher's pure helpers: width fitting/wrapping, the resizable
+ * detail panel (node view and map dashboard) with its divider math, and the
+ * fault boundaries that keep a live pane alive.
  * (The interactive shell itself is I/O and stays untested by design.)
  */
 
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, updateNode } from '../domain/ops.js';
 import {
@@ -16,10 +21,15 @@ import {
   type MellosMap,
   type NodeId,
   type NodeKind,
+  type NodeStatus,
+  type Rank,
   type Result,
   type SubmapRef,
 } from '../domain/types.js';
-import type { BoxHit } from '../render/render.js';
+import { SPINNER_FRAMES, spinnerGlyph, statusGlyph } from '../semantics/semantics.js';
+import { type BoxHit, type RenderOptions, type Viewport, renderMapWindow, statusSgr } from '../render/render.js';
+import { serializeMap } from '../store/store.js';
+import { initialPaneState } from './pane-state.js';
 import {
   type PageTab,
   anchorOffsets,
@@ -28,40 +38,44 @@ import {
   dividerRow,
   fitWidth,
   mapPanel,
-  mostRecentPageFile,
   nearestHit,
   nodePanel,
+  describeArgsError,
   parseArgs,
   pageTabRow,
   panelRowsFromDividerY,
-  type Ripple,
-  WAVE_LEVELS,
-  WAVE_NUMBER,
   elapsedLabel,
-  liveRipples,
   splashFrame,
   tabScrollFor,
   waitingInfo,
   topLevelFiles,
   usableColumns,
-  waveAt,
-  waveHash,
-  waveLevel,
   wrapWidth,
+  describePageFault,
+  readPage,
+  renderWindow,
+  terminalRestoreSequence,
+  viewerReportOf,
 } from './watch.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
   return r.value;
 }
+function mustFail<T, E>(r: Result<T, E>): E {
+  if (r.ok) throw new Error('expected an error, but the operation succeeded');
+  return r.error;
+}
 const lid = (s: string): LayerId => s as LayerId;
 const nid = (s: string): NodeId => s as NodeId;
+/** Ranks in specs are known-good literals; the brand is asserted, not re-validated. */
+const rnk = (n: number): Rank => n as Rank;
 const gid = (s: string): GroupId => s as GroupId;
 
 function sample(): MellosMap {
   let map = EMPTY_MAP;
-  map = must(declareLayer(map, { id: lid('base'), name: '原语层', rank: 0 }));
-  map = must(declareLayer(map, { id: lid('top'), name: '编排层', rank: 1 }));
+  map = must(declareLayer(map, { id: lid('base'), name: '原语层', rank: rnk(0) }));
+  map = must(declareLayer(map, { id: lid('top'), name: '编排层', rank: rnk(1) }));
   map = must(
     declareNode(map, {
       id: nid('core'),
@@ -136,6 +150,41 @@ describe('nodePanel', () => {
   });
 });
 
+describe('one status vocabulary across the pane and the picture', () => {
+  const statuses: NodeStatus[] = ['planned', 'in-progress', 'done', 'regressed'];
+
+  it('the tab strip and the dashboard read their glyphs from the library', () => {
+    for (const unicode of [true, false]) {
+      const tabs: PageTab[] = statuses.map((status) => ({ title: status, status, active: false, fresh: false }));
+      const segments = pageTabRow(tabs, 200, unicode);
+      for (const [i, status] of statuses.entries()) {
+        expect(segments[i]!.text).toContain(statusGlyph(status, unicode));
+      }
+      const counts = mapPanel(sample(), unicode, 80)[2]!.text;
+      for (const status of ['done', 'in-progress', 'planned'] as NodeStatus[]) {
+        expect(counts).toContain(`${statusGlyph(status, unicode)} 1 ${status}`);
+      }
+    }
+  });
+
+  it('the pane paints a status in the same color the picture gives its box', () => {
+    // Header and tab strip take their SGR from the renderer's own skin table,
+    // so the chrome and the boxes cannot drift apart.
+    expect(nodePanel(sample(), 'core', true, 80, false)![0]!.sgr).toBe(`${statusSgr('done')};1`);
+    expect(pageTabRow([{ title: 't', status: 'regressed', active: false, fresh: true }], 80, true)[0]!.sgr).toBe(
+      statusSgr('regressed'),
+    );
+  });
+
+  it('a still surface shows the spinner at rest; an animated one cycles the same frames', () => {
+    expect(statusGlyph('in-progress', true)).toBe('⠿');
+    expect(spinnerGlyph(0, true)).toBe(SPINNER_FRAMES.unicode[0]);
+    expect(spinnerGlyph(SPINNER_FRAMES.unicode.length, true)).toBe(SPINNER_FRAMES.unicode[0]);
+    expect(spinnerGlyph(-1, true)).toBe(SPINNER_FRAMES.unicode.at(-1));
+    expect(spinnerGlyph(0, false)).toBe(SPINNER_FRAMES.ascii[0]);
+  });
+});
+
 describe('mapPanel (dashboard)', () => {
   it('shows title, totals and per-status counts', () => {
     const panel = mapPanel(sample(), true, 80);
@@ -196,14 +245,70 @@ describe('pageTabRow', () => {
     expect(tabScrollFor(five, 30, true, 1, 2)).toBe(1); // already visible — untouched
     expect(tabScrollFor(five, 30, true, 3, 0)).toBe(0); // reveal to the left = jump there
   });
+
+  /**
+   * The close button: a click target on the ACTIVE tab only, and — because
+   * the strip measures itself honestly — two columns budgeted like every
+   * other segment rather than smuggled in past the last usable one.
+   */
+  describe('the × that deletes the page', () => {
+    it('rides the active tab alone, as its own segment with its own action', () => {
+      const segments = pageTabRow(tabs, 200, true, 0, true);
+      expect(segments.map((s) => s.text)).toEqual([' ● ■ 开发回放 ', '× ', ' ○ ⠿ 多页支持 ', ' ○ · idle ']);
+      expect(segments[1]!.action).toEqual({ kind: 'delete' });
+      expect(segments[1]!.sgr).toBe('90'); // faint: a secondary affordance
+      // no other tab offers one — clicking an inactive tab switches to it first
+      expect(segments.filter((s) => s.action.kind === 'delete')).toHaveLength(1);
+    });
+
+    it('is absent unless asked for — a pane with no mouse has nothing to click', () => {
+      expect(pageTabRow(tabs, 200, true).some((s) => s.action.kind === 'delete')).toBe(false);
+      expect(pageTabRow(tabs, 200, true, 0, false).some((s) => s.action.kind === 'delete')).toBe(false);
+    });
+
+    it('shows an ASCII face where the unicode one would not draw', () => {
+      expect(pageTabRow(tabs, 200, false, 0, true)[1]!.text).toBe('x ');
+    });
+
+    it('keeps the spans contiguous and inside the width, CJK titles included', () => {
+      const segments = pageTabRow(tabs, 200, true, 0, true);
+      expect(segments[0]!.lo).toBe(1);
+      for (let i = 1; i < segments.length; i++) expect(segments[i]!.lo).toBe(segments[i - 1]!.hi + 1);
+      expect(segments[1]!.hi - segments[1]!.lo + 1).toBe(2); // '× ' is two columns, not one, not three
+      expect(segments[segments.length - 1]!.hi).toBe(14 + 2 + 14 + 10);
+    });
+
+    it('costs the strip two columns, so an overflowing row still fits its indicator', () => {
+      const segments = pageTabRow(tabs, 20, true, 0, true);
+      expect(segments.map((s) => s.text)).toEqual([' ● ■ 开发回放 ', '× ', ' › ']);
+      for (let i = 1; i < segments.length; i++) expect(segments[i]!.lo).toBe(segments[i - 1]!.hi + 1);
+      expect(segments[segments.length - 1]!.hi).toBeLessThanOrEqual(20);
+    });
+
+    it('is dropped rather than pushed past the last usable column', () => {
+      // A pane too narrow for a truncated tab, an indicator AND a ×: the
+      // frame's width promise outranks the button, because a glyph in the
+      // last column shears the whole row.
+      const segments = pageTabRow(tabs, 5, true, 0, true);
+      expect(segments.some((s) => s.action.kind === 'delete')).toBe(false);
+      expect(segments[segments.length - 1]!.hi).toBeLessThanOrEqual(5);
+    });
+
+    it('tabScrollFor measures with the × the row will actually be painted with', () => {
+      // the button costs the window two columns, so revealing the far tab
+      // needs one more slide than it would on a strip without one
+      expect(tabScrollFor(five, 28, true, 0, 4, false)).toBe(2);
+      expect(tabScrollFor(five, 28, true, 0, 4, true)).toBe(3);
+    });
+  });
 });
 
 describe('diagram kinds in the panel', () => {
   /** A two-step sequence page: client asks, server checks. */
   function sequencePage(): MellosMap {
     let map = setKind(EMPTY_MAP, 'sequence' as MapKind);
-    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: 0 }));
-    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: 1 }));
+    map = must(declareLayer(map, { id: lid('t0'), name: '第1步', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('t1'), name: '第2步', rank: rnk(1) }));
     map = must(declareLane(map, { id: 'client' as LaneId, label: '客户端' }));
     map = must(
       declareNode(map, { id: nid('req'), label: '发起登录', layer: lid('t0'), lane: 'client' as LaneId, kind: 'action' as NodeKind }),
@@ -269,6 +374,26 @@ describe('sub-map hierarchy — interior pages are not sibling tabs', () => {
     expect(topLevelFiles(DEFAULT, [DEFAULT, child, effort], mapOf)).toEqual([DEFAULT, effort]);
     // an unloaded map hides nothing
     expect(topLevelFiles(DEFAULT, [DEFAULT, child], new Map([[DEFAULT, undefined]]))).toEqual([DEFAULT, child]);
+  });
+
+  it('never lets a page erase its own tab, or a pair erase them both', () => {
+    // "hide whatever anyone dives into" is a rule that can hide everything: a
+    // page whose node names its OWN slug deleted the tab it was drawn on, and
+    // two pages linking each other left a strip with nothing in it.
+    const selfLinked = must(updateNode(sample(), { id: nid('core'), submap: 'new-effort' as SubmapRef }));
+    expect(topLevelFiles(DEFAULT, [DEFAULT, effort], new Map([[effort, selfLinked]]))).toEqual([DEFAULT, effort]);
+
+    const toChild = must(updateNode(sample(), { id: nid('core'), submap: 'core-internals' as SubmapRef }));
+    const toEffort = must(updateNode(sample(), { id: nid('core'), submap: 'new-effort' as SubmapRef }));
+    const mutual = new Map<string, MellosMap | undefined>([
+      [effort, toChild],
+      [child, toEffort],
+    ]);
+    expect(topLevelFiles(DEFAULT, [DEFAULT, child, effort], mutual)).toEqual([DEFAULT, child, effort]);
+
+    // but a page the DEFAULT page dives into is interior, loop or not
+    mutual.set(DEFAULT, toChild);
+    expect(topLevelFiles(DEFAULT, [DEFAULT, child, effort], mutual)).toEqual([DEFAULT, effort]);
   });
 
   it('derives where a sub-map was dived from: parent file and linking node label', () => {
@@ -395,57 +520,18 @@ describe('standby splash', () => {
     for (const l of info) expect(l.length).toBeLessThanOrEqual(24);
   });
 
-  it('rolls the same corners and jitters on every run', () => {
-    expect(waveHash(7)).toBe(waveHash(7));
-    expect(waveHash(7)).not.toBe(waveHash(8));
-    // over a long run every corner gets used
-    const corners = new Set(Array.from({ length: 60 }, (_, n) => waveHash(n) % 4));
-    expect([...corners].sort()).toEqual([0, 1, 2, 3]);
-  });
-
-  it('keeps a steady population of rings, each expanding and fading', () => {
-    expect(liveRipples(0, 40, 11).length).toBeLessThanOrEqual(1); // water starts still
-    const rings = liveRipples(200, 40, 11);
-    expect(rings.length).toBeGreaterThanOrEqual(2);
-    expect(rings.length).toBeLessThanOrEqual(6);
-    // oldest first: the widest ring is also the faintest
-    expect(rings[0]!.r).toBeGreaterThan(rings.at(-1)!.r);
-    expect(rings[0]!.fade).toBeLessThan(rings.at(-1)!.fade);
-    for (const r of rings) expect(r.fade).toBeGreaterThanOrEqual(0);
-  });
-
-  it('superposes rings: crests reinforce, a crest meets a trough and cancels', () => {
-    const ring = (r: number): Ripple => ({ ox: 0, oy: 0, r, fade: 1 });
-    const crest = waveAt([ring(10)], 10, 0); // cell sits exactly on the front
-    expect(crest).toBeCloseTo(1, 5);
-    expect(waveAt([ring(10), ring(10)], 10, 0)).toBeCloseTo(2, 5);
-    // a ring whose front trails by half a wavelength arrives in antiphase
-    expect(Math.abs(waveAt([ring(10), ring(10 - Math.PI / WAVE_NUMBER)], 10, 0))).toBeLessThan(crest);
-  });
-
-  it('keeps the top of the ramp out of reach for a lone ring', () => {
-    const ring = (r: number): Ripple => ({ ox: 0, oy: 0, r, fade: 1 });
-    const alone = waveLevel(waveAt([ring(10)], 10, 0));
-    expect(alone).toBeGreaterThan(0);
-    expect(alone).toBeLessThan(WAVE_LEVELS); // only a pile-up reaches the glare
-    expect(waveLevel(waveAt([ring(10), ring(10)], 10, 0))).toBe(WAVE_LEVELS);
-  });
-
-  it('quantizes surface height into the ramp, clamping the extremes', () => {
-    expect(waveLevel(0)).toBe(0);
-    expect(waveLevel(5)).toBe(WAVE_LEVELS);
-    expect(waveLevel(-5)).toBe(-WAVE_LEVELS);
-    expect(waveLevel(-0.5)).toBe(-2);
-  });
-
   const INFO = ['watching  m.json', 'polling every 250 ms'];
 
-  it('gives up on a pane too small for water plus diagnostics', () => {
+  it('gives up on a pane too small for the diagnostics', () => {
     expect(splashFrame('waiting', INFO, 0, 20, 40, true, true)).toBeUndefined();
-    expect(splashFrame('waiting', INFO, 0, 80, 8, true, true)).toBeUndefined();
+    expect(splashFrame('waiting', INFO, 0, 80, 4, true, true)).toBeUndefined();
   });
 
-  it('centers the notice and the diagnostics under the water', () => {
+  it('a short pane that fits the text still gets the screen — no decoration to make room for', () => {
+    expect(splashFrame('waiting', INFO, 0, 80, INFO.length + 3, true, true)).toBeDefined();
+  });
+
+  it('centers the spinner notice and the diagnostics, and shows nothing else', () => {
     const frame = splashFrame('waiting for the first mmap_declare ...', INFO, 0, 60, 30, true, false)!;
     expect(frame.length).toBeLessThanOrEqual(30);
     const text = frame.join('\n');
@@ -454,74 +540,77 @@ describe('standby splash', () => {
     expect(text).toContain('polling every 250 ms');
     const noticeRow = frame.find((r) => r.includes('waiting for'))!;
     expect(noticeRow.startsWith(' ')).toBe(true);
+    // the water is gone: no shade ink, and without color no ANSI at all
+    expect(text).not.toMatch(/[░▒▓█#=:]/);
+    expect(text).not.toContain('\x1b[');
   });
 
-  it('animates without color by shading the ink instead', () => {
-    const a = splashFrame('waiting', INFO, 40, 60, 30, false, false)!.join('\n');
-    const b = splashFrame('waiting', INFO, 90, 60, 30, false, false)!.join('\n');
-    expect(a).not.toContain('\x1b[');
-    expect(a).not.toBe(b);
-    expect(a + b).toMatch(/[#=:.]/);
-  });
-
-  it('colors from the one ramp only, still water blank, texture riding the waves', () => {
-    const ramp = new Set([17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195]);
-    const a = splashFrame('waiting', INFO, 40, 60, 30, true, true)!.join('\n');
-    const b = splashFrame('waiting', INFO, 90, 60, 30, true, true)!.join('\n');
-    expect(a).toContain('\x1b[38;5;');
-    expect(strip(a)).not.toBe(strip(b)); // shade texture moves with the rings
-    for (let f = 0; f < 200; f += 7) {
-      const codes = splashFrame('waiting', INFO, f, 60, 30, true, true)!.join('\n').matchAll(/38;5;(\d+)/g);
-      for (const m of codes) expect(ramp.has(Number(m[1]))).toBe(true);
-    }
-  });
-
-  it('reads as a gradient, not confetti: neighbouring water cells stay close on the ramp', () => {
-    let widest = 0;
-    for (let f = 0; f < 400; f++) {
-      const rings = liveRipples(f, 60, 7); // the water field's dimensions
-      for (let y = 0; y < 7; y++) {
-        for (let x = 1; x < 60; x++) {
-          const step = Math.abs(waveLevel(waveAt(rings, x, y)) - waveLevel(waveAt(rings, x - 1, y)));
-          widest = Math.max(widest, step);
-        }
-      }
-    }
-    expect(widest).toBeLessThanOrEqual(3);
+  it('only the spinner moves between frames', () => {
+    const a = splashFrame('waiting', INFO, 0, 60, 30, true, false)!;
+    const b = splashFrame('waiting', INFO, 1, 60, 30, true, false)!;
+    const differing = a.filter((line, i) => line !== b[i]);
+    expect(differing).toHaveLength(1);
+    expect(strip(differing[0]!)).toContain('waiting');
   });
 });
 
 describe('page selection', () => {
-  it('parseArgs accepts --page with a valid slug and drops invalid ones', () => {
-    expect(parseArgs(['--page', 'page-focus'], '/w').page).toBe('page-focus');
-    expect(parseArgs(['--page', 'NOT A SLUG'], '/w').page).toBeUndefined();
-    expect(parseArgs(['--page'], '/w').page).toBeUndefined();
-    expect(parseArgs([], '/w').page).toBeUndefined();
+  const config = (argv: readonly string[]) => {
+    const parsed = parseArgs(argv, '/w');
+    if (!parsed.ok) throw new Error(describeArgsError(parsed.error));
+    return parsed.value;
+  };
+
+  it('parseArgs accepts --page with a valid slug', () => {
+    expect(config(['--page', 'page-focus']).page).toBe('page-focus');
+    expect(config([]).page).toBeUndefined();
   });
 
-  it('mostRecentPageFile picks the page last written, not the first listed', () => {
-    const mtimes = new Map([
-      ['default.json', 100],
-      ['alpha.json', 900],
-      ['zeta.json', 500],
-    ]);
-    const files = ['default.json', 'alpha.json', 'zeta.json'];
-    expect(mostRecentPageFile(files, (f) => mtimes.get(f))).toBe('alpha.json');
+  // A bad command line is refused, never silently patched over: the pane
+  // coming up on the WRONG page (a typo'd slug ignored) misled harder than
+  // not coming up at all. Same line as scripts/open-pane.mjs.
+  it('parseArgs refuses an invalid slug, a missing value and an unknown flag', () => {
+    const badSlug = parseArgs(['--page', 'NOT A SLUG'], '/w');
+    expect(badSlug.ok).toBe(false);
+    if (!badSlug.ok) expect(badSlug.error).toMatchObject({ kind: 'invalid-value', flag: '--page' });
+
+    const missing = parseArgs(['--page'], '/w');
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error).toMatchObject({ kind: 'missing-value', flag: '--page' });
+
+    // `--file --ascii` is a forgotten path, not a file named "--ascii".
+    const flagAsValue = parseArgs(['--file', '--ascii'], '/w');
+    expect(flagAsValue.ok).toBe(false);
+    if (!flagAsValue.ok) expect(flagAsValue.error).toMatchObject({ kind: 'missing-value', flag: '--file' });
+
+    const badInterval = parseArgs(['--interval', 'abc'], '/w');
+    expect(badInterval.ok).toBe(false);
+    if (!badInterval.ok) expect(badInterval.error).toMatchObject({ kind: 'invalid-value', flag: '--interval' });
+
+    const unknown = parseArgs(['--folow'], '/w');
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.error).toMatchObject({ kind: 'unknown-flag', flag: '--folow' });
+      expect(describeArgsError(unknown.error)).toContain('--folow');
+    }
   });
 
-  it('falls back to list order when no page has a readable mtime', () => {
-    expect(mostRecentPageFile(['default.json', 'alpha.json'], () => undefined)).toBe('default.json');
-    // files that never resolved an mtime lose to any file that did
-    expect(
-      mostRecentPageFile(['default.json', 'alpha.json'], (f) => (f === 'alpha.json' ? 5 : undefined)),
-    ).toBe('alpha.json');
+  it('parseArgs clamps a small interval to the floor instead of refusing it', () => {
+    expect(config(['--interval', '10']).intervalMs).toBe(50);
+    expect(config(['--interval', '400']).intervalMs).toBe(400);
   });
 });
 
 describe('auto-follow', () => {
+  const config = (argv: readonly string[]) => {
+    const parsed = parseArgs(argv, '/w');
+    if (!parsed.ok) throw new Error(describeArgsError(parsed.error));
+    return parsed.value;
+  };
+
   it('parseArgs defaults follow on; --no-follow starts it off', () => {
-    expect(parseArgs([], '/w').follow).toBe(true);
-    expect(parseArgs(['--no-follow'], '/w').follow).toBe(false);
+    expect(config([]).follow).toBe(true);
+    expect(config(['--no-follow']).follow).toBe(false);
   });
 
   it('dividerRow keeps the grip centered and right-aligns the follow tag', () => {
@@ -546,5 +635,99 @@ describe('auto-follow', () => {
     expect(ascii).toHaveLength(40);
     expect(ascii).toContain(' ~ ');
     expect(ascii.slice(-11, -1)).toBe(' > follow ');
+  });
+});
+
+describe('the report a live pane publishes about itself', () => {
+  const base = join('/w', '.mellos', 'map.json');
+  const pageFile = join('/w', '.mellos', 'pages', 'pane-presence.json');
+
+  it('names the page on screen, and the default page as no page at all', () => {
+    const onPage = { ...initialPaneState(true, undefined), activeFile: pageFile };
+    expect(viewerReportOf(onPage, base)).toEqual({ page: 'pane-presence', follow: true });
+
+    const onDefault = { ...initialPaneState(true, undefined), activeFile: base };
+    expect(viewerReportOf(onDefault, base)).toEqual({ page: undefined, follow: true });
+  });
+
+  it('carries auto-follow, which is what says whether a write will be seen', () => {
+    const pinned = { ...initialPaneState(false, undefined), activeFile: pageFile };
+    expect(viewerReportOf(pinned, base).follow).toBe(false);
+  });
+
+  // A pane on its standby screen has no active page yet. Reporting the
+  // default page there would tell a reader "your page is not the one being
+  // shown" about a pane that is seconds away from showing exactly it.
+  it('on standby it names the page it was asked for, not the default one', () => {
+    const requested = initialPaneState(true, pageFile);
+    expect(requested.activeFile).toBeUndefined();
+    expect(viewerReportOf(requested, base)).toEqual({ page: 'pane-presence', follow: true });
+  });
+
+  it('asked for nothing and showing nothing, it reports the default page', () => {
+    expect(viewerReportOf(initialPaneState(true, undefined), base)).toEqual({ page: undefined, follow: true });
+  });
+});
+
+describe('fault boundaries — the pane outlives what it is handed', () => {
+  const RENDER_OPTS: RenderOptions = { color: false, unicode: true, spinnerFrame: 0 };
+  const VIEWPORT: Viewport = { x: 0, y: 0, width: 80, height: 24 };
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'mmap-watch-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('reads a page that loads as the map it holds', () => {
+    const file = join(dir, 'map.json');
+    writeFileSync(file, serializeMap(sample()));
+    const read = readPage(file);
+    expect(read.ok).toBe(true);
+    expect(must(read).nodes).toHaveLength(3);
+  });
+
+  it('answers a page file that is a DIRECTORY with an error entry, not an exception', () => {
+    // `pages/x.json/` is a real thing to find on disk; loadMapFile rethrows
+    // EISDIR, and inside setInterval that exception took the pane down.
+    const file = join(dir, 'weird.json');
+    mkdirSync(file);
+    const read = readPage(file);
+    expect(read.ok).toBe(false);
+    expect(mustFail(read)).toEqual({ kind: 'unreadable', path: file, detail: 'EISDIR' });
+    expect(describePageFault(mustFail(read))).toContain(file);
+  });
+
+  it('still answers the store faults as the store models them', () => {
+    const missing = join(dir, 'nope.json');
+    expect(mustFail(readPage(missing))).toEqual({ kind: 'not-found', path: missing });
+    const torn = join(dir, 'torn.json');
+    writeFileSync(torn, '{"version":1,"map":{');
+    expect(mustFail(readPage(torn)).kind).toBe('malformed-json');
+  });
+
+  it('turns a map the renderer refuses into a message, so the frame is lost and not the pane', () => {
+    // an edge to a node that is not there — the store cannot produce it, but
+    // a picture the pane cannot draw must never be the end of the pane
+    const broken = { ...sample(), edges: [{ from: nid('shell'), to: nid('nowhere') }] } as MellosMap;
+    expect(() => renderMapWindow(broken, RENDER_OPTS, VIEWPORT)).toThrow();
+    const drawn = renderWindow(broken, RENDER_OPTS, VIEWPORT);
+    expect(drawn.ok).toBe(false);
+    expect(mustFail(drawn)).toContain('could not be drawn');
+  });
+
+  it('draws the good map through the same boundary', () => {
+    const drawn = renderWindow(sample(), RENDER_OPTS, VIEWPORT);
+    expect(drawn.ok).toBe(true);
+    expect(must(drawn).hits).toHaveLength(3);
+  });
+
+  it('hands the terminal back everything the pane switched on', () => {
+    const withMouse = terminalRestoreSequence(true);
+    expect(withMouse).toContain('\x1b[?1003l'); // any-event tracking off
+    expect(withMouse).toContain('\x1b[?1006l'); // SGR coordinates off
+    expect(withMouse).toContain('\x1b[?25h'); // cursor visible again
+    // a pane that never turned mouse reporting on must not turn it off either
+    expect(terminalRestoreSequence(false)).not.toContain('1003');
+    expect(terminalRestoreSequence(false)).toContain('\x1b[?25h');
   });
 });

@@ -1,0 +1,422 @@
+{
+  "version": 1,
+  "title": "审查修复地图 · mellos-mapping 0.20.1 → 0.20.2",
+  "kind": "dev",
+  "layers": [
+    {
+      "id": "foundations",
+      "name": "领域与存储原语",
+      "rank": 0
+    },
+    {
+      "id": "contracts",
+      "name": "边界与契约",
+      "rank": 1
+    },
+    {
+      "id": "shells",
+      "name": "外壳：窗格 / 渲染 / 脚本",
+      "rank": 2
+    },
+    {
+      "id": "release",
+      "name": "发布 / 文档 / 守卫",
+      "rank": 3
+    }
+  ],
+  "groups": [
+    {
+      "id": "g-domain",
+      "label": "领域",
+      "layer": "foundations"
+    },
+    {
+      "id": "g-store",
+      "label": "存储",
+      "layer": "foundations"
+    },
+    {
+      "id": "g-mcp",
+      "label": "MCP 边界",
+      "layer": "contracts"
+    },
+    {
+      "id": "g-pane",
+      "label": "窗格",
+      "layer": "shells"
+    },
+    {
+      "id": "g-render",
+      "label": "渲染",
+      "layer": "shells"
+    },
+    {
+      "id": "g-scripts",
+      "label": "启动脚本",
+      "layer": "shells"
+    },
+    {
+      "id": "g-publish",
+      "label": "打包发布",
+      "layer": "release"
+    },
+    {
+      "id": "g-docs",
+      "label": "文档与守卫",
+      "layer": "release"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "rank-brand",
+      "label": "Rank 领域类型",
+      "layer": "foundations",
+      "status": "done",
+      "detail": "ops.ts:111 declareLayer 接受 NaN/非整数 rank：NaN 破 I1(===查重)与 I4(<=比较)，0.5 写得出读不回(format.ts:109)。新增 makeRank(raw): Result<Rank,InvalidRank>，要求 Number.isInteger 且在工具 schema 同一范围；MapLayer/DeclareLayerInput 用 Rank；删 format.ts/server.ts 的重复检查。",
+      "group": "g-domain",
+      "evidence": "122e3d6: branded Rank + makeRank(RANK_MIN..MAX); ops/format/apply derive from it; 4 new cases (NaN/+Inf/1.5/-1/100 refused). Integration: 225 tests, typecheck clean"
+    },
+    {
+      "id": "id-space",
+      "label": "group/node id 冲突",
+      "layer": "foundations",
+      "status": "done",
+      "detail": "I3/I6 各自集合内唯一 → group 与无组节点可同名；semantics.ts:97 aggregateMap cast 进 node id 空间产出重复 id，render.ts:660 按 id 键 box，zoom -4 抛 TypeError，watcher 无 try/catch 直接死。二选一：领域层新增不变量禁止 group id == node id(+MapError)，或派生节点用独立命名空间并让 focusInfo/BoxHit 显式携带判别。加回归测试。",
+      "group": "g-domain",
+      "evidence": "7f1e0d3: new invariant I10 (node+group ids one namespace), id-collision MapError; 3 cases incl. aggregateMap ids unique at zoom -4; repo's 9 pages verified collision-free"
+    },
+    {
+      "id": "revision-ops",
+      "label": "修订 ops：moveNode / updateLayer / 清空",
+      "layer": "foundations",
+      "status": "done",
+      "detail": "SKILL 要求的修订 API 做不到：节点不能换层、layer 不能改名/重排、group/lane 不能改名(updateGroup 死代码 ops.ts:131)、evidence/detail/title 不能清空(ops.ts:240)。新增 moveNode(重验 I4 触边 + I7 组)、updateLayer(name/rank)、updateLane；UpdateNodeInput 的 evidence/detail 接受 null；修正 layer-not-empty 文案(ops.ts:236 提到不存在的 move)。",
+      "group": "g-domain",
+      "evidence": "570f72c: moveNode/updateLayer/updateLane, updateGroup spec'd, evidence/detail null-clear, setTitle null; layer-not-empty text names real ops; 8 new ops.test cases. MCP wiring deferred to contracts"
+    },
+    {
+      "id": "shared-vocab",
+      "label": "状态/kind 字形表单一来源",
+      "layer": "foundations",
+      "status": "done",
+      "detail": "状态→视觉词汇表三份：render.ts(SGR+skinFor+glyphFor+spinner)、watch.ts:205(STATUS_GLYPH/STATUS_SGR/SPINNER_FRAMES 逐字复制)、dsh-client layout.ts:230(STATUS_GLYPHS)，in-progress 字形已三处不同。NODE_KIND_GLYPHS/kindGlyph 移入 semantics(浏览器可用)，render 导出终端皮肤一份；watch.ts 与 layout.ts 改为导入。",
+      "evidence": "fc9bd0e: semantics/vocabulary.ts owns STATUS_GLYPHS/spinner/kind glyphs; render.ts skins built from it; watch.ts + dsh-client layout.ts import it; 3 watch.test cases; snapshots unchanged"
+    },
+    {
+      "id": "atomic-save",
+      "label": "唯一 tmp + EPERM 重试 → StoreError",
+      "layer": "foundations",
+      "status": "done",
+      "detail": "store.ts:308 固定 <path>.tmp：同页双写者互毁；Windows renameSync 遇读者句柄 EPERM(复现 1412/1882)无重试，裸异常。改为 `${path}.${pid}.${n}.tmp`，rename 对 EPERM/EBUSY/ENOENT 有界退避重试，失败清理 tmp 并返回 Result<void,StoreError>；saveMappingPolicy 同改；P2 契约写明多写者模型(每页 last-writer-wins，每次保存原子)。",
+      "group": "g-store",
+      "evidence": "8bfb355: writeFileAtomic <path>.<pid>.<rand>.tmp, 10x backoff retry on EPERM/EBUSY/EACCES/ENOENT, Result 'save-failed'; server branches; atomic-save.test.ts 4 cases + 1 real-fs"
+    },
+    {
+      "id": "parse-strict",
+      "label": "parseMap 严格形状 + BOM",
+      "layer": "foundations",
+      "status": "done",
+      "detail": "format.ts:73 asArray 把非数组变 []、optionalString 丢非字符串、id 用 String() 强转 → 下一次 save 把有损解释写回磁盘。layers/nodes/edges/groups/lanes 非数组 → bad-shape；非字符串 id/title/detail/evidence/label → bad-shape；loadMapFile 剥离前导 U+FEFF(store.ts:282)。每条加 spec。",
+      "group": "g-store",
+      "evidence": "6b70a61: layers/nodes/edges required arrays, scalars refused with path; BOM stripped in loadMapFile/loadMappingPolicy; 5 store.test cases incl. all 9 repo pages still load"
+    },
+    {
+      "id": "server-schema",
+      "label": "zod 源自领域 + ID 工厂 + strict + declare evidence",
+      "layer": "contracts",
+      "status": "done",
+      "detail": "server.ts:51 共享 ZodString 实例 → zod-to-json-schema 去重，15 处 id 变成 $ref:#/properties/page 并带 page 描述(复现 7 处)。ID 改工厂 id(desc) 每处新实例；z.string().regex(ID_RULE,ID_RULE_TEXT)、z.enum(NODE_STATUSES)、z.enum(MAP_KINDS)、rank 用 makeRank；inputSchema 传 z.object(shape).strict()(server.ts:144 目前 strip 但广告 additionalProperties:false)；mmap_declare nodes 接受 evidence；title min(1)。测试断言 schema 无 $ref。",
+      "group": "g-mcp",
+      "evidence": "54fa384: per-field zod factories, constants from domain, z.object().strict() at every depth, declare accepts evidence, title min(1); server.test +6: 0 $ref in all 5 schemas, unknown key named"
+    },
+    {
+      "id": "control-chars",
+      "label": "边界拒绝控制字符 / ANSI",
+      "layer": "contracts",
+      "status": "done",
+      "detail": "server.ts:190 label/title/name/evidence/edge label 只校验长度，ESC/\\n/\\r 持久化后 renderMap 原样写 TTY(render.ts:251)——终端转义注入、换行破 box 网格。zod 单行字段 regex(/^[^\\p{Cc}]*$/u)，detail 只允许 \\n/\\t；渲染器对磁盘来的值把非打印码点映射为替换字形作为纵深防御。",
+      "group": "g-mcp",
+      "evidence": "75e9c72: line()/note() refuse C0+DEL+C1 (explicit \\u ranges, JSON-Schema safe), detail allows \\n/\\t; server.test +5. Renderer draw-time defense left to shells"
+    },
+    {
+      "id": "revision-tools",
+      "label": "mmap_update layer / 改名 / 清空；页面列表",
+      "layer": "contracts",
+      "status": "done",
+      "detail": "server.ts:232 mmap_update 加 layer；新增 layer name/rank、group/lane label 更新路径；evidence/detail/title 接受 null 清除；mmap_view 无 page 时附带 `pages: a, b (default: present/absent)` 或新增只读列表(SKILL 让模型用 mmap_view 判断地图是否存在，但它只看默认页 server.ts:325)。同步 SKILL.md。",
+      "group": "g-mcp",
+      "evidence": "9c71566: mmap_update gains layer (moveNode), layers/groups/lanes relabel+rerank, null clears; declare title:null; mmap_view appends pages: line; SKILL/mmap.md updated; apply +10, wire +5"
+    },
+    {
+      "id": "save-result",
+      "label": "mutate 处理保存失败",
+      "layer": "contracts",
+      "status": "done",
+      "detail": "server.ts:122 mutate 对 saveMapFile 不包裹，Windows EPERM / 双写 ENOENT 以裸 Node 错误返回给模型。saveMapFile 返回 Result 后在此分支：`save failed, nothing changed, retry`(isError)。",
+      "group": "g-mcp",
+      "evidence": "2844f30: one saveFailed() helper for both save sites; save-failure.test.ts +3 (renameSync fault -> isError 'save failed, nothing changed (retry)', file byte-identical, retry works)"
+    },
+    {
+      "id": "semantics-spec",
+      "label": "semantics.test.ts",
+      "layer": "contracts",
+      "status": "done",
+      "detail": "semantics.ts 无自己的 spec(README:297 却说每层都有)。钉住：aggregateMap 的 neutral-kind 无计数、边折叠/去重、intra-group 边移除、无组返回 undefined、id 冲突处理；zoomMode 端点；focusInfo node/group 视图；mostRecentKey 平局/undefined；flipForSequence 反转与 no-op；submapRefs 自引用/互引用不隐藏页签(semantics.ts:250)。",
+      "evidence": "b19ede6: semantics.test.ts +31; interiorPages() fixes self/cycle tab erasure; apply refuses submap==own page (+2, wire +1). watch.ts call-site switch handed to shells. Integration: 327 tests"
+    },
+    {
+      "id": "focus-file",
+      "label": "open-pane 写 .mellos/focus",
+      "layer": "shells",
+      "status": "done",
+      "detail": "open-pane.mjs:251 写 mellos-mapping.focus，watcher 读 store.ts:99 FOCUS_FILE_NAME='focus' → --page 重定向已开窗格整体失效，孤儿文件永不清理(高)。从 lib/store/store.js 导入 focusFilePath/STATE_FILE_RELATIVE_PATH/ID_RULE 而非重写字面量；加测试：脚本写入 → takeFocusRequest 消费。",
+      "group": "g-scripts",
+      "evidence": "cb695f9: open-pane imports focusFilePath from new dist/store-paths.mjs (esbuild re-export, no duplication); open-pane.test.mjs 12 tests round-trip via takeFocusRequest; sweeps old orphan"
+    },
+    {
+      "id": "pane-flags",
+      "label": "open-pane 转发 --no-follow；-like 转义",
+      "layer": "shells",
+      "status": "done",
+      "detail": "open-pane.mjs:223 只转发 --ascii/--page，其余 --x 收进无人读的 Set(文档说支持 --no-follow)：转发或拒绝未知 flag。open-pane.mjs:107 PowerShell -like 用裸路径，[v2] 之类路径永远匹配不到自己：[WildcardPattern]::Escape 或 .Contains()。codex-register.mjs:37 Windows 下 not-found 提示死代码 + OEM 乱码。",
+      "group": "g-scripts",
+      "evidence": "cb695f9+99c1d04: forwards whole watcher flag set, rejects unknown flags; IndexOf probe instead of -like; codex-register probes PATH, exit 9009 = not found, bytes passthrough; codex-register.test.mjs"
+    },
+    {
+      "id": "term-restore",
+      "label": "watcher 终端恢复 + tick 错误边界",
+      "layer": "shells",
+      "status": "done",
+      "detail": "watch.ts:1093 tick 内 loadMapFile 对非 ENOENT 全 rethrow(EISDIR 已复现)，进程死亡时鼠标上报开着、光标隐藏，只有 SIGINT/SIGTERM 恢复(915)。加 process.on('exit') + uncaughtException 统一写 MOUSE_OFF+SHOW_CURSOR；tick 内 loader 异常转 PageEntry.error；paint/zoom 的 renderMapWindow 包边界。",
+      "group": "g-pane",
+      "evidence": "1c9488d: readPage turns loader faults into PageFault values, renderWindow guards paint/zoom, exit + uncaughtException restore; 6 tests incl. EISDIR page (old pane exited 1, new keeps painting)"
+    },
+    {
+      "id": "input-csi",
+      "label": "input.ts 吞噬未知 CSI/SS3；ESC；滚轮",
+      "layer": "shells",
+      "status": "done",
+      "detail": "input.ts:137 未知完整序列落入单字符扫描：F2 的 Q 退出、End 的 F 切 follow、PgUp 的 5 换页并关 follow；:132 合并读留下 lone ESC 后每个 Esc 都被吞；:83 水平滚轮 66/67 当缩放。加通用消费器 /^\\x1b\\[[0-9;?<]*[@-~]/ 与 /^\\x1bO[@-~]/，PARTIAL_ESCAPE 扩到 ESC[...$ 与 ESC O$，尾部 lone ESC 视为 Esc 键，code&3 区分水平；负向测试 F-keys/Home/End/PgUp/Del/Ctrl+方向 → []。",
+      "group": "g-pane",
+      "evidence": "d3af3de: generic CSI/SS3 consumer, PARTIAL_ESCAPE narrowed to real heads, lone trailing ESC = Esc key, wheel reads both bits (tilt pans); F-keys/Home/End/PgUp/Del/Ctrl+arrow -> []; header ?1003h"
+    },
+    {
+      "id": "page-reducer",
+      "label": "main() 提取纯 page-set reducer",
+      "layer": "shells",
+      "status": "done",
+      "detail": "watch.ts:759-1355 约 600 行闭包、29 个 let + 2 Map，paint() 有副作用；focus>follow>最近页、首扫不标 fresh、撕裂读重试等契约全在 tick() 里不可测。提取 scan(state,{files,statOf,loadOf,focusRequest,now}) → {state,effects}，paint 纯化，splash/ripple 与面板/页签 view-model 移出；与 dsh-client pages.ts 共用或镜像一份 spec。",
+      "group": "g-pane",
+      "evidence": "22db1f4+24b2b42: src/watch/pane-state.ts (PageState absent|loaded|faulted; scan/userSwitch/toggleFollow/dive) + 16 spec tests; main() 586 lines: page state out, view state/paint() remain"
+    },
+    {
+      "id": "render-layout",
+      "label": "render 布局修复：宽度/标签/路由/emoji",
+      "layer": "shells",
+      "status": "done",
+      "detail": "render.ts:727 contentWidth 取最后声明 box 而非最右(lane+group 地图概览必短)→ max(x+w) 含尾随区域；:905 band 标签覆盖 bar 切断竖线 → 标签区域从路由预留或标签后画；:848 gap 路由忽略垂直占用(交叉边合并为一列 ├┤) → 按 gap 记录占用列；:86 displayWidth 补 emoji 宽区间与零宽(组合标记/ZWJ/VS16)。每项加渲染测试。",
+      "group": "g-render",
+      "evidence": "6459f56: width = max over boxes + lane regions; band label in reserved right margin; per-gap vertical column ownership; wcwidth table (emoji 2, ZWJ/VS16 0); 4 snapshots updated deliberately"
+    },
+    {
+      "id": "render-split",
+      "label": "拆分 render.ts",
+      "layer": "shells",
+      "status": "done",
+      "detail": "1033 行七种职责，buildCanvasWith 641-1001 共 361 行、约 25 个闭包捕获可变 Map。拆为 width.ts / canvas.ts / skins.ts / zoom-geometry.ts / layout.ts(不可变位置) / routing.ts(布局 → EdgeRoute[] 纯函数) / draw.ts；render.ts 只做组合。",
+      "group": "g-render",
+      "evidence": "28acab5: render.ts 1242->177 lines; width/options/canvas/skins/zoom-geometry/layout/routing/draw.ts; RoutedEdge union; exports kept, snapshots unchanged; routing.test.ts 5; render in browser gate"
+    },
+    {
+      "id": "done-skin",
+      "label": "done 无 evidence 的区别渲染",
+      "layer": "shells",
+      "status": "done",
+      "detail": "SKILL 规则 4 'No evidence, no done'，但 render.ts:543 只在 detail 缩放且存在时追加 evidence 行，各档缩放下有无 evidence 的 done 画得一样；自家 map 50 个 done 中 13 个无 evidence 全是实心绿。给无 evidence 的 done 一个可辨皮肤(空心 ■ / 不同色)和图例计数——让违规可见而不裁判。",
+      "group": "g-render",
+      "evidence": "97b5416: UNVERIFIED_DONE_GLYPHS ['□','o'] in vocabulary; StatusFace 'done-unverified' skin SGR 32;2 + legend entry when present; group box inherits members' verification; 4 snapshots updated"
+    },
+    {
+      "id": "dsh-host",
+      "label": "dsh read 不迁移；ensureWatch 原子注册",
+      "layer": "shells",
+      "status": "done",
+      "detail": "packages/dsh/src/index.ts:143 只读 read() 每次跑 migrateLegacyStore(在用户项目里 rename 目录，与 server 竞争 TOCTOU，ENOENT 冒出 Remote)；:217 ensureWatch 在 get 与 set 之间两个 await，并发首读泄漏重复 chokidar watcher，dispose 后进程不退出(已复现)。迁移从读路径移除(写端拥有)；注册先同步占位再 await，每个 await 后重查 closed。",
+      "evidence": "52eba26: migrateLegacyStore removed from read(); ensureWatch reserves cwd before first await, re-checks closed after each; src only (lib rebuilt in dsh workspace via sync). Integration: 380 tests"
+    },
+    {
+      "id": "store-relocate",
+      "label": "git mv 自家 store → .mellos；迁移打日志",
+      "layer": "release",
+      "status": "done",
+      "detail": "HEAD 跟踪 .claude/mellos-mapping.json + pages/*，server.ts:364/watch.ts:762 启动时无条件迁移 → 任何人在仓库里启动插件工作树即脏(本会话实际发生)。git mv 到 .mellos/map.json 与 .mellos/pages/；迁移发生时 server 打一行 stderr、窗格 footer flash；migrateLegacyStore 对 rename ENOENT 幂等并返回 Result。",
+      "evidence": "a018f8d: 9 files git mv .claude/mellos-mapping* -> .mellos/ (all load via loadMapFile); one-line stderr log on migration in server.ts:363 + watch.ts:762; Upgrading-from-0.19 note in both READMEs"
+    },
+    {
+      "id": "docs-paths",
+      "label": "文档：config 路径 / 升级说明 / Pages 段 / --no-follow",
+      "layer": "release",
+      "status": "done",
+      "detail": "README.md:280、README.zh-CN.md:256、SKILL.md:44 仍写 .claude/mellos-mapping.config.json(实际 .mellos/config.json)；无'从 0.19 升级'说明；README:221 Pages 段与默认 auto-follow 矛盾；mmap.md:49 --no-follow 归属；'four tools'→五个；zoom 档 detail+；MELLOS_MAPPING_CWD；修订工具与页面列表的新说明。",
+      "group": "g-docs",
+      "evidence": "f009f82+3e05251: README EN/ZH lockstep (18 headings), SKILL/mmap.md, CHANGELOG.md, version comments unified; tests/docs.test.ts 8 checks (no stale path, tools/flags exist, EN/ZH outlines equal)"
+    },
+    {
+      "id": "server-tests",
+      "label": "server 负向测试 / 损坏文件测试",
+      "layer": "release",
+      "status": "done",
+      "detail": "server.test.ts 除 mmap_setup 枚举外无任何 schema 拒绝测试：非法 id/page/zoom、超长 label、空 updates → isError；损坏 map.json → mutate isError 且文件字节不变；mmap_view zoom -4/1；控制字符被拒；保存失败 → Result 文案。store.test.ts:341 'atomicity (P2)' 改为真能观察原子性的测试。",
+      "group": "g-docs",
+      "evidence": "6706591: server.test.ts 32->44 (invalid id/page/zoom, nested unknown key, corrupted map.json refused by all 4 tools bytes intact, I4-breaking move refused, pages line); P2 observed at rename"
+    },
+    {
+      "id": "violation-notes",
+      "label": "保留的违规补 VIOLATION 注释",
+      "layer": "release",
+      "status": "done",
+      "detail": "全仓库 0 条 // VIOLATION:。对有意保留的违规逐处注释：aggregateMap 的 id 空间合并(如保留)、dsh-client index.ts:81 Result→throw、semantics/render 公共 API 裸 string(focusInfo/diveParent/submapRefs/kindGlyph/BoxHit.id)、watch.ts 与 MmapView.tsx 的时序/尺寸常量(或命名为常量)。",
+      "group": "g-docs",
+      "evidence": "c48e08f: 14 VIOLATION sites annotated (was 0); 13 watch.ts literals named; browser-safe entries derived from package.json exports. Integration: 402 tests, verify green, dist bfa2b79"
+    },
+    {
+      "id": "lockfile",
+      "label": "lockfile 重生成(npmjs) + release --registry",
+      "layer": "release",
+      "status": "done",
+      "detail": "package-lock.json 222 个 resolved 全指向 registry.npmmirror.com；npm ci 在 CI 与贡献者机器都从镜像下载，release.mjs 每次 --package-lock-only 又把镜像烤回去。`npm install --package-lock-only --registry https://registry.npmjs.org/` 重生成；release.mjs 固定 registry。",
+      "group": "g-publish",
+      "evidence": "ad9d1da: 222/222 resolved on registry.npmjs.org (host-only rewrite, integrity unchanged, npm ci green); release.mjs --registry; tests/lockfile.test.ts guard (3 tests, proven to fail on a flipped URL)"
+    },
+    {
+      "id": "prepack",
+      "label": "prepack build + 清理 lib/",
+      "layer": "release",
+      "status": "done",
+      "detail": "package.json files/exports 指向 lib/，但 lib/ gitignored 且无 prepack/prepublishOnly：干净克隆 npm publish 会发出全部子路径导出悬空的包(npm-packlist 静默跳过)；tsc 不清理 lib/ 留陈旧 js。加 \"prepack\": \"npm run build\"(或 prepublishOnly: verify)，build 前 rm -rf lib；CI 可用 npm publish --provenance。",
+      "group": "g-publish",
+      "evidence": "c0fb84f: prepack=npm run build; build.mjs cleans dist+lib via fs.rm; check-package-surface.mjs in verify+CI: pack --dry-run 22 files, all 15 exports/bin present even from rm -rf lib dist"
+    },
+    {
+      "id": "dsh-bundle",
+      "label": "patch 行固定版本并改用 node dist/server.mjs",
+      "layer": "release",
+      "status": "done",
+      "detail": "cordis.patch.yml:31 用 npx -y mellos-mapping 启动写端：未固定版本(release.mjs 不碰)、与 ^0.20.1 的读端可能异版；且 SDK stdio 传输 shell:false，裸 npx(.cmd shim)在 Windows ENOENT——面板起来了、mmap_* 工具静默缺席。改为 node <已安装依赖的 dist/server.mjs>，版本随 release.mjs 同步；README 的 'pinned' 说法修正。",
+      "group": "g-publish",
+      "evidence": "b91e6fc: cordis.patch.yml uses !!js process.execPath + createRequire resolve of mellos-mapping/server (new ./server export); pinned, spawns on Windows (npx=ENOENT, execPath=ok); README claim now true"
+    },
+    {
+      "id": "packages-ci",
+      "label": "packages spec 同步 + typecheck + lib drift 守卫",
+      "layer": "release",
+      "status": "done",
+      "detail": "packages/dsh 与 dsh-client 约 1.8k 行纯逻辑在本仓库零测试/零 typecheck/零 CI；sync-dsh-plugin.mjs:50 只复制 src/lib 不复制 spec；packages/*/lib 与 src 漂移无守卫。同步 spec 进 packages/*/ 并由根 vitest 运行；加 packages 的 tsconfig 工程；CI 加 lib 哈希/重建比对。",
+      "group": "g-publish",
+      "evidence": "aec1518: sync copies tests/ + validates before delete; 5 specs synced (layout/pages/wheel run here; mmap-host/store need absent framework); tsconfig.packages.json; ci step. Integration: 264 tests"
+    }
+  ],
+  "edges": [
+    {
+      "from": "server-schema",
+      "to": "rank-brand",
+      "label": "makeRank"
+    },
+    {
+      "from": "server-schema",
+      "to": "shared-vocab",
+      "label": "NODE_STATUSES/MAP_KINDS/kind 表"
+    },
+    {
+      "from": "control-chars",
+      "to": "parse-strict",
+      "label": "磁盘侧同一规则"
+    },
+    {
+      "from": "revision-tools",
+      "to": "revision-ops"
+    },
+    {
+      "from": "save-result",
+      "to": "atomic-save",
+      "label": "Result<void,StoreError>"
+    },
+    {
+      "from": "semantics-spec",
+      "to": "id-space"
+    },
+    {
+      "from": "semantics-spec",
+      "to": "shared-vocab"
+    },
+    {
+      "from": "done-skin",
+      "to": "server-schema",
+      "label": "declare 带 evidence"
+    },
+    {
+      "from": "done-skin",
+      "to": "shared-vocab"
+    },
+    {
+      "from": "render-layout",
+      "to": "shared-vocab"
+    },
+    {
+      "from": "render-split",
+      "to": "shared-vocab"
+    },
+    {
+      "from": "term-restore",
+      "to": "atomic-save",
+      "label": "StoreError 而非异常"
+    },
+    {
+      "from": "page-reducer",
+      "to": "semantics-spec",
+      "label": "page-set 规则"
+    },
+    {
+      "from": "focus-file",
+      "to": "atomic-save",
+      "label": "导入 lib/store 常量"
+    },
+    {
+      "from": "server-tests",
+      "to": "server-schema"
+    },
+    {
+      "from": "server-tests",
+      "to": "control-chars"
+    },
+    {
+      "from": "server-tests",
+      "to": "save-result"
+    },
+    {
+      "from": "docs-paths",
+      "to": "focus-file"
+    },
+    {
+      "from": "docs-paths",
+      "to": "pane-flags"
+    },
+    {
+      "from": "docs-paths",
+      "to": "revision-tools"
+    },
+    {
+      "from": "store-relocate",
+      "to": "dsh-host",
+      "label": "读路径不再迁移"
+    },
+    {
+      "from": "packages-ci",
+      "to": "dsh-host"
+    },
+    {
+      "from": "violation-notes",
+      "to": "shared-vocab"
+    }
+  ]
+}

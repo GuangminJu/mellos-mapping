@@ -118,6 +118,14 @@ describe('applyDeclare', () => {
     );
   });
 
+  it('rejects a rank outside the band range at the boundary', () => {
+    for (const rank of [1.5, -1, 100, Number.NaN]) {
+      expect(mustFail(applyDeclare(EMPTY_MAP, { layers: [{ id: 'base', name: 'x', rank }] }))).toContain(
+        'invalid rank',
+      );
+    }
+  });
+
   it('grows an existing map without touching what is already there', () => {
     const grown = must(
       applyDeclare(ghostMap(), {
@@ -209,6 +217,164 @@ describe('applyUpdate', () => {
       ],
     });
     expect(mustFail(result)).toContain('updates[1]');
+  });
+});
+
+/**
+ * A ghost design is a hypothesis, so every declared thing must be revisable
+ * through the same transactional door that declared it.
+ */
+describe('applyUpdate — revising what the ghost design got wrong', () => {
+  /** base(0) -- top(10) -- attic(20); `a` on top uses `b` on base. */
+  function tallMap(): MellosMap {
+    return must(
+      applyDeclare(EMPTY_MAP, {
+        layers: [
+          { id: 'base', name: 'Base', rank: 0 },
+          { id: 'top', name: 'Top', rank: 10 },
+          { id: 'attic', name: 'Attic', rank: 20 },
+        ],
+        nodes: [
+          { id: 'a', label: 'A', layer: 'top' },
+          { id: 'b', label: 'B', layer: 'base' },
+        ],
+        edges: [{ from: 'a', to: 'b' }],
+      }),
+    );
+  }
+
+  it('moves a node to another band', () => {
+    const moved = must(applyUpdate(tallMap(), { updates: [{ id: 'a', layer: 'attic' }] }));
+    expect(moved.nodes.find((n) => n.id === 'a')?.layer).toBe('attic');
+  });
+
+  it('refuses a move that would flatten a dependency, naming the item', () => {
+    const refused = applyUpdate(tallMap(), { updates: [{ id: 'b', layer: 'attic' }] });
+    expect(mustFail(refused)).toContain('updates[0]');
+    expect(mustFail(refused)).toContain('not strictly downward');
+  });
+
+  it('re-ranks bands before it moves nodes, so one batch can do what neither half could alone', () => {
+    // attic sits ABOVE a, so the move alone is refused...
+    expect(mustFail(applyUpdate(tallMap(), { updates: [{ id: 'b', layer: 'attic' }] }))).toContain(
+      'not strictly downward',
+    );
+    // ...but the same batch may first push attic under a
+    const revised = must(
+      applyUpdate(tallMap(), { layers: [{ id: 'attic', rank: 5 }], updates: [{ id: 'b', layer: 'attic' }] }),
+    );
+    expect(revised.layers.find((l) => l.id === 'attic')?.rank).toBe(5);
+    expect(revised.nodes.find((n) => n.id === 'b')?.layer).toBe('attic');
+  });
+
+  it('applies `layer` before the rest of its own item: move and join a group on the new band at once', () => {
+    const map = must(applyDeclare(tallMap(), { groups: [{ id: 'g', label: 'G', layer: 'attic' }] }));
+    const moved = must(applyUpdate(map, { updates: [{ id: 'a', layer: 'attic', group: 'g' }] }));
+    expect(moved.nodes.find((n) => n.id === 'a')).toMatchObject({ layer: 'attic', group: 'g' });
+
+    // the reverse trip is two items, because a move never silently ungroups
+    expect(mustFail(applyUpdate(moved, { updates: [{ id: 'a', layer: 'top' }] }))).toContain('cannot join group');
+    const freed = must(
+      applyUpdate(moved, {
+        updates: [
+          { id: 'a', group: null },
+          { id: 'a', layer: 'top' },
+        ],
+      }),
+    );
+    expect(freed.nodes.find((n) => n.id === 'a')?.layer).toBe('top');
+    expect(freed.nodes.find((n) => n.id === 'a')?.group).toBeUndefined();
+  });
+
+  it('refuses a re-rank that would invert an edge two bands away', () => {
+    const refused = applyUpdate(tallMap(), { layers: [{ id: 'top', rank: 0 }] });
+    expect(mustFail(refused)).toContain('layers[0]');
+  });
+
+  it('renames a band and relabels a group and a lane, keeping ids, ranks and members', () => {
+    const map = must(
+      applyDeclare(tallMap(), {
+        lanes: [{ id: 'l', label: 'Old lane' }],
+        groups: [{ id: 'g', label: 'Old group', layer: 'base' }],
+      }),
+    );
+    const renamed = must(
+      applyUpdate(map, {
+        layers: [{ id: 'base', name: '原语层' }],
+        groups: [{ id: 'g', label: '新子系统' }],
+        lanes: [{ id: 'l', label: '新泳道' }],
+      }),
+    );
+    expect(renamed.layers.find((l) => l.id === 'base')).toMatchObject({ name: '原语层', rank: 0 });
+    expect(renamed.groups[0]).toMatchObject({ id: 'g', label: '新子系统', layer: 'base' });
+    expect(renamed.lanes[0]).toMatchObject({ id: 'l', label: '新泳道' });
+  });
+
+  it('clears evidence and design notes with null — a node demoted back to a plan', () => {
+    const proven = must(
+      applyUpdate(tallMap(), { updates: [{ id: 'b', status: 'done', evidence: 'spec green', detail: 'notes' }] }),
+    );
+    const demoted = must(
+      applyUpdate(proven, { updates: [{ id: 'b', status: 'planned', evidence: null, detail: null }] }),
+    );
+    expect(demoted.nodes.find((n) => n.id === 'b')).toMatchObject({ status: 'planned' });
+    expect(demoted.nodes.find((n) => n.id === 'b')?.evidence).toBeUndefined();
+    expect(demoted.nodes.find((n) => n.id === 'b')?.detail).toBeUndefined();
+  });
+
+  it('refuses a batch that revises nothing, and a band item that changes nothing', () => {
+    expect(mustFail(applyUpdate(tallMap(), {}))).toContain('nothing to revise');
+    expect(mustFail(applyUpdate(tallMap(), { layers: [{ id: 'base' }] }))).toContain('nothing to change');
+  });
+
+  it('names the unknown thing per list', () => {
+    expect(mustFail(applyUpdate(tallMap(), { groups: [{ id: 'ghost', label: 'x' }] }))).toContain('groups[0]');
+    expect(mustFail(applyUpdate(tallMap(), { lanes: [{ id: 'ghost', label: 'x' }] }))).toContain('does not exist');
+    expect(mustFail(applyUpdate(tallMap(), { layers: [{ id: 'ghost', name: 'x' }] }))).toContain('layers[0]');
+  });
+});
+
+describe('sub-map links', () => {
+  const base = { layers: [{ id: 'base', name: 'Base', rank: 0 }] };
+
+  it('refuses a node that dives into its own page — a page is not its own child', () => {
+    const refused = applyDeclare(EMPTY_MAP, {
+      page: 'alpha',
+      ...base,
+      nodes: [{ id: 'n', label: 'N', layer: 'base', submap: 'alpha' }],
+    });
+    expect(mustFail(refused)).toContain('nodes[0]');
+    expect(mustFail(refused)).toContain('own page');
+
+    const linked = must(
+      applyDeclare(EMPTY_MAP, {
+        page: 'alpha',
+        ...base,
+        nodes: [{ id: 'n', label: 'N', layer: 'base', submap: 'beta' }],
+      }),
+    );
+    expect(linked.nodes[0]?.submap).toBe('beta');
+    expect(mustFail(applyUpdate(linked, { page: 'alpha', updates: [{ id: 'n', submap: 'alpha' }] }))).toContain(
+      'own page',
+    );
+  });
+
+  it('lets the default page link anything, having no slug a node could name', () => {
+    const map = must(
+      applyDeclare(EMPTY_MAP, { ...base, nodes: [{ id: 'n', label: 'N', layer: 'base', submap: 'alpha' }] }),
+    );
+    expect(map.nodes[0]?.submap).toBe('alpha');
+  });
+});
+
+describe('the map title lives on declare', () => {
+  it('replaces the title, and removes it with null', () => {
+    const retitled = must(applyDeclare(ghostMap(), { title: '新标题' }));
+    expect(retitled.title).toBe('新标题');
+    const cleared = must(applyDeclare(retitled, { title: null }));
+    expect(cleared.title).toBeUndefined();
+    expect('title' in cleared).toBe(false); // absent key, not an empty string
+    expect(cleared.nodes).toHaveLength(2); // and nothing else moved
   });
 });
 

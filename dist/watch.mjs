@@ -2,7 +2,7 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
 // src/watch/watch.ts
-import { realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync as statSync2 } from "node:fs";
 import { dirname as dirname2, join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -29,6 +29,12 @@ function makeNodeKind(raw) {
 function makeSubmapRef(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
 }
+var RANK_MIN = 0;
+var RANK_MAX = 99;
+var RANK_RULE_TEXT = `an integer in ${RANK_MIN}..${RANK_MAX}, 0 = bottom / most primitive`;
+function makeRank(raw) {
+  return Number.isInteger(raw) && raw >= RANK_MIN && raw <= RANK_MAX ? ok(raw) : err({ kind: "invalid-rank", raw, rule: RANK_RULE_TEXT });
+}
 var MAP_KINDS = ["dev", "architecture", "dataflow", "behavior-tree", "sequence"];
 function makeMapKind(raw) {
   return MAP_KINDS.includes(raw) ? ok(raw) : err({ kind: "invalid-map-kind", raw });
@@ -42,6 +48,8 @@ function describeMapError(e) {
   switch (e.kind) {
     case "invalid-id":
       return `invalid id "${e.raw}" (rule: ${e.rule})`;
+    case "invalid-rank":
+      return `invalid rank ${e.raw} (rule: ${e.rule})`;
     case "invalid-status":
       return `invalid status "${e.raw}" (expected: ${NODE_STATUSES.join(" | ")})`;
     case "duplicate-layer":
@@ -62,6 +70,8 @@ function describeMapError(e) {
       return `node "${e.id}" cannot depend on itself`;
     case "duplicate-group":
       return `group "${e.id}" already exists`;
+    case "id-collision":
+      return `id "${e.id}" already names a ${e.taken} on this map; nodes and groups share one id namespace (both render as boxes, so one id must mean one box) \u2014 rename "${e.id}"`;
     case "unknown-group":
       return `group "${e.id}" does not exist`;
     case "invalid-map-kind":
@@ -73,9 +83,9 @@ function describeMapError(e) {
     case "group-layer-mismatch":
       return `node "${e.node}" (layer ${e.nodeLayer}) cannot join group "${e.group}" (layer ${e.groupLayer}); groups cluster nodes within one band`;
     case "layer-not-empty":
-      return `layer "${e.id}" still holds node "${e.occupant}"; move or remove its nodes first`;
+      return `layer "${e.id}" still holds node "${e.occupant}"; move its nodes to another band (moveNode) or remove them (removeNode) first`;
     case "layer-holds-group":
-      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups first`;
+      return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups (removeGroup) first`;
     case "edge-not-downward":
       return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; dependencies may only point to a lower layer`;
   }
@@ -101,7 +111,15 @@ function checkMembership(map, node, nodeLayer, group) {
 function hasEdge(map, from, to) {
   return map.edges.some((e) => e.from === from && e.to === to);
 }
+function checkIdSpace(map, id, declaring) {
+  const taken = declaring === "node" ? map.groups.some((g) => g.id === id) : map.nodes.some((n) => n.id === id);
+  return taken ? { kind: "id-collision", id, taken: declaring === "node" ? "group" : "node" } : void 0;
+}
 function setTitle(map, title) {
+  if (title === null || title === void 0) {
+    const { title: _dropped, ...rest } = map;
+    return rest;
+  }
   return { ...map, title };
 }
 function setKind(map, kind) {
@@ -122,6 +140,8 @@ function declareLayer(map, input) {
 }
 function declareGroup(map, input) {
   if (findGroup(map, input.id)) return err({ kind: "duplicate-group", id: input.id });
+  const collision = checkIdSpace(map, input.id, "group");
+  if (collision) return err(collision);
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
   return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
 }
@@ -139,6 +159,8 @@ function mapStatus(map) {
 }
 function declareNode(map, input) {
   if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
+  const collision = checkIdSpace(map, input.id, "node");
+  if (collision) return err(collision);
   if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
   if (input.group !== void 0) {
     const bad = checkMembership(map, input.id, input.layer, input.group);
@@ -150,6 +172,7 @@ function declareNode(map, input) {
     label: input.label,
     layer: input.layer,
     status: input.status ?? "planned",
+    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
     ...input.detail !== void 0 ? { detail: input.detail } : {},
     ...input.group !== void 0 ? { group: input.group } : {},
     ...input.kind !== void 0 ? { kind: input.kind } : {},
@@ -170,6 +193,9 @@ function linkNodes(map, from, to, label) {
   if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
   return ok({ ...map, edges: [...map.edges, { from, to, ...label !== void 0 ? { label } : {} }] });
 }
+function resolveOptional(input, current) {
+  return input === void 0 ? current : input === null ? void 0 : input;
+}
 function updateNode(map, input) {
   const node = findNode(map, input.id);
   if (!node) return err({ kind: "unknown-node", id: input.id });
@@ -180,23 +206,77 @@ function updateNode(map, input) {
   if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
     return err({ kind: "unknown-lane", id: input.lane });
   }
-  const { group: currentGroup, kind: currentKind, lane: currentLane, submap: currentSubmap, ...bare } = node;
-  const nextGroup = input.group === void 0 ? currentGroup : input.group === null ? void 0 : input.group;
-  const nextKind = input.kind === void 0 ? currentKind : input.kind === null ? void 0 : input.kind;
-  const nextLane = input.lane === void 0 ? currentLane : input.lane === null ? void 0 : input.lane;
-  const nextSubmap = input.submap === void 0 ? currentSubmap : input.submap === null ? void 0 : input.submap;
+  const {
+    group: currentGroup,
+    kind: currentKind,
+    lane: currentLane,
+    submap: currentSubmap,
+    evidence: currentEvidence,
+    detail: currentDetail,
+    ...bare
+  } = node;
+  const nextGroup = resolveOptional(input.group, currentGroup);
+  const nextKind = resolveOptional(input.kind, currentKind);
+  const nextLane = resolveOptional(input.lane, currentLane);
+  const nextSubmap = resolveOptional(input.submap, currentSubmap);
+  const nextEvidence = resolveOptional(input.evidence, currentEvidence);
+  const nextDetail = resolveOptional(input.detail, currentDetail);
   const updated = {
     ...bare,
+    ...nextEvidence !== void 0 ? { evidence: nextEvidence } : {},
+    ...nextDetail !== void 0 ? { detail: nextDetail } : {},
     ...nextGroup !== void 0 ? { group: nextGroup } : {},
     ...nextKind !== void 0 ? { kind: nextKind } : {},
     ...nextLane !== void 0 ? { lane: nextLane } : {},
     ...nextSubmap !== void 0 ? { submap: nextSubmap } : {},
     ...input.status !== void 0 ? { status: input.status } : {},
-    ...input.label !== void 0 ? { label: input.label } : {},
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
-    ...input.detail !== void 0 ? { detail: input.detail } : {}
+    ...input.label !== void 0 ? { label: input.label } : {}
   };
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
+}
+
+// src/semantics/vocabulary.ts
+var STATUS_GLYPHS = {
+  planned: ["\xB7", "."],
+  "in-progress": ["\u283F", "*"],
+  done: ["\u25A0", "#"],
+  regressed: ["\u2717", "X"]
+};
+function statusGlyph(status, unicode) {
+  const [uni, ascii] = STATUS_GLYPHS[status];
+  return unicode ? uni : ascii;
+}
+var UNVERIFIED_DONE_GLYPHS = ["\u25A1", "o"];
+function unverifiedDoneGlyph(unicode) {
+  const [uni, ascii] = UNVERIFIED_DONE_GLYPHS;
+  return unicode ? uni : ascii;
+}
+var SPINNER_FRAMES = {
+  unicode: ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"],
+  ascii: ["|", "/", "-", "\\"]
+};
+function spinnerGlyph(frame, unicode) {
+  const frames = SPINNER_FRAMES[unicode ? "unicode" : "ascii"];
+  return frames[(frame % frames.length + frames.length) % frames.length];
+}
+var NODE_KIND_GLYPHS = {
+  selector: ["?", "?"],
+  sequence: ["\xBB", ">"],
+  parallel: ["\u2016", "="],
+  decorator: ["\u25CC", "o"],
+  condition: ["\u25C7", "c"],
+  action: ["\xB7", "."],
+  source: ["\u25CB", "o"],
+  transform: ["\u25D0", "%"],
+  sink: ["\u25CF", "*"],
+  service: ["\u25C6", "S"],
+  db: ["\u25A4", "D"],
+  queue: ["\u2263", "Q"],
+  ui: ["\u25A3", "U"]
+};
+function kindGlyph(kind, unicode) {
+  const pair = NODE_KIND_GLYPHS[kind];
+  return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
 }
 
 // src/semantics/semantics.ts
@@ -323,12 +403,44 @@ function focusInfo(map, focusId) {
     usedBy: map.edges.filter((e) => e.to === node.id).map((e) => ref(e.from, e.label))
   };
 }
-function submapRefs(maps) {
-  const refs = /* @__PURE__ */ new Set();
-  for (const m of maps) {
-    for (const n of m?.nodes ?? []) if (n.submap !== void 0) refs.add(n.submap);
+function interiorPages(pages) {
+  const dives = /* @__PURE__ */ new Map();
+  const divedIntoBy = /* @__PURE__ */ new Map();
+  for (const [slug, map] of pages) {
+    const targets = /* @__PURE__ */ new Set();
+    for (const n of map?.nodes ?? []) {
+      const target = n.submap;
+      if (target === void 0 || target === slug) continue;
+      targets.add(target);
+      const sources = divedIntoBy.get(target) ?? /* @__PURE__ */ new Set();
+      sources.add(slug);
+      divedIntoBy.set(target, sources);
+    }
+    if (slug !== void 0) dives.set(slug, targets);
   }
-  return refs;
+  const reachableFrom = (start) => {
+    const seen = /* @__PURE__ */ new Set();
+    const pending = [start];
+    while (pending.length > 0) {
+      for (const target of dives.get(pending.pop()) ?? []) {
+        if (seen.has(target)) continue;
+        seen.add(target);
+        pending.push(target);
+      }
+    }
+    return seen;
+  };
+  const interior = /* @__PURE__ */ new Set();
+  for (const [target, sources] of divedIntoBy) {
+    const outward = reachableFrom(target);
+    for (const source of sources) {
+      if (source === void 0 || !outward.has(source)) {
+        interior.add(target);
+        break;
+      }
+    }
+  }
+  return interior;
 }
 function diveParent(entries, pageId) {
   for (const [key, m] of entries) {
@@ -337,11 +449,11 @@ function diveParent(entries, pageId) {
   }
   return void 0;
 }
-function mostRecentKey(keys, mtimeOf) {
+function mostRecentKey(keys, mtimeOf2) {
   let best;
   let bestMtime = -Infinity;
   for (const key of keys) {
-    const mtime = mtimeOf(key);
+    const mtime = mtimeOf2(key);
     if (mtime !== void 0 && mtime > bestMtime) {
       best = key;
       bestMtime = mtime;
@@ -353,15 +465,60 @@ function flipForSequence(map) {
   if (map.kind !== "sequence") return map;
   return {
     ...map,
+    // VIOLATION: state-explicit-in-types - `-l.rank as Rank` produces a value
+    // the Rank brand promises cannot exist: mirroring 0..99 gives -99..0, and
+    // makeRank would refuse every one of them. The alternative is a second
+    // ordered-position type (an unbranded `order` field) threaded through the
+    // renderer's whole layout stage purely so this one derived map can be
+    // typed — a large change to express "these ranks are an order, not a
+    // stored value". What makes it safe is the same thing that makes it
+    // wrong: this map only ever reaches a renderer, which compares ranks and
+    // never writes them (same contract as aggregateMap).
     layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
     edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
   };
 }
 
-// src/render/render.ts
+// src/render/width.ts
 var WIDE_RANGES = [
   [4352, 4447],
   // Hangul Jamo
+  // Wide symbols scattered through the BMP — mostly emoji that predate the
+  // emoji planes (⌚ ⏰ ⚡ ✅ ✨ ❌ ❓ ⭐ ⬛ …).
+  [8986, 8987],
+  [9001, 9002],
+  [9193, 9196],
+  [9200, 9200],
+  [9203, 9203],
+  [9725, 9726],
+  [9748, 9749],
+  [9800, 9811],
+  [9855, 9855],
+  [9875, 9875],
+  [9889, 9889],
+  [9898, 9899],
+  [9917, 9918],
+  [9924, 9925],
+  [9934, 9934],
+  [9940, 9940],
+  [9962, 9962],
+  [9970, 9971],
+  [9973, 9973],
+  [9978, 9978],
+  [9981, 9981],
+  [9989, 9989],
+  [9994, 9995],
+  [10024, 10024],
+  [10060, 10060],
+  [10062, 10062],
+  [10067, 10069],
+  [10071, 10071],
+  [10133, 10135],
+  [10160, 10160],
+  [10175, 10175],
+  [11035, 11036],
+  [11088, 11088],
+  [11093, 11093],
   [11904, 42191],
   // CJK radicals .. Yi (covers CJK Unified Ideographs)
   [43360, 43391],
@@ -374,14 +531,41 @@ var WIDE_RANGES = [
   [65280, 65376],
   // fullwidth forms
   [65504, 65510],
+  [127744, 128591],
+  // pictographs, transport, emoticons (🚀 🎯 😀 …)
+  [128640, 128767],
+  [129280, 129535],
+  // supplemental symbols (🤖 🧱 …)
+  [129648, 129791],
+  // symbols extended-A
   [131072, 262141]
   // CJK extension planes
 ];
-function charWidth(cp) {
-  for (const [lo, hi] of WIDE_RANGES) {
-    if (cp >= lo && cp <= hi) return 2;
+var ZERO_WIDTH_RANGES = [
+  [768, 879],
+  // combining diacritical marks (decomposed 'e' + ´)
+  [6832, 6911],
+  [7616, 7679],
+  [8203, 8207],
+  // zero-width space .. RLM, zero-width joiner among them
+  [8400, 8432],
+  // combining marks for symbols
+  [65024, 65039],
+  // variation selectors, VS16 (emoji presentation) included
+  [65056, 65071],
+  // combining half marks
+  [127995, 127999]
+  // emoji skin tone modifiers — always applied to a base
+];
+function inRanges(cp, ranges) {
+  for (const [lo, hi] of ranges) {
+    if (cp >= lo && cp <= hi) return true;
   }
-  return 1;
+  return false;
+}
+function charWidth(cp) {
+  if (inRanges(cp, ZERO_WIDTH_RANGES)) return 0;
+  return inRanges(cp, WIDE_RANGES) ? 2 : 1;
 }
 function displayWidth(text) {
   let w = 0;
@@ -423,6 +607,19 @@ function wrapWidth(s, width) {
   if (line !== "") lines.push(line);
   return lines;
 }
+
+// src/render/canvas.ts
+var SGR = {
+  none: "",
+  dim: "2",
+  amber: "33",
+  green: "32",
+  greenDim: "32;2",
+  // done, but nothing behind the claim: green, not fully lit
+  red: "31",
+  faint: "90"
+};
+var ANSI_RESET = "\x1B[0m";
 var UP = 1;
 var DOWN = 2;
 var LEFT = 4;
@@ -457,15 +654,6 @@ function maskChar(mask, heavyHorizontal, unicode) {
   }
   return LIGHT_BY_MASK[mask] ?? "\u253C";
 }
-var SGR = {
-  none: "",
-  dim: "2",
-  amber: "33",
-  green: "32",
-  red: "31",
-  faint: "90"
-};
-var ANSI_RESET = "\x1B[0m";
 var BORDER_JUNCTION = {
   "\u2500": { down: "\u252C", up: "\u2534" },
   "\u254C": { down: "\u252C", up: "\u2534" },
@@ -491,11 +679,17 @@ var Canvas = class {
   text(x, y, s, style, bold = false) {
     let cx = x;
     for (const ch of s) {
+      const w = charWidth(ch.codePointAt(0));
+      if (w === 0) {
+        const base = this.cell(Math.max(0, cx - 1), y);
+        const target = base.literal === "" ? this.cell(Math.max(0, cx - 2), y) : base;
+        target.literal = (target.literal ?? "") + ch;
+        continue;
+      }
       const c = this.cell(cx, y);
       c.literal = ch;
       c.style = style;
       c.bold = bold;
-      const w = charWidth(ch.codePointAt(0));
       if (w === 2) {
         const phantom = this.cell(cx + 1, y);
         phantom.literal = "";
@@ -574,61 +768,12 @@ function drawPath(canvas, points, bright = false) {
     }
   }
 }
-var SPINNER_UNICODE = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
-var SPINNER_ASCII = ["|", "/", "-", "\\"];
-function skinFor(status, unicode) {
-  const style = status === "planned" ? "dim" : status === "in-progress" ? "amber" : status === "done" ? "green" : "red";
-  if (!unicode) {
-    return status === "planned" ? { h: ".", v: ":", corners: ["+", "+", "+", "+"], style } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style };
-  }
-  switch (status) {
-    case "planned":
-      return { h: "\u254C", v: "\u254E", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
-    case "in-progress":
-      return { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
-    case "done":
-    case "regressed":
-      return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
-  }
-}
-function glyphFor(status, opts) {
-  const spinner = opts.unicode ? SPINNER_UNICODE : SPINNER_ASCII;
-  switch (status) {
-    case "planned":
-      return opts.unicode ? "\xB7" : ".";
-    case "in-progress":
-      return spinner[opts.spinnerFrame % spinner.length];
-    case "done":
-      return opts.unicode ? "\u25A0" : "#";
-    case "regressed":
-      return opts.unicode ? "\u2717" : "X";
-  }
-}
-var NODE_KIND_GLYPHS = {
-  selector: ["?", "?"],
-  sequence: ["\xBB", ">"],
-  parallel: ["\u2016", "="],
-  decorator: ["\u25CC", "o"],
-  condition: ["\u25C7", "c"],
-  action: ["\xB7", "."],
-  source: ["\u25CB", "o"],
-  transform: ["\u25D0", "%"],
-  sink: ["\u25CF", "*"],
-  service: ["\u25C6", "S"],
-  db: ["\u25A4", "D"],
-  queue: ["\u2263", "Q"],
-  ui: ["\u25A3", "U"]
-};
-function kindGlyph(kind, unicode) {
-  const pair = NODE_KIND_GLYPHS[kind];
-  return pair === void 0 ? void 0 : unicode ? pair[0] : pair[1];
-}
-function neutralSkin(unicode) {
-  return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
-}
+
+// src/render/zoom-geometry.ts
 var BOX_H = 3;
 var BOX_GAP = 2;
 var LEFT_MARGIN = 2;
+var BAR_MIN_RUN = 7;
 var DETAIL_BUDGET = { innerMin: 22, innerMax: 32, noteRows: 3 };
 var DETAIL_PLUS_BUDGET = { innerMin: 30, innerMax: 48, noteRows: 12 };
 function zoomGeometry(zoom) {
@@ -651,6 +796,347 @@ function zoomGeometry(zoom) {
       return { mode, scale: 0, pad: 0, boxGap: BOX_GAP, breathe: 0, titleGap: 0, barGap: 1, bandCounts: true };
   }
 }
+var AGGREGATE_GEO = {
+  mode: "boxes",
+  scale: 1,
+  pad: 0,
+  boxGap: 1,
+  breathe: 0,
+  titleGap: 0,
+  barGap: 1,
+  bandCounts: false
+};
+
+// src/render/routing.ts
+function routeEdges(map, columns) {
+  const { bandIndexOf, bandBoxes, boxOf, contentWidth } = columns;
+  const pending = map.edges.map((e) => {
+    const from = boxOf.get(e.from);
+    const to = boxOf.get(e.to);
+    return {
+      from,
+      to,
+      fromBand: bandIndexOf.get(from.node.layer),
+      toBand: bandIndexOf.get(to.node.layer)
+    };
+  });
+  const gapVerticals = Array.from(
+    { length: Math.max(0, columns.bands.length - 1) },
+    () => /* @__PURE__ */ new Map()
+  );
+  const verticalFree = (gap, x, edge) => {
+    const owner = gapVerticals[gap]?.get(x);
+    return owner === void 0 || owner === edge;
+  };
+  const takeVertical = (gap, x, edge) => {
+    gapVerticals[gap]?.set(x, edge);
+  };
+  const claimedColumns = /* @__PURE__ */ new Map();
+  const isFree = (box, x) => !(claimedColumns.get(box)?.has(x) ?? false);
+  const claim = (box, x) => {
+    let set = claimedColumns.get(box);
+    if (!set) claimedColumns.set(box, set = /* @__PURE__ */ new Set());
+    set.add(x);
+    return x;
+  };
+  for (const r of pending) {
+    if (r.toBand - r.fromBand !== 1) continue;
+    const lo = Math.max(r.from.x + 1, r.to.x + 1);
+    const hi = Math.min(r.from.x + r.from.w - 2, r.to.x + r.to.w - 2);
+    if (lo > hi) continue;
+    const mid = Math.floor((lo + hi) / 2);
+    for (let d = 0; d <= hi - lo && r.straightX === void 0; d++) {
+      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
+        if (x >= lo && x <= hi && isFree(r.from, x) && isFree(r.to, x) && verticalFree(r.fromBand, x, r)) {
+          r.straightX = claim(r.to, claim(r.from, x));
+          takeVertical(r.fromBand, x, r);
+          break;
+        }
+      }
+    }
+  }
+  const bent = pending.filter((r) => r.straightX === void 0);
+  const outgoing = /* @__PURE__ */ new Map();
+  const incoming = /* @__PURE__ */ new Map();
+  for (const r of bent) {
+    outgoing.set(r.from, [...outgoing.get(r.from) ?? [], r]);
+    incoming.set(r.to, [...incoming.get(r.to) ?? [], r]);
+  }
+  const freeSlot = (box, k, n, edge, gap) => {
+    const lo = box.x + 1;
+    const hi = box.x + box.w - 2;
+    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
+    for (let d = 0; d <= hi - lo; d++) {
+      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
+        if (x >= lo && x <= hi && isFree(box, x) && verticalFree(gap, x, edge)) {
+          takeVertical(gap, x, edge);
+          return claim(box, x);
+        }
+      }
+    }
+    return ideal;
+  };
+  for (const r of bent) {
+    const outs = outgoing.get(r.from);
+    const ins = incoming.get(r.to);
+    r.exitX = freeSlot(r.from, outs.indexOf(r), outs.length, r, r.fromBand);
+    r.entryX = freeSlot(r.to, ins.indexOf(r), ins.length, r, r.toBand - 1);
+  }
+  const usedDescent = /* @__PURE__ */ new Set();
+  let fallbackCount = 0;
+  const blockedByBox = (band, x) => bandBoxes[band].some((b) => x >= b.x && x <= b.x + b.w - 1);
+  const descentGapsFree = (r, c) => {
+    for (let g = r.fromBand; g <= r.toBand - 1; g++) {
+      if (!verticalFree(g, c, r)) return false;
+    }
+    return true;
+  };
+  for (const r of bent.filter((e) => e.toBand - e.fromBand > 1)) {
+    const ex = r.entryX;
+    let chosen;
+    for (let d = 0; d <= contentWidth && chosen === void 0; d++) {
+      for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
+        if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
+        if (!descentGapsFree(r, c)) continue;
+        let blocked = false;
+        for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
+        if (!blocked) {
+          chosen = c;
+          break;
+        }
+      }
+    }
+    if (chosen === void 0) chosen = contentWidth + 2 + fallbackCount++ * 2;
+    usedDescent.add(chosen);
+    for (let g = r.fromBand; g <= r.toBand - 1; g++) takeVertical(g, chosen, r);
+    r.descentX = chosen;
+  }
+  const gapCount = Math.max(0, columns.bands.length - 1);
+  const gapSegments = Array.from(
+    { length: gapCount },
+    () => []
+  );
+  for (const r of bent) {
+    const sx = r.exitX;
+    const ex = r.entryX;
+    if (r.descentX === void 0) {
+      gapSegments[r.toBand - 1].push({
+        edge: r,
+        kind: "landing",
+        segment: { lo: Math.min(sx, ex), hi: Math.max(sx, ex) }
+      });
+    } else {
+      const c = r.descentX;
+      gapSegments[r.fromBand].push({ edge: r, kind: "exit", segment: { lo: Math.min(sx, c), hi: Math.max(sx, c) } });
+      gapSegments[r.toBand - 1].push({
+        edge: r,
+        kind: "landing",
+        segment: { lo: Math.min(c, ex), hi: Math.max(c, ex) }
+      });
+    }
+  }
+  const exitRow = /* @__PURE__ */ new Map();
+  const landingRow = /* @__PURE__ */ new Map();
+  const gapRowCount = gapSegments.map((entries) => {
+    const rowEnds = [];
+    for (const e of [...entries].sort((a, b) => a.segment.lo - b.segment.lo)) {
+      let row = rowEnds.findIndex((end) => e.segment.lo > end + 1);
+      if (row === -1) {
+        rowEnds.push(e.segment.hi);
+        row = rowEnds.length - 1;
+      } else {
+        rowEnds[row] = Math.max(rowEnds[row], e.segment.hi);
+      }
+      (e.kind === "exit" ? exitRow : landingRow).set(e.edge, row);
+    }
+    return rowEnds.length;
+  });
+  const edges = pending.map((r) => {
+    const common = { from: r.from, to: r.to, fromBand: r.fromBand, toBand: r.toBand };
+    if (r.straightX !== void 0) return { ...common, kind: "straight", x: r.straightX };
+    if (r.descentX === void 0) {
+      return { ...common, kind: "dogleg", exitX: r.exitX, entryX: r.entryX, landingRow: landingRow.get(r) };
+    }
+    return {
+      ...common,
+      kind: "thread",
+      exitX: r.exitX,
+      entryX: r.entryX,
+      descentX: r.descentX,
+      exitRow: exitRow.get(r),
+      landingRow: landingRow.get(r)
+    };
+  });
+  return { edges, gapRowCount, fallbackCount };
+}
+function edgePolyline(edge, rows) {
+  const from = rows.boxOf.get(edge.from.node.id);
+  const to = rows.boxOf.get(edge.to.node.id);
+  const sy = from.y + from.h - 1;
+  const ey = to.y;
+  if (edge.kind === "straight") {
+    return [
+      [edge.x, sy],
+      [edge.x, ey]
+    ];
+  }
+  const landingY = rows.gapTrackStartY[edge.toBand - 1] + edge.landingRow;
+  if (edge.kind === "dogleg") {
+    return [
+      [edge.exitX, sy],
+      [edge.exitX, landingY],
+      [edge.entryX, landingY],
+      [edge.entryX, ey]
+    ];
+  }
+  const exitY = rows.gapTrackStartY[edge.fromBand] + edge.exitRow;
+  return [
+    [edge.exitX, sy],
+    [edge.exitX, exitY],
+    [edge.descentX, exitY],
+    [edge.descentX, landingY],
+    [edge.entryX, landingY],
+    [edge.entryX, ey]
+  ];
+}
+
+// src/render/skins.ts
+function styleFor(face) {
+  switch (face) {
+    case "planned":
+      return "dim";
+    case "in-progress":
+      return "amber";
+    case "done":
+      return "green";
+    case "done-unverified":
+      return "greenDim";
+    case "regressed":
+      return "red";
+  }
+}
+function statusSgr(status) {
+  return SGR[styleFor(status)];
+}
+function skinFor(face, unicode) {
+  const style = styleFor(face);
+  if (!unicode) {
+    return face === "planned" ? { h: ".", v: ":", corners: ["+", "+", "+", "+"], style } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style };
+  }
+  switch (face) {
+    case "planned":
+      return { h: "\u254C", v: "\u254E", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
+    case "in-progress":
+      return { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style };
+    // an unverified done keeps the heavy border of done — it is the same
+    // claim, told with a hollow glyph and a dimmer green
+    case "done":
+    case "done-unverified":
+    case "regressed":
+      return { h: "\u2501", v: "\u2503", corners: ["\u250F", "\u2513", "\u2517", "\u251B"], style };
+  }
+}
+function glyphFor(face, opts) {
+  if (face === "in-progress") return spinnerGlyph(opts.spinnerFrame, opts.unicode);
+  return face === "done-unverified" ? unverifiedDoneGlyph(opts.unicode) : statusGlyph(face, opts.unicode);
+}
+function neutralSkin(unicode) {
+  return unicode ? { h: "\u2500", v: "\u2502", corners: ["\u256D", "\u256E", "\u2570", "\u256F"], style: "none" } : { h: "-", v: "|", corners: ["+", "+", "+", "+"], style: "none" };
+}
+function neutralGlyph(node, unicode) {
+  return (node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0) ?? (unicode ? "\xB7" : ".");
+}
+function unverifiedDoneIds(declared, drawn) {
+  const out = /* @__PURE__ */ new Set();
+  const declaredById = new Map(declared.nodes.map((n) => [n.id, n]));
+  for (const node of drawn.nodes) {
+    if (node.status !== "done") continue;
+    const own = declaredById.get(node.id);
+    if (own !== void 0) {
+      if (own.evidence === void 0) out.add(node.id);
+    } else if (declared.nodes.some(
+      (m) => m.group === node.id && m.status === "done" && m.evidence === void 0
+    )) {
+      out.add(node.id);
+    }
+  }
+  return out;
+}
+
+// src/render/draw.ts
+function drawTitle(canvas, title) {
+  canvas.text(LEFT_MARGIN, 0, title, "none", true);
+}
+function drawLaneHeaders(canvas, map, columns, rows) {
+  if (rows.laneHeaderY === void 0) return;
+  for (let i = 0; i < map.lanes.length; i++) {
+    const region = columns.lanes[i];
+    const label = fitWidth(map.lanes[i].label, region.w);
+    const cx = region.x + Math.max(0, Math.floor((region.w - displayWidth(label)) / 2));
+    canvas.text(cx, rows.laneHeaderY, label, "faint", true);
+  }
+}
+function drawBands(canvas, columns, rows, wiredWidth, totalWidth) {
+  for (let b = 0; b < columns.bands.length; b++) {
+    const label = columns.bandLabel[b];
+    for (let x = 0; x < wiredWidth; x++) canvas.line(x, rows.barY[b], LEFT | RIGHT, true);
+    canvas.text(totalWidth - displayWidth(label), rows.barY[b], label, "none", true);
+  }
+}
+function drawBox(canvas, box, opts, neutral, face, focused = false) {
+  const { node, x, y, w } = box;
+  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(face, opts.unicode);
+  const slotGlyph = neutral ? neutralGlyph(node, opts.unicode) : glyphFor(face, opts);
+  if (box.borderless) {
+    canvas.text(x + 1, y, slotGlyph, skin.style, true);
+    return;
+  }
+  const inner = w - 2;
+  const pad = box.pad === 1 ? " " : "";
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
+  canvas.text(x, y + 1, skin.v, skin.style, focused);
+  canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
+  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  for (let i = 0; i < box.extra.length; i++) {
+    const row = box.extra[i];
+    const yy = y + 2 + i;
+    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x + 1, yy, row.text, row.style);
+    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+  }
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+}
+function drawEdges(canvas, edges, rows, opts) {
+  for (const edge of edges) {
+    const bright = opts.focus !== void 0 && (edge.from.node.id === opts.focus || edge.to.node.id === opts.focus);
+    drawPath(canvas, edgePolyline(edge, rows), bright);
+  }
+}
+function drawLegend(canvas, map, opts, legendY, neutral, anyUnverified) {
+  let lx = LEFT_MARGIN;
+  if (neutral) {
+    lx = canvas.text(lx, legendY, map.kind, "faint");
+    const seen = /* @__PURE__ */ new Set();
+    for (const n of map.nodes) {
+      const k = n.kind;
+      if (k === void 0 || seen.has(k) || kindGlyph(k, opts.unicode) === void 0) continue;
+      seen.add(k);
+      lx = canvas.text(lx, legendY, "   ", "none");
+      lx = canvas.text(lx, legendY, `${kindGlyph(k, opts.unicode)} ${k}`, "none");
+    }
+    return;
+  }
+  const legendOpts = { ...opts, spinnerFrame: 0 };
+  const faces = ["planned", "in-progress", "done", "regressed"];
+  if (anyUnverified) faces.push("done-unverified");
+  for (const face of faces) {
+    if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
+    const word = face === "done-unverified" ? "done, no evidence" : face;
+    lx = canvas.text(lx, legendY, `${glyphFor(face, legendOpts)} ${word}`, styleFor(face));
+  }
+}
+
+// src/render/layout.ts
 var LABEL_BUDGET_MIN = 4;
 function boxSpec(node, geo, unicode, neutral) {
   const glyph = node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0;
@@ -692,69 +1178,36 @@ function boxSpec(node, geo, unicode, neutral) {
     extra: []
   };
 }
-function renderMapWindow(map, opts, viewport) {
-  const built = buildCanvas(map, opts);
-  return {
-    lines: built.canvas.emit(opts, viewport),
-    contentWidth: built.canvas.width,
-    contentHeight: built.canvas.height,
-    hits: built.hits
-  };
-}
-var AGGREGATE_GEO = {
-  mode: "boxes",
-  scale: 1,
-  pad: 0,
-  boxGap: 1,
-  breathe: 0,
-  titleGap: 0,
-  barGap: 1,
-  bandCounts: false
-};
-function buildCanvas(map, opts) {
-  const oriented = flipForSequence(map);
-  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
-  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
-  return buildCanvasWith(aggregated ?? oriented, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo);
-}
-function buildCanvasWith(map, opts, geo) {
-  const canvas = new Canvas();
-  const neutral = isNeutralKind(map);
+function layoutColumns(map, geo, unicode, neutral) {
   const bands = [...map.layers].sort((a, b) => b.rank - a.rank);
-  if (bands.length === 0) {
-    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
-    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return { canvas, hits: [] };
-  }
   const bandIndexOf = new Map(bands.map((l, i) => [l.id, i]));
-  const boxes = /* @__PURE__ */ new Map();
-  const bandBoxes = bands.map(() => []);
+  const sized = /* @__PURE__ */ new Map();
+  const bandSized = bands.map(() => []);
   for (const node of map.nodes) {
-    const band = bandIndexOf.get(node.layer);
-    const box = { node, ...boxSpec(node, geo, opts.unicode, neutral), x: LEFT_MARGIN, y: 0 };
-    bandBoxes[band].push(box);
-    boxes.set(node.id, box);
+    const spec = { node, ...boxSpec(node, geo, unicode, neutral) };
+    bandSized[bandIndexOf.get(node.layer)].push(spec);
+    sized.set(node.id, spec);
   }
-  const laneCount = map.lanes.length;
-  const laneX = [];
-  const laneW = [];
-  if (laneCount === 0) {
-    for (const row of bandBoxes) {
+  const columnOf = /* @__PURE__ */ new Map();
+  const lanes = [];
+  if (map.lanes.length === 0) {
+    for (const row of bandSized) {
       let x = LEFT_MARGIN;
-      for (const box of row) {
-        box.x = x;
-        x += box.w + geo.boxGap;
+      for (const spec of row) {
+        columnOf.set(spec, x);
+        x += spec.w + geo.boxGap;
       }
     }
   } else {
+    const laneCount = map.lanes.length;
     const laneGap = geo.boxGap + 2;
     const laneIndexOf = new Map(map.lanes.map((l, i) => [l.id, i]));
     const regions = laneCount + 1;
-    const grouped = bandBoxes.map((row) => {
+    const grouped = bandSized.map((row) => {
       const cells = Array.from({ length: regions }, () => []);
-      for (const box of row) {
-        const lane = box.node.lane;
-        cells[lane !== void 0 ? laneIndexOf.get(lane) : regions - 1].push(box);
+      for (const spec of row) {
+        const lane = spec.node.lane;
+        cells[lane !== void 0 ? laneIndexOf.get(lane) : regions - 1].push(spec);
       }
       return cells;
     });
@@ -768,164 +1221,53 @@ function buildCanvasWith(map, opts, geo) {
     for (let i = 0; i < laneCount; i++) regionW[i] = Math.max(regionW[i], displayWidth(map.lanes[i].label) + 2);
     let x0 = LEFT_MARGIN;
     for (let i = 0; i < regions; i++) {
-      laneX.push(x0);
-      laneW.push(regionW[i]);
+      lanes.push({ x: x0, w: regionW[i] });
       x0 += regionW[i] + laneGap;
     }
     for (const cells of grouped) {
       for (let i = 0; i < regions; i++) {
-        let x = laneX[i];
-        for (const box of cells[i]) {
-          box.x = x;
-          x += box.w + geo.boxGap;
+        let x = lanes[i].x;
+        for (const spec of cells[i]) {
+          columnOf.set(spec, x);
+          x += spec.w + geo.boxGap;
         }
       }
     }
   }
+  const placed = /* @__PURE__ */ new Map();
+  for (const [, spec] of sized) placed.set(spec, { ...spec, x: columnOf.get(spec) ?? LEFT_MARGIN });
+  const bandBoxes = bandSized.map((row) => row.map((spec) => placed.get(spec)));
+  const boxOf = /* @__PURE__ */ new Map();
+  for (const node of map.nodes) boxOf.set(node.id, placed.get(sized.get(node.id)));
   const bandLabel = bands.map((l, i) => {
     const row = bandBoxes[i];
     const done = row.filter((b) => b.node.status === "done").length;
     return geo.bandCounts && row.length > 0 && !neutral ? ` ${l.name} ${done}/${row.length}` : ` ${l.name}`;
   });
-  let contentWidth = LEFT_MARGIN;
-  for (const row of bandBoxes) {
-    const last = row[row.length - 1];
-    if (last) contentWidth = Math.max(contentWidth, last.x + last.w);
-  }
-  for (let i = 0; i < laneCount; i++) contentWidth = Math.max(contentWidth, laneX[i] + laneW[i]);
-  for (const label of bandLabel) contentWidth = Math.max(contentWidth, LEFT_MARGIN + displayWidth(label) + 7);
-  const routes = map.edges.map((e) => {
-    const fromBox = boxes.get(e.from);
-    const toBox = boxes.get(e.to);
-    return {
-      fromBox,
-      toBox,
-      fromBand: bandIndexOf.get(fromBox.node.layer),
-      toBand: bandIndexOf.get(toBox.node.layer)
-    };
-  });
-  const claimedColumns = /* @__PURE__ */ new Map();
-  const isFree = (box, x) => !(claimedColumns.get(box)?.has(x) ?? false);
-  const claim = (box, x) => {
-    let set = claimedColumns.get(box);
-    if (!set) claimedColumns.set(box, set = /* @__PURE__ */ new Set());
-    set.add(x);
-    return x;
-  };
-  const straightX = /* @__PURE__ */ new Map();
-  for (const r of routes) {
-    if (r.toBand - r.fromBand !== 1) continue;
-    const lo = Math.max(r.fromBox.x + 1, r.toBox.x + 1);
-    const hi = Math.min(r.fromBox.x + r.fromBox.w - 2, r.toBox.x + r.toBox.w - 2);
-    if (lo > hi) continue;
-    const mid = Math.floor((lo + hi) / 2);
-    for (let d = 0; d <= hi - lo && !straightX.has(r); d++) {
-      for (const x of d === 0 ? [mid] : [mid - d, mid + d]) {
-        if (x >= lo && x <= hi && isFree(r.fromBox, x) && isFree(r.toBox, x)) {
-          straightX.set(r, claim(r.toBox, claim(r.fromBox, x)));
-          break;
-        }
-      }
-    }
-  }
-  const bent = routes.filter((r) => !straightX.has(r));
-  const outgoing = /* @__PURE__ */ new Map();
-  const incoming = /* @__PURE__ */ new Map();
-  for (const r of bent) {
-    outgoing.set(r.fromBox, [...outgoing.get(r.fromBox) ?? [], r]);
-    incoming.set(r.toBox, [...incoming.get(r.toBox) ?? [], r]);
-  }
-  const freeSlot = (box, k, n) => {
-    const lo = box.x + 1;
-    const hi = box.x + box.w - 2;
-    const ideal = box.x + Math.min(box.w - 2, Math.max(1, Math.round((k + 1) * (box.w - 1) / (n + 1))));
-    for (let d = 0; d <= hi - lo; d++) {
-      for (const x of d === 0 ? [ideal] : [ideal - d, ideal + d]) {
-        if (x >= lo && x <= hi && isFree(box, x)) return claim(box, x);
-      }
-    }
-    return ideal;
-  };
-  const attach = /* @__PURE__ */ new Map();
-  for (const r of bent) {
-    const outs = outgoing.get(r.fromBox);
-    const ins = incoming.get(r.toBox);
-    attach.set(r, {
-      sx: freeSlot(r.fromBox, outs.indexOf(r), outs.length),
-      ex: freeSlot(r.toBox, ins.indexOf(r), ins.length)
-    });
-  }
-  const skipRoutes = bent.filter((r) => r.toBand - r.fromBand > 1);
-  const usedDescent = /* @__PURE__ */ new Set();
-  const descentX = /* @__PURE__ */ new Map();
-  let fallbackCount = 0;
-  const blockedByBox = (band, x) => bandBoxes[band].some((b) => x >= b.x && x <= b.x + b.w - 1);
-  for (const r of skipRoutes) {
-    const { ex } = attach.get(r);
-    let chosen;
-    for (let d = 0; d <= contentWidth && chosen === void 0; d++) {
-      for (const c of d === 0 ? [ex] : [ex - d, ex + d]) {
-        if (c < LEFT_MARGIN || c > contentWidth + 1 || usedDescent.has(c)) continue;
-        let blocked = false;
-        for (let b = r.fromBand + 1; b < r.toBand && !blocked; b++) blocked = blockedByBox(b, c);
-        if (!blocked) {
-          chosen = c;
-          break;
-        }
-      }
-    }
-    if (chosen === void 0) chosen = contentWidth + 2 + fallbackCount++ * 2;
-    usedDescent.add(chosen);
-    descentX.set(r, chosen);
-  }
-  const totalWidth = fallbackCount > 0 ? contentWidth + 2 + fallbackCount * 2 : contentWidth;
-  const gapCount = bands.length - 1;
-  const gapSegments = Array.from({ length: gapCount }, () => []);
-  const segmentOf = /* @__PURE__ */ new Map();
-  for (const r of bent) {
-    const { sx, ex } = attach.get(r);
-    if (r.toBand - r.fromBand === 1) {
-      const landing = { route: r, kind: "landing", lo: Math.min(sx, ex), hi: Math.max(sx, ex) };
-      gapSegments[r.toBand - 1].push(landing);
-      segmentOf.set(r, { landing });
-    } else {
-      const c = descentX.get(r);
-      const exit = { route: r, kind: "exit", lo: Math.min(sx, c), hi: Math.max(sx, c) };
-      const landing = { route: r, kind: "landing", lo: Math.min(c, ex), hi: Math.max(c, ex) };
-      gapSegments[r.fromBand].push(exit);
-      gapSegments[r.toBand - 1].push(landing);
-      segmentOf.set(r, { exit, landing });
-    }
-  }
-  const segmentRow = /* @__PURE__ */ new Map();
-  const gapRowCount = gapSegments.map((segments) => {
-    const rowEnds = [];
-    for (const s of [...segments].sort((a, b) => a.lo - b.lo)) {
-      let row = rowEnds.findIndex((end) => s.lo > end + 1);
-      if (row === -1) {
-        rowEnds.push(s.hi);
-        row = rowEnds.length - 1;
-      } else {
-        rowEnds[row] = Math.max(rowEnds[row], s.hi);
-      }
-      segmentRow.set(s, row);
-    }
-    return rowEnds.length;
-  });
+  let contentWidth = LEFT_MARGIN + BAR_MIN_RUN;
+  for (const row of bandBoxes) for (const box of row) contentWidth = Math.max(contentWidth, box.x + box.w);
+  for (const lane of lanes) contentWidth = Math.max(contentWidth, lane.x + lane.w);
+  return { bands, bandIndexOf, bandBoxes, boxOf, lanes, bandLabel, contentWidth };
+}
+function layoutRows(columns, geo, gapRowCount, hasTitle, hasLanes) {
   let y = 0;
-  if (map.title !== void 0) y += 1 + geo.titleGap;
+  if (hasTitle) y += 1 + geo.titleGap;
   let laneHeaderY;
-  if (laneCount > 0) {
+  if (hasLanes) {
     laneHeaderY = y;
     y += 1 + geo.barGap;
   }
   const barY = [];
   const gapTrackStartY = [];
-  for (let b = 0; b < bands.length; b++) {
+  const bandBoxes = [];
+  const placed = /* @__PURE__ */ new Map();
+  const gapCount = columns.bands.length - 1;
+  for (let b = 0; b < columns.bands.length; b++) {
     barY.push(y);
     y += 1 + geo.barGap;
-    const row = bandBoxes[b];
-    for (const box of row) box.y = y;
+    const row = columns.bandBoxes[b];
+    for (const box of row) placed.set(box, { ...box, y });
+    bandBoxes.push(row.map((box) => placed.get(box)));
     y += row.reduce((max, box) => Math.max(max, box.h), geo.mode === "constellation" ? 1 : BOX_H);
     if (b < gapCount) {
       y += geo.breathe;
@@ -934,97 +1276,52 @@ function buildCanvasWith(map, opts, geo) {
       y += geo.breathe;
     }
   }
-  const legendY = y + 1;
-  const rowYOf = (gap, s) => gapTrackStartY[gap] + segmentRow.get(s);
-  if (map.title !== void 0) canvas.text(LEFT_MARGIN, 0, map.title, "none", true);
-  if (laneHeaderY !== void 0) {
-    for (let i = 0; i < laneCount; i++) {
-      const label = fitWidth(map.lanes[i].label, laneW[i]);
-      const cx = laneX[i] + Math.max(0, Math.floor((laneW[i] - displayWidth(label)) / 2));
-      canvas.text(cx, laneHeaderY, label, "faint", true);
-    }
+  const boxOf = /* @__PURE__ */ new Map();
+  for (const [id, box] of columns.boxOf) boxOf.set(id, placed.get(box));
+  return { boxOf, bandBoxes, barY, gapTrackStartY, laneHeaderY, legendY: y + 1 };
+}
+
+// src/render/render.ts
+function renderMapWindow(map, opts, viewport) {
+  const built = buildCanvas(map, opts);
+  return {
+    lines: built.canvas.emit(opts, viewport),
+    contentWidth: built.canvas.width,
+    contentHeight: built.canvas.height,
+    hits: built.hits
+  };
+}
+function buildCanvas(map, opts) {
+  const oriented = flipForSequence(map);
+  const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
+  const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
+  const drawn = aggregated ?? oriented;
+  return paint(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo, unverifiedDoneIds(oriented, drawn));
+}
+function paint(map, opts, geo, unverified) {
+  const canvas = new Canvas();
+  if (map.layers.length === 0) {
+    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
+    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
+    return { canvas, hits: [] };
   }
-  for (let b = 0; b < bands.length; b++) {
-    const label = bandLabel[b];
-    for (let x = 0; x < totalWidth; x++) canvas.line(x, barY[b], LEFT | RIGHT, true);
-    const labelStart = (fallbackCount > 0 ? contentWidth : totalWidth) - displayWidth(label);
-    canvas.text(labelStart, barY[b], label, "none", true);
+  const neutral = isNeutralKind(map);
+  const columns = layoutColumns(map, geo, opts.unicode, neutral);
+  const routing = routeEdges(map, columns);
+  const rows = layoutRows(columns, geo, routing.gapRowCount, map.title !== void 0, map.lanes.length > 0);
+  const wiredWidth = routing.fallbackCount > 0 ? columns.contentWidth + 2 + routing.fallbackCount * 2 : columns.contentWidth;
+  const totalWidth = wiredWidth + Math.max(...columns.bandLabel.map(displayWidth));
+  if (map.title !== void 0) drawTitle(canvas, map.title);
+  drawLaneHeaders(canvas, map, columns, rows);
+  drawBands(canvas, columns, rows, wiredWidth, totalWidth);
+  const faceOf = (id, status) => unverified.has(id) ? "done-unverified" : status;
+  for (const box of rows.boxOf.values()) {
+    const id = box.node.id;
+    drawBox(canvas, box, opts, neutral, faceOf(id, box.node.status), opts.focus !== void 0 && id === opts.focus);
   }
-  for (const box of boxes.values()) {
-    drawBox(canvas, box, opts, neutral, opts.focus !== void 0 && box.node.id === opts.focus);
-  }
-  for (const r of routes) {
-    const sy = r.fromBox.y + r.fromBox.h - 1;
-    const ey = r.toBox.y;
-    const bright = opts.focus !== void 0 && (r.fromBox.node.id === opts.focus || r.toBox.node.id === opts.focus);
-    const direct = straightX.get(r);
-    if (direct !== void 0) {
-      drawPath(
-        canvas,
-        [
-          [direct, sy],
-          [direct, ey]
-        ],
-        bright
-      );
-      continue;
-    }
-    const { sx, ex } = attach.get(r);
-    const segments = segmentOf.get(r);
-    const landingY = rowYOf(r.toBand - 1, segments.landing);
-    if (r.toBand - r.fromBand === 1) {
-      drawPath(
-        canvas,
-        [
-          [sx, sy],
-          [sx, landingY],
-          [ex, landingY],
-          [ex, ey]
-        ],
-        bright
-      );
-    } else {
-      const c = descentX.get(r);
-      const exitY = rowYOf(r.fromBand, segments.exit);
-      drawPath(
-        canvas,
-        [
-          [sx, sy],
-          [sx, exitY],
-          [c, exitY],
-          [c, landingY],
-          [ex, landingY],
-          [ex, ey]
-        ],
-        bright
-      );
-    }
-  }
-  let lx = LEFT_MARGIN;
-  if (neutral) {
-    lx = canvas.text(lx, legendY, map.kind, "faint");
-    const seen = /* @__PURE__ */ new Set();
-    for (const n of map.nodes) {
-      const k = n.kind;
-      if (k === void 0 || seen.has(k) || kindGlyph(k, opts.unicode) === void 0) continue;
-      seen.add(k);
-      lx = canvas.text(lx, legendY, "   ", "none");
-      lx = canvas.text(lx, legendY, `${kindGlyph(k, opts.unicode)} ${k}`, "none");
-    }
-  } else {
-    const legendOpts = { ...opts, spinnerFrame: 0 };
-    const legendEntries = [
-      ["planned", "dim"],
-      ["in-progress", "amber"],
-      ["done", "green"],
-      ["regressed", "red"]
-    ];
-    for (const [status, style] of legendEntries) {
-      if (lx > LEFT_MARGIN) lx = canvas.text(lx, legendY, "   ", "none");
-      lx = canvas.text(lx, legendY, `${glyphFor(status, legendOpts)} ${status}`, style);
-    }
-  }
-  const hits = [...boxes.values()].map((b) => ({
+  drawEdges(canvas, routing.edges, rows, opts);
+  drawLegend(canvas, map, opts, rows.legendY, neutral, unverified.size > 0);
+  const hits = [...rows.boxOf.values()].map((b) => ({
     id: b.node.id,
     x: b.x,
     y: b.y,
@@ -1033,32 +1330,9 @@ function buildCanvasWith(map, opts, geo) {
   }));
   return { canvas, hits };
 }
-function drawBox(canvas, box, opts, neutral, focused = false) {
-  const { node, x, y, w } = box;
-  const skin = neutral ? neutralSkin(opts.unicode) : skinFor(node.status, opts.unicode);
-  const slotGlyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, opts.unicode) : void 0) ?? (opts.unicode ? "\xB7" : ".") : glyphFor(node.status, opts);
-  if (box.borderless) {
-    canvas.text(x + 1, y, slotGlyph, skin.style, true);
-    return;
-  }
-  const inner = w - 2;
-  const pad = box.pad === 1 ? " " : "";
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
-  canvas.text(x, y + 1, skin.v, skin.style, focused);
-  canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
-  for (let i = 0; i < box.extra.length; i++) {
-    const row = box.extra[i];
-    const yy = y + 2 + i;
-    canvas.text(x, yy, skin.v, skin.style, focused);
-    canvas.text(x + 1, yy, row.text, row.style);
-    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
-  }
-  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
-}
 
 // src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // src/store/format.ts
@@ -1076,111 +1350,169 @@ function describeStoreError(e) {
       return `map file ${e.path} has an unexpected shape: ${e.detail}`;
     case "invariant-violation":
       return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
+    case "save-failed":
+      return `could not write ${e.path}: ${e.detail}`;
+    case "delete-failed":
+      return `could not delete ${e.path}: ${e.detail}`;
   }
 }
 function isRecord(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
-function asArray(v) {
-  return Array.isArray(v) ? v : [];
+function describeValue(v) {
+  if (v === void 0) return "missing";
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "an array";
+  return `a ${typeof v}`;
 }
-function optionalString(v) {
-  return typeof v === "string" ? v : void 0;
+function badShape(path, where, expected, got) {
+  return err({ kind: "bad-shape", path, detail: `${where} is ${describeValue(got)}, expected ${expected}` });
+}
+function arrayField(raw, key, path, presence) {
+  const v = raw[key];
+  if (Array.isArray(v)) return ok(v);
+  if (v === void 0 && presence === "optional") return ok([]);
+  return badShape(path, `"${key}"`, "an array", v);
+}
+function requiredString(rec, key, where, path) {
+  const v = rec[key];
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
+}
+function optionalString(rec, key, where, path) {
+  const v = rec[key];
+  if (v === void 0) return ok(void 0);
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
   if (raw["version"] !== STATE_FILE_VERSION) {
     return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION}` });
   }
+  const layers = arrayField(raw, "layers", path, "required");
+  if (!layers.ok) return layers;
+  const nodes = arrayField(raw, "nodes", path, "required");
+  if (!nodes.ok) return nodes;
+  const edges = arrayField(raw, "edges", path, "required");
+  if (!edges.ok) return edges;
+  const lanes = arrayField(raw, "lanes", path, "optional");
+  if (!lanes.ok) return lanes;
+  const groups = arrayField(raw, "groups", path, "optional");
+  if (!groups.ok) return groups;
   let map = EMPTY_MAP;
-  const title = optionalString(raw["title"]);
-  if (title !== void 0) map = setTitle(map, title);
-  const rawKind = optionalString(raw["kind"]);
-  if (rawKind !== void 0) {
-    const kind = makeMapKind(rawKind);
+  const title = optionalString(raw, "title", "map", path);
+  if (!title.ok) return title;
+  if (title.value !== void 0) map = setTitle(map, title.value);
+  const rawKind = optionalString(raw, "kind", "map", path);
+  if (!rawKind.ok) return rawKind;
+  if (rawKind.value !== void 0) {
+    const kind = makeMapKind(rawKind.value);
     if (!kind.ok) return err({ kind: "invariant-violation", path, violation: kind.error });
     map = setKind(map, kind.value);
   }
-  for (const [i, rawLayer] of asArray(raw["layers"]).entries()) {
-    if (!isRecord(rawLayer)) return err({ kind: "bad-shape", path, detail: `layers[${i}] is not an object` });
-    const id = makeLayerId(String(rawLayer["id"] ?? ""));
+  for (const [i, rawLayer] of layers.value.entries()) {
+    const where = `layers[${i}]`;
+    if (!isRecord(rawLayer)) return badShape(path, where, "an object", rawLayer);
+    const rawId = requiredString(rawLayer, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeLayerId(rawId.value);
     if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const name = optionalString(rawLayer["name"]);
-    const rank = rawLayer["rank"];
-    if (name === void 0 || typeof rank !== "number" || !Number.isInteger(rank)) {
-      return err({ kind: "bad-shape", path, detail: `layers[${i}] needs a string name and an integer rank` });
-    }
-    const next = declareLayer(map, { id: id.value, name, rank });
+    const name = requiredString(rawLayer, "name", where, path);
+    if (!name.ok) return name;
+    const rawRank = rawLayer["rank"];
+    if (typeof rawRank !== "number") return badShape(path, `${where}.rank`, "a number", rawRank);
+    const rank = makeRank(rawRank);
+    if (!rank.ok) return err({ kind: "invariant-violation", path, violation: rank.error });
+    const next = declareLayer(map, { id: id.value, name: name.value, rank: rank.value });
     if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
     map = next.value;
   }
-  for (const [i, rawLane] of asArray(raw["lanes"]).entries()) {
-    if (!isRecord(rawLane)) return err({ kind: "bad-shape", path, detail: `lanes[${i}] is not an object` });
-    const id = makeLaneId(String(rawLane["id"] ?? ""));
+  for (const [i, rawLane] of lanes.value.entries()) {
+    const where = `lanes[${i}]`;
+    if (!isRecord(rawLane)) return badShape(path, where, "an object", rawLane);
+    const rawId = requiredString(rawLane, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeLaneId(rawId.value);
     if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const label = optionalString(rawLane["label"]);
-    if (label === void 0) return err({ kind: "bad-shape", path, detail: `lanes[${i}] needs a string label` });
-    const declared = declareLane(map, { id: id.value, label });
+    const label = requiredString(rawLane, "label", where, path);
+    if (!label.ok) return label;
+    const declared = declareLane(map, { id: id.value, label: label.value });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
   }
-  for (const [i, rawGroup] of asArray(raw["groups"]).entries()) {
-    if (!isRecord(rawGroup)) return err({ kind: "bad-shape", path, detail: `groups[${i}] is not an object` });
-    const id = makeGroupId(String(rawGroup["id"] ?? ""));
+  for (const [i, rawGroup] of groups.value.entries()) {
+    const where = `groups[${i}]`;
+    if (!isRecord(rawGroup)) return badShape(path, where, "an object", rawGroup);
+    const rawId = requiredString(rawGroup, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeGroupId(rawId.value);
     if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const layer = makeLayerId(String(rawGroup["layer"] ?? ""));
+    const rawLayer = requiredString(rawGroup, "layer", where, path);
+    if (!rawLayer.ok) return rawLayer;
+    const layer = makeLayerId(rawLayer.value);
     if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
-    const label = optionalString(rawGroup["label"]);
-    if (label === void 0) return err({ kind: "bad-shape", path, detail: `groups[${i}] needs a string label` });
-    const declared = declareGroup(map, { id: id.value, label, layer: layer.value });
+    const label = requiredString(rawGroup, "label", where, path);
+    if (!label.ok) return label;
+    const declared = declareGroup(map, { id: id.value, label: label.value, layer: layer.value });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
   }
-  for (const [i, rawNode] of asArray(raw["nodes"]).entries()) {
-    if (!isRecord(rawNode)) return err({ kind: "bad-shape", path, detail: `nodes[${i}] is not an object` });
-    const id = makeNodeId(String(rawNode["id"] ?? ""));
+  for (const [i, rawNode] of nodes.value.entries()) {
+    const where = `nodes[${i}]`;
+    if (!isRecord(rawNode)) return badShape(path, where, "an object", rawNode);
+    const rawId = requiredString(rawNode, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeNodeId(rawId.value);
     if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const layer = makeLayerId(String(rawNode["layer"] ?? ""));
+    const rawLayer = requiredString(rawNode, "layer", where, path);
+    if (!rawLayer.ok) return rawLayer;
+    const layer = makeLayerId(rawLayer.value);
     if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
-    const status = makeNodeStatus(String(rawNode["status"] ?? ""));
+    const rawStatus = requiredString(rawNode, "status", where, path);
+    if (!rawStatus.ok) return rawStatus;
+    const status = makeNodeStatus(rawStatus.value);
     if (!status.ok) return err({ kind: "invariant-violation", path, violation: status.error });
-    const label = optionalString(rawNode["label"]);
-    if (label === void 0) return err({ kind: "bad-shape", path, detail: `nodes[${i}] needs a string label` });
-    const detail = optionalString(rawNode["detail"]);
-    const rawGroup = optionalString(rawNode["group"]);
+    const label = requiredString(rawNode, "label", where, path);
+    if (!label.ok) return label;
+    const detail = optionalString(rawNode, "detail", where, path);
+    if (!detail.ok) return detail;
+    const rawGroup = optionalString(rawNode, "group", where, path);
+    if (!rawGroup.ok) return rawGroup;
     let group;
-    if (rawGroup !== void 0) {
-      const made = makeGroupId(rawGroup);
+    if (rawGroup.value !== void 0) {
+      const made = makeGroupId(rawGroup.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       group = made.value;
     }
-    const rawNodeKind = optionalString(rawNode["kind"]);
+    const rawNodeKind = optionalString(rawNode, "kind", where, path);
+    if (!rawNodeKind.ok) return rawNodeKind;
     let nodeKind;
-    if (rawNodeKind !== void 0) {
-      const made = makeNodeKind(rawNodeKind);
+    if (rawNodeKind.value !== void 0) {
+      const made = makeNodeKind(rawNodeKind.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       nodeKind = made.value;
     }
-    const rawLane = optionalString(rawNode["lane"]);
+    const rawLane = optionalString(rawNode, "lane", where, path);
+    if (!rawLane.ok) return rawLane;
     let lane;
-    if (rawLane !== void 0) {
-      const made = makeLaneId(rawLane);
+    if (rawLane.value !== void 0) {
+      const made = makeLaneId(rawLane.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       lane = made.value;
     }
-    const rawSubmap = optionalString(rawNode["submap"]);
+    const rawSubmap = optionalString(rawNode, "submap", where, path);
+    if (!rawSubmap.ok) return rawSubmap;
     let submap;
-    if (rawSubmap !== void 0) {
-      const made = makeSubmapRef(rawSubmap);
+    if (rawSubmap.value !== void 0) {
+      const made = makeSubmapRef(rawSubmap.value);
       if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
       submap = made.value;
     }
     const declared = declareNode(map, {
       id: id.value,
-      label,
+      label: label.value,
       layer: layer.value,
       status: status.value,
-      ...detail !== void 0 ? { detail } : {},
+      ...detail.value !== void 0 ? { detail: detail.value } : {},
       ...group !== void 0 ? { group } : {},
       ...nodeKind !== void 0 ? { kind: nodeKind } : {},
       ...lane !== void 0 ? { lane } : {},
@@ -1188,20 +1520,28 @@ function parseMap(raw, path) {
     });
     if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
     map = declared.value;
-    const evidence = optionalString(rawNode["evidence"]);
-    if (evidence !== void 0) {
-      const updated = updateNode(map, { id: id.value, evidence });
+    const evidence = optionalString(rawNode, "evidence", where, path);
+    if (!evidence.ok) return evidence;
+    if (evidence.value !== void 0) {
+      const updated = updateNode(map, { id: id.value, evidence: evidence.value });
       if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
       map = updated.value;
     }
   }
-  for (const [i, rawEdge] of asArray(raw["edges"]).entries()) {
-    if (!isRecord(rawEdge)) return err({ kind: "bad-shape", path, detail: `edges[${i}] is not an object` });
-    const from = makeNodeId(String(rawEdge["from"] ?? ""));
+  for (const [i, rawEdge] of edges.value.entries()) {
+    const where = `edges[${i}]`;
+    if (!isRecord(rawEdge)) return badShape(path, where, "an object", rawEdge);
+    const rawFrom = requiredString(rawEdge, "from", where, path);
+    if (!rawFrom.ok) return rawFrom;
+    const from = makeNodeId(rawFrom.value);
     if (!from.ok) return err({ kind: "invariant-violation", path, violation: from.error });
-    const to = makeNodeId(String(rawEdge["to"] ?? ""));
+    const rawTo = requiredString(rawEdge, "to", where, path);
+    if (!rawTo.ok) return rawTo;
+    const to = makeNodeId(rawTo.value);
     if (!to.ok) return err({ kind: "invariant-violation", path, violation: to.error });
-    const linked = linkNodes(map, from.value, to.value, optionalString(rawEdge["label"]));
+    const label = optionalString(rawEdge, "label", where, path);
+    if (!label.ok) return label;
+    const linked = linkNodes(map, from.value, to.value, label.value);
     if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
     map = linked.value;
   }
@@ -1209,7 +1549,54 @@ function parseMap(raw, path) {
 }
 
 // src/store/store.ts
-var STATE_FILE_RELATIVE_PATH = join(".mellos", "map.json");
+var RENAME_MAX_ATTEMPTS = 10;
+var RENAME_BACKOFF_STEP_MS = 10;
+var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function discardTemp(tmp) {
+  try {
+    rmSync(tmp, { force: true });
+  } catch {
+  }
+}
+function errnoOf(e) {
+  return e.code ?? e.message;
+}
+function writeFileAtomic(path, contents) {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, contents, "utf8");
+  } catch (e) {
+    discardTemp(tmp);
+    return err({ kind: "save-failed", path, detail: `writing the temp file failed: ${errnoOf(e)}` });
+  }
+  let attempt = 1;
+  for (; ; ) {
+    try {
+      renameSync(tmp, path);
+      return ok(void 0);
+    } catch (e) {
+      const code = errnoOf(e);
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+        discardTemp(tmp);
+        return err({ kind: "save-failed", path, detail: `${code} after ${attempt} attempt(s)` });
+      }
+      sleepSync(attempt * RENAME_BACKOFF_STEP_MS);
+      attempt += 1;
+    }
+  }
+}
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function stripBom(text) {
+  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
+}
+var STORE_DIR_NAME = ".mellos";
+var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
   return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
@@ -1231,6 +1618,14 @@ function listPageFiles(defaultFile) {
     if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
+}
+function deletePageFile(path) {
+  try {
+    rmSync(path, { force: true });
+    return ok(void 0);
+  } catch (e) {
+    return err({ kind: "delete-failed", path, detail: errnoOf(e) });
+  }
 }
 var FOCUS_FILE_NAME = "focus";
 function focusFilePath(defaultFile) {
@@ -1260,6 +1655,53 @@ function takeFocusRequest(defaultFile) {
   if (typeof page !== "string") return void 0;
   const id = makePageId(page);
   return id.ok ? { page: id.value } : void 0;
+}
+var QUIT_FILE_NAME = "quit";
+function quitFilePath(defaultFile) {
+  return join(dirname(defaultFile), QUIT_FILE_NAME);
+}
+function takeQuitRequest(defaultFile) {
+  const path = quitFilePath(defaultFile);
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return false;
+  }
+  sweepQuitRequest(defaultFile);
+  let parsed;
+  try {
+    parsed = JSON.parse(stripBom(raw));
+  } catch {
+    return false;
+  }
+  return isRecord2(parsed);
+}
+function sweepQuitRequest(defaultFile) {
+  try {
+    rmSync(quitFilePath(defaultFile), { force: true });
+  } catch {
+  }
+}
+var VIEWERS_DIR_NAME = "viewers";
+var VIEWER_FILE_VERSION = 1;
+var VIEWER_HEARTBEAT_MS = 1e3;
+function viewersDirPath(defaultFile) {
+  return join(dirname(defaultFile), VIEWERS_DIR_NAME);
+}
+function viewerFilePath(defaultFile, pid) {
+  return join(viewersDirPath(defaultFile), `${pid}.json`);
+}
+function publishViewer(defaultFile, pid, report) {
+  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow };
+  return writeFileAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}
+`);
+}
+function retireViewer(defaultFile, pid) {
+  try {
+    rmSync(viewerFilePath(defaultFile, pid), { force: true });
+  } catch {
+  }
 }
 var CONFIG_FILE_NAME = "config.json";
 function configFilePath(defaultFile) {
@@ -1293,7 +1735,7 @@ function loadMapFile(path) {
   }
   let raw;
   try {
-    raw = JSON.parse(text);
+    raw = JSON.parse(stripBom(text));
   } catch (e) {
     return err({ kind: "malformed-json", path, detail: e.message });
   }
@@ -1304,14 +1746,18 @@ function loadMapFile(path) {
 var KEY_H_STEP = 4;
 var KEY_V_STEP = 2;
 var WHEEL_V_STEP = 3;
+var WHEEL_H_STEP = 4;
 var MOTION = 32;
 var WHEEL = 64;
 var SHIFT = 4;
 var BUTTON_BITS = 3;
+var WHEEL_BITS = 3;
 var SGR_MOUSE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
 var ARROW = /^\x1b\[([ABCD])/;
 var SHIFT_TAB = /^\x1b\[Z/;
-var PARTIAL_ESCAPE = /(?:\x1b|\x1b\[|\x1b\[<[\d;]*)$/;
+var CSI_SEQUENCE = /^\x1b\[[0-9;:<=>?]*[ -/]*[@-~]/;
+var SS3_SEQUENCE = /^\x1bO[@-~]/;
+var PARTIAL_ESCAPE = /^(?:\x1b\[[0-9;:<=>?]*[ -/]*|\x1bO)$/;
 var ARROW_PAN = {
   A: { dx: 0, dy: -KEY_V_STEP },
   B: { dx: 0, dy: KEY_V_STEP },
@@ -1326,8 +1772,17 @@ var KEY_PAN = {
 };
 function mouseEvent(code, x, y, final) {
   if (code & WHEEL) {
-    const down = (code & 1) !== 0;
-    return code & SHIFT ? { kind: "pan", dx: 0, dy: (down ? 1 : -1) * WHEEL_V_STEP } : { kind: "zoom", delta: down ? -1 : 1, at: { x, y } };
+    switch (code & WHEEL_BITS) {
+      case 0:
+      case 1: {
+        const down = (code & 1) !== 0;
+        return code & SHIFT ? { kind: "pan", dx: 0, dy: (down ? 1 : -1) * WHEEL_V_STEP } : { kind: "zoom", delta: down ? -1 : 1, at: { x, y } };
+      }
+      default: {
+        const right = (code & 1) !== 0;
+        return { kind: "pan", dx: (right ? 1 : -1) * WHEEL_H_STEP, dy: 0 };
+      }
+    }
   }
   const buttons = code & BUTTON_BITS;
   if (final === "m") return buttons === 0 ? { kind: "mouse-up", x, y } : void 0;
@@ -1339,7 +1794,6 @@ function mouseEvent(code, x, y, final) {
   return buttons === 0 ? { kind: "mouse-down", x, y } : void 0;
 }
 function parseInput(chunk) {
-  if (chunk === "\x1B") return { events: [{ kind: "clear" }], rest: "" };
   const events = [];
   let i = 0;
   while (i < chunk.length) {
@@ -1364,18 +1818,24 @@ function parseInput(chunk) {
       i += shiftTab[0].length;
       continue;
     }
-    const partial = PARTIAL_ESCAPE.exec(slice);
-    if (partial && partial.index === 0) {
+    const sequence = CSI_SEQUENCE.exec(slice) ?? SS3_SEQUENCE.exec(slice);
+    if (sequence) {
+      i += sequence[0].length;
+      continue;
+    }
+    if (PARTIAL_ESCAPE.test(slice)) {
       return { events, rest: slice };
     }
     const ch = chunk[i];
-    if (ch === "q" || ch === "Q" || ch === "" || ch === "") events.push({ kind: "quit" });
+    if (ch === "\x1B") events.push({ kind: "clear" });
+    else if (ch === "q" || ch === "Q" || ch === "" || ch === "") events.push({ kind: "quit" });
     else if (ch === "0") events.push({ kind: "reset" });
     else if (ch === "+" || ch === "=") events.push({ kind: "zoom", delta: 1 });
     else if (ch === "-") events.push({ kind: "zoom", delta: -1 });
     else if (ch === "	") events.push({ kind: "next-page" });
     else if (ch === "\x7F" || ch === "\b") events.push({ kind: "back" });
     else if (ch === "f" || ch === "F") events.push({ kind: "follow-toggle" });
+    else if (ch === "x" || ch === "X") events.push({ kind: "delete-page" });
     else if (ch >= "1" && ch <= "9") events.push({ kind: "page", index: ch.charCodeAt(0) - "1".charCodeAt(0) });
     else if (KEY_PAN[ch]) events.push({ kind: "pan", ...KEY_PAN[ch] });
     i += 1;
@@ -1383,28 +1843,209 @@ function parseInput(chunk) {
   return { events, rest: "" };
 }
 
+// src/watch/pane-state.ts
+function describePageFault(fault) {
+  return fault.kind === "unreadable" ? `cannot read ${fault.path}: ${fault.detail}` : describeStoreError(fault);
+}
+function isTransient(fault) {
+  return fault.kind === "malformed-json";
+}
+function mapOf(entry) {
+  if (entry === void 0 || entry.state.kind === "absent") return void 0;
+  return entry.state.kind === "loaded" ? entry.state.map : entry.state.lastGood;
+}
+function mtimeOf(entry) {
+  return entry === void 0 || entry.state.kind === "absent" ? void 0 : entry.state.mtimeMs;
+}
+function initialPaneState(follow, requestedFile) {
+  return {
+    pages: [],
+    activeFile: void 0,
+    pendingFocusFile: requestedFile,
+    follow,
+    diveStack: [],
+    scanned: false,
+    pendingDelete: void 0
+  };
+}
+function entryOf(state, file) {
+  return file === void 0 ? void 0 : state.pages.find((p) => p.file === file);
+}
+function mapsOf(state) {
+  return new Map(state.pages.map((p) => [p.file, mapOf(p)]));
+}
+function filesOf(state) {
+  return state.pages.map((p) => p.file);
+}
+function markViewed(state, file) {
+  if (file === void 0 || !state.pages.some((p) => p.file === file && p.fresh)) return state;
+  return { ...state, pages: state.pages.map((p) => p.file === file ? { ...p, fresh: false } : p) };
+}
+function userSwitch(state, file) {
+  const followTurnedOff = state.follow;
+  return {
+    state: markViewed(
+      // Looking elsewhere withdraws an armed deletion: it was aimed at the
+      // page that was on screen, and the confirming press must never land on
+      // whichever page took its place.
+      { ...state, activeFile: file, pendingFocusFile: void 0, follow: false, pendingDelete: void 0 },
+      file
+    ),
+    followTurnedOff
+  };
+}
+function disarmDelete(state) {
+  return state.pendingDelete === void 0 ? state : { ...state, pendingDelete: void 0 };
+}
+function requestDelete(state, now, windowMs) {
+  const file = state.activeFile;
+  if (file === void 0) return { state: disarmDelete(state), request: { kind: "none" } };
+  if (entryOf(state, file)?.state.kind === "absent") {
+    return { state: disarmDelete(state), request: { kind: "absent", file } };
+  }
+  const armed = state.pendingDelete;
+  if (armed !== void 0 && armed.file === file && now <= armed.until) {
+    return { state: { ...state, pendingDelete: void 0 }, request: { kind: "confirmed", file } };
+  }
+  const until = now + windowMs;
+  return { state: { ...state, pendingDelete: { file, until } }, request: { kind: "armed", file, until } };
+}
+function toggleFollow(state) {
+  return { ...state, follow: !state.follow };
+}
+function pushDive(state, file) {
+  return { ...state, diveStack: [...state.diveStack, file] };
+}
+function popDive(state) {
+  const files = new Set(filesOf(state));
+  const stack = [...state.diveStack];
+  while (stack.length > 0) {
+    const parent = stack.pop();
+    if (files.has(parent)) return { state: { ...state, diveStack: stack }, parent };
+  }
+  return { state: { ...state, diveStack: [] }, parent: void 0 };
+}
+function scan(state, input) {
+  const first = !state.scanned;
+  const previousActive = state.activeFile;
+  const pages = [];
+  const freshened = [];
+  const changed = [];
+  for (const file of input.files) {
+    const held = entryOf(state, file);
+    const mtimeMs = input.mtimeAt(file);
+    if (mtimeMs === void 0) {
+      pages.push(held ?? { file, state: { kind: "absent" }, fresh: false });
+      continue;
+    }
+    const settled = held !== void 0 && mtimeOf(held) === mtimeMs && !(held.state.kind === "faulted" && held.state.transient);
+    if (settled) {
+      pages.push(held);
+      continue;
+    }
+    const loaded = input.load(file);
+    if (loaded.ok) {
+      if (!first) changed.push(file);
+      const fresh = !first && file !== previousActive;
+      if (fresh) freshened.push(file);
+      pages.push({ file, state: { kind: "loaded", map: loaded.value, mtimeMs }, fresh });
+      continue;
+    }
+    pages.push({
+      file,
+      state: {
+        kind: "faulted",
+        fault: loaded.error,
+        lastGood: mapOf(held),
+        mtimeMs,
+        transient: isTransient(loaded.error)
+      },
+      fresh: held?.fresh ?? false
+    });
+  }
+  let pendingFocusFile = state.pendingFocusFile;
+  if (input.focusRequest !== void 0 && !(first && pendingFocusFile !== void 0)) {
+    pendingFocusFile = input.focusRequest;
+  }
+  let activeFile = previousActive;
+  let requestApplied = false;
+  if (pendingFocusFile !== void 0 && input.files.includes(pendingFocusFile)) {
+    activeFile = pendingFocusFile;
+    pendingFocusFile = void 0;
+    requestApplied = true;
+  }
+  const mtimeIn = (file) => mtimeOf(pages.find((p) => p.file === file));
+  if (state.follow && !requestApplied && changed.length > 0 && !input.engaged) {
+    activeFile = mostRecentKey(changed, mtimeIn) ?? activeFile;
+  }
+  if (activeFile === void 0 || !input.files.includes(activeFile)) {
+    activeFile = mostRecentKey(input.files, mtimeIn);
+  }
+  const files = new Set(input.files);
+  const next = {
+    pages,
+    activeFile,
+    pendingFocusFile,
+    follow: state.follow,
+    diveStack: state.diveStack.filter((f) => files.has(f)),
+    scanned: true,
+    // An armed deletion belongs to the page it was armed on. If the scan
+    // moved the view (follow, a request, a page that vanished), the request
+    // is stale — the confirming press must never hit a page that merely
+    // arrived under the cursor.
+    pendingDelete: state.pendingDelete?.file === activeFile ? state.pendingDelete : void 0
+  };
+  return { state: markViewed(next, activeFile), freshened };
+}
+
 // src/watch/watch.ts
+function describeArgsError(e) {
+  switch (e.kind) {
+    case "unknown-flag":
+      return `unknown flag "${e.flag}"`;
+    case "missing-value":
+      return `${e.flag} needs a value`;
+    case "invalid-value":
+      return `${e.flag} got "${e.raw}" (expected: ${e.rule})`;
+  }
+}
+var USAGE = "usage: mellos-mapping-watch [--file <map.json>] [--page <slug>] [--interval <ms>] [--ascii] [--no-color] [--no-mouse] [--no-follow]";
 function parseArgs(argv, cwd) {
   let file = join2(cwd, STATE_FILE_RELATIVE_PATH);
-  let intervalMs = 250;
+  let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
   let color = true;
   let mouse = true;
   let page;
   let follow = true;
+  const valueOf = (flag, raw) => raw === void 0 || raw.startsWith("--") ? err({ kind: "missing-value", flag }) : ok(raw);
   for (let i = 0; i < argv.length; i++) {
-    switch (argv[i]) {
-      case "--file":
-        file = argv[++i] ?? file;
-        break;
-      case "--page": {
-        const parsed = makePageId(argv[++i] ?? "");
-        if (parsed.ok) page = parsed.value;
+    const flag = argv[i];
+    switch (flag) {
+      case "--file": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        file = value.value;
         break;
       }
-      case "--interval":
-        intervalMs = Math.max(50, Number(argv[++i]) || intervalMs);
+      case "--page": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed.error.rule });
+        page = parsed.value;
         break;
+      }
+      case "--interval": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const ms = Number(value.value);
+        if (!Number.isFinite(ms) || ms <= 0) {
+          return err({ kind: "invalid-value", flag, raw: value.value, rule: "a positive number of milliseconds" });
+        }
+        intervalMs = Math.max(POLL_INTERVAL_MIN_MS, ms);
+        break;
+      }
       case "--ascii":
         unicode = false;
         break;
@@ -1418,10 +2059,24 @@ function parseArgs(argv, cwd) {
         follow = false;
         break;
       default:
-        break;
+        return err({ kind: "unknown-flag", flag });
     }
   }
-  return { file, intervalMs, unicode, color, mouse, page, follow };
+  return ok({ file, intervalMs, unicode, color, mouse, page, follow });
+}
+function readPage(file) {
+  try {
+    return loadMapFile(file);
+  } catch (e) {
+    return err({ kind: "unreadable", path: file, detail: e.code ?? e.message });
+  }
+}
+function renderWindow(map, opts, viewport) {
+  try {
+    return ok(renderMapWindow(map, opts, viewport));
+  } catch (e) {
+    return err(`this map could not be drawn: ${e.message}`);
+  }
 }
 function dividerRow(width, unicode, follow) {
   const grip = unicode ? " \u22EF " : " ~ ";
@@ -1435,9 +2090,6 @@ function dividerRow(width, unicode, follow) {
   }
   return bar;
 }
-function mostRecentPageFile(files, mtimeOf) {
-  return mostRecentKey(files, mtimeOf);
-}
 var HIDE_CURSOR = "\x1B[?25l";
 var SHOW_CURSOR = "\x1B[?25h";
 var CLEAR_ALL = "\x1B[H\x1B[2J";
@@ -1446,9 +2098,23 @@ var ERASE_LINE_END = "\x1B[K";
 var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
 var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
 var RESET = "\x1B[0m";
+function terminalRestoreSequence(mouseActive) {
+  return (mouseActive ? MOUSE_OFF : "") + SHOW_CURSOR + RESET + "\n";
+}
 var PANEL_CONTENT_ROWS = 6;
 var PANEL_ROWS_MIN = 2;
 var MAP_ROWS_MIN = 4;
+var POLL_INTERVAL_DEFAULT_MS = 250;
+var POLL_INTERVAL_MIN_MS = 50;
+var SPLASH_FRAME_MS = 80;
+var FLASH_ACK_MS = 2500;
+var FLASH_NOTICE_MS = 3e3;
+var FLASH_BACKGROUND_NEWS_MS = 4e3;
+var DOUBLE_CLICK_MS = 450;
+var CONFIRM_WINDOW_MS = 3e3;
+var FALLBACK_COLUMNS = 100;
+var FALLBACK_ROWS = 30;
+var DEFAULT_PAGE_TAB_LABEL = "main";
 function usableColumns(cols) {
   return Math.max(1, cols - 1);
 }
@@ -1459,18 +2125,6 @@ function clampPanelRows(wanted, totalRows, tabRows) {
 function panelRowsFromDividerY(termY, totalRows, tabRows) {
   return clampPanelRows(totalRows - termY - 1, totalRows, tabRows);
 }
-var STATUS_GLYPH = {
-  planned: ["\xB7", "."],
-  "in-progress": ["\u283F", "*"],
-  done: ["\u25A0", "#"],
-  regressed: ["\u2717", "X"]
-};
-var STATUS_SGR = {
-  planned: "2",
-  "in-progress": "33",
-  done: "32",
-  regressed: "31"
-};
 function anchorOffsets(anchor, offset, before, after) {
   if (anchor) {
     return {
@@ -1484,14 +2138,19 @@ function anchorOffsets(anchor, offset, before, after) {
   };
 }
 var TAB_INDICATOR_W = 3;
-function pageTabRow(tabs, width, unicode, scroll = 0) {
+var CLOSE_TAB_TEXT = { unicode: "\xD7 ", ascii: "x " };
+var CLOSE_TAB_SGR = "90";
+function pageTabRow(tabs, width, unicode, scroll = 0, closable = false) {
   const texts = tabs.map((tab) => {
     const marker = tab.active ? unicode ? "\u25CF" : "*" : unicode ? "\u25CB" : "o";
-    const glyph = STATUS_GLYPH[tab.status][unicode ? 0 : 1];
+    const glyph = statusGlyph(tab.status, unicode);
     return tab.neutral === true ? ` ${marker} ${tab.title} ` : ` ${marker} ${glyph} ${tab.title} `;
   });
-  const sgrOf = (tab) => tab.neutral === true ? tab.active ? "1" : tab.fresh ? "36" : "90" : tab.active ? `${STATUS_SGR[tab.status]};1` : tab.fresh ? STATUS_SGR[tab.status] : "90";
-  const widths = texts.map(displayWidth);
+  const sgrOf = (tab) => tab.neutral === true ? tab.active ? "1" : tab.fresh ? "36" : "90" : tab.active ? `${statusSgr(tab.status)};1` : tab.fresh ? statusSgr(tab.status) : "90";
+  const closeText = CLOSE_TAB_TEXT[unicode ? "unicode" : "ascii"];
+  const closeW = displayWidth(closeText);
+  const closeOf = (i) => closable && tabs[i].active ? closeW : 0;
+  const widths = texts.map((t, i) => displayWidth(t) + closeOf(i));
   const count = tabs.length;
   let lo = 0;
   let hi = count - 1;
@@ -1511,29 +2170,36 @@ function pageTabRow(tabs, width, unicode, scroll = 0) {
   if (lo > 0) push(unicode ? " \u2039 " : " < ", "90", { kind: "scroll", delta: -1 });
   const tail = hi < count - 1 ? TAB_INDICATOR_W : 0;
   for (let i = lo; i <= hi; i++) {
-    push(fitWidth(texts[i], Math.max(1, width - (col - 1) - tail)), sgrOf(tabs[i]), { kind: "switch", index: i });
+    const close = closeOf(i);
+    push(fitWidth(texts[i], Math.max(1, width - (col - 1) - tail - close)), sgrOf(tabs[i]), {
+      kind: "switch",
+      index: i
+    });
+    if (close > 0 && col - 1 + close + tail <= width) push(closeText, CLOSE_TAB_SGR, { kind: "delete" });
   }
   if (hi < count - 1) push(unicode ? " \u203A " : " > ", "90", { kind: "scroll", delta: 1 });
   return segments;
 }
-function tabScrollFor(tabs, width, unicode, scroll, index) {
+function tabScrollFor(tabs, width, unicode, scroll, index, closable = false) {
   if (index <= scroll) return Math.max(0, index);
-  const visibleAt = (s2) => pageTabRow(tabs, width, unicode, s2).some((seg) => seg.action.kind === "switch" && seg.action.index === index);
+  const visibleAt = (s2) => pageTabRow(tabs, width, unicode, s2, closable).some(
+    (seg) => seg.action.kind === "switch" && seg.action.index === index
+  );
   let s = Math.max(0, Math.min(scroll, tabs.length - 1));
   while (s < index && !visibleAt(s)) s++;
   return s;
 }
-function topLevelFiles(defaultFile, files, mapOf) {
-  const refs = submapRefs(mapOf.values());
+function topLevelFiles(defaultFile, files, mapOf2) {
+  const interior = interiorPages(files.map((f) => [pageIdOfFile(defaultFile, f), mapOf2.get(f)]));
   return files.filter((f) => {
     const id = pageIdOfFile(defaultFile, f);
-    return id === void 0 || !refs.has(id);
+    return id === void 0 || !interior.has(id);
   });
 }
-function diveOrigin(defaultFile, file, files, mapOf) {
+function diveOrigin(defaultFile, file, files, mapOf2) {
   const id = pageIdOfFile(defaultFile, file);
   if (id === void 0) return void 0;
-  const entries = files.filter((f) => f !== file).map((f) => [f, mapOf.get(f)]);
+  const entries = files.filter((f) => f !== file).map((f) => [f, mapOf2.get(f)]);
   return diveParent(entries, id);
 }
 function nearestHit(hits, cx, cy) {
@@ -1549,7 +2215,7 @@ function nearestHit(hits, cx, cy) {
   return best;
 }
 function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS) {
-  const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const g = (s) => statusGlyph(s, unicode);
   const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
   const focus = focusInfo(map, focusId);
   if (focus === void 0) return void 0;
@@ -1565,7 +2231,7 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
           `${g(status)} ${group.label} [${group.id}] \xB7 ${layerName2} \xB7 ${status} \xB7 ${members.length} member(s)${pinMark}`,
           width
         ),
-        sgr: `${STATUS_SGR[status]};1`
+        sgr: `${statusSgr(status)};1`
       },
       {
         text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join("  ") || "\u2014"}`, width),
@@ -1596,7 +2262,7 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
   const lines = [
     {
       text: fitWidth(`${headParts.join(" \xB7 ")}${pin}`, width),
-      sgr: neutral ? "1" : `${STATUS_SGR[node.status]};1`
+      sgr: neutral ? "1" : `${statusSgr(node.status)};1`
     },
     { text: fitWidth(`evidence: ${node.evidence ?? "\u2014"}`, width), sgr: "90" },
     { text: fitWidth(`${usesWord} ${right}  ${uses.join("  ") || "\u2014"}`, width), sgr: "" },
@@ -1613,17 +2279,6 @@ function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_RO
   }
   return lines.slice(0, rows);
 }
-var WATER_ROWS = 7;
-var WATER_COLS_MAX = 60;
-var SPLASH_SHADES = {
-  unicode: ["\u2591", "\u2591", "\u2592", "\u2592", "\u2593", "\u2593", "\u2588", "\u2588"],
-  ascii: [".", ".", ":", ":", "=", "=", "#", "#"]
-};
-var WAVE_RAMP = [17, 18, 19, 61, 24, 25, 31, 37, 44, 45, 51, 87, 123, 159, 195];
-var SPINNER_FRAMES = {
-  unicode: ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"],
-  ascii: ["|", "/", "-", "\\"]
-};
 function elapsedLabel(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
   const m = Math.floor(s / 60);
@@ -1643,95 +2298,19 @@ function waitingInfo(s, width) {
   lines.push("the map appears at the first mmap_declare");
   return lines.map((l) => fitWidth(l, w));
 }
-var WAVE_INTERVAL = 18;
-var WAVE_LIFETIME = 64;
-var WAVE_SPEED = 0.9;
-var WAVE_ENVELOPE = 10;
-var WAVE_NUMBER = 0.42;
-var WAVE_LEVELS = 7;
-var WAVE_GAIN = 4.5;
-function waveHash(n) {
-  let h = Math.imul(n + 1, 2654435761) >>> 0;
-  h ^= h >>> 15;
-  h = Math.imul(h, 2246822519) >>> 0;
-  h ^= h >>> 13;
-  return h >>> 0;
-}
-var WAVE_CORNERS = [
-  [0, 0],
-  [1, 0],
-  [0, 1],
-  [1, 1]
-];
-function liveRipples(frame, width, height) {
-  const out = [];
-  const first = Math.floor((frame - WAVE_LIFETIME - WAVE_INTERVAL) / WAVE_INTERVAL);
-  const last = Math.floor(frame / WAVE_INTERVAL);
-  for (let n = Math.max(0, first); n <= last; n++) {
-    const h = waveHash(n);
-    const age = frame - (n * WAVE_INTERVAL + h % WAVE_INTERVAL);
-    if (age < 0 || age > WAVE_LIFETIME) continue;
-    const [fx, fy] = WAVE_CORNERS[h % WAVE_CORNERS.length];
-    out.push({
-      ox: fx * (width - 1),
-      oy: fy * (height - 1),
-      r: age * WAVE_SPEED,
-      fade: 1 - age / WAVE_LIFETIME
-    });
-  }
-  return out;
-}
-function waveAt(ripples, x, y) {
-  let value = 0;
-  for (const w of ripples) {
-    const front = Math.hypot(x - w.ox, (y - w.oy) * 2) - w.r;
-    value += Math.cos(front * WAVE_NUMBER) * Math.exp(-(front * front) / (2 * WAVE_ENVELOPE ** 2)) * w.fade;
-  }
-  return value;
-}
-function waveLevel(value) {
-  return Math.max(-WAVE_LEVELS, Math.min(WAVE_LEVELS, Math.round(value * WAVE_GAIN)));
-}
 function splashFrame(notice, info, frame, width, height, unicode, color) {
-  const fieldW = Math.min(width - 4, WATER_COLS_MAX);
-  if (fieldW < 24 || height < WATER_ROWS + info.length + 3) return void 0;
-  const mode = unicode ? "unicode" : "ascii";
-  const shades = SPLASH_SHADES[mode];
-  const indent = " ".repeat(Math.max(0, Math.floor((width - fieldW) / 2)));
-  const ripples = liveRipples(frame, fieldW, WATER_ROWS);
-  const paintRow = (y) => {
-    const levels = Array.from({ length: fieldW }, (_, x) => waveLevel(waveAt(ripples, x, y)));
-    let out = "";
-    for (let i = 0; i < fieldW; ) {
-      const level = levels[i];
-      let j = i;
-      while (j < fieldW && levels[j] === level) j++;
-      if (level === 0) out += " ".repeat(j - i);
-      else {
-        const ink = shades[Math.abs(level)].repeat(j - i);
-        out += color ? `\x1B[38;5;${WAVE_RAMP[WAVE_LEVELS + level]}m${ink}${RESET}` : ink;
-      }
-      i = j;
-    }
-    return out;
-  };
+  if (width < 24 || height < info.length + 3) return void 0;
   const dim = (s) => color ? `\x1B[90m${s}${RESET}` : s;
-  const spinner = SPINNER_FRAMES[mode];
+  const spinner = SPINNER_FRAMES[unicode ? "unicode" : "ascii"];
   const status = fitWidth(`${spinner[frame % spinner.length]} ${notice}`, Math.max(1, width - 2));
   const statusIndent = " ".repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
   const infoWidth = Math.max(0, ...info.map((l) => displayWidth(l)));
   const infoIndent = " ".repeat(Math.max(0, Math.floor((width - infoWidth) / 2)));
-  const block = [
-    ...Array.from({ length: WATER_ROWS }, (_, y) => indent + paintRow(y)),
-    "",
-    statusIndent + dim(status),
-    "",
-    ...info.map((l) => infoIndent + dim(l))
-  ];
+  const block = [statusIndent + dim(status), "", ...info.map((l) => infoIndent + dim(l))];
   return [...Array.from({ length: Math.max(0, Math.floor((height - block.length) / 2)) }, () => ""), ...block];
 }
 function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
-  const g = (s) => STATUS_GLYPH[s][unicode ? 0 : 1];
+  const g = (s) => statusGlyph(s, unicode);
   const count = (s) => map.nodes.filter((n) => n.status === s).length;
   const statuses = ["done", "in-progress", "planned", "regressed"];
   const counts = statuses.filter((s) => count(s) > 0).map((s) => `${g(s)} ${count(s)} ${s}`).join("   ");
@@ -1748,9 +2327,20 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
   while (lines.length < rows) lines.push({ text: "", sgr: "" });
   return lines.slice(0, rows);
 }
+function viewerReportOf(pane, defaultFile) {
+  const shown = pane.activeFile ?? pane.pendingFocusFile ?? defaultFile;
+  return { page: pageIdOfFile(defaultFile, shown), follow: pane.follow };
+}
 function main() {
-  const cfg = parseArgs(process.argv.slice(2), process.cwd());
-  migrateLegacyStore(cfg.file);
+  const parsed = parseArgs(process.argv.slice(2), process.cwd());
+  if (!parsed.ok) {
+    console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}
+${USAGE}`);
+    process.exit(1);
+  }
+  const cfg = parsed.value;
+  if (migrateLegacyStore(cfg.file)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
+  sweepQuitRequest(cfg.file);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";
@@ -1762,13 +2352,11 @@ function main() {
   let notice = standbyNotice;
   let lastCols = process.stdout.columns ?? 0;
   let lastRows = process.stdout.rows ?? 0;
-  let pageFiles = [cfg.file];
-  const pageData = /* @__PURE__ */ new Map();
+  let pane = initialPaneState(
+    cfg.follow,
+    cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page)
+  );
   const pageViews = /* @__PURE__ */ new Map();
-  let activeFile;
-  let firstScan = true;
-  let pendingFocusFile = cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page);
-  let follow = cfg.follow;
   let lastTabSegments = [];
   let tabScroll = 0;
   let offsetX = 0;
@@ -1784,62 +2372,72 @@ function main() {
   let panelContentRows = PANEL_CONTENT_ROWS;
   let dividerDrag = false;
   let lastClick;
-  const diveStack = [];
   let flash;
   let lastTabFiles = [];
-  const maps = () => new Map([...pageData].map(([f, e]) => [f, e.map]));
-  const topFiles = () => topLevelFiles(cfg.file, pageFiles, maps());
-  const inSubmap = () => activeFile !== void 0 && !topFiles().includes(activeFile);
+  const topFiles = () => topLevelFiles(cfg.file, filesOf(pane), mapsOf(pane));
+  const inSubmap = () => pane.activeFile !== void 0 && !topFiles().includes(pane.activeFile);
   const tabRows = () => topFiles().length > 1 || inSubmap() ? 1 : 0;
   const climbBack = () => {
-    let parent = diveStack.pop();
-    while (parent !== void 0 && !pageFiles.includes(parent)) parent = diveStack.pop();
-    if (parent === void 0 && activeFile !== void 0) {
-      parent = diveOrigin(cfg.file, activeFile, pageFiles, maps())?.parent;
-    }
-    if (parent !== void 0 && parent !== activeFile) {
+    const climbed = popDive(pane);
+    pane = climbed.state;
+    const parent = climbed.parent ?? (pane.activeFile !== void 0 ? diveOrigin(cfg.file, pane.activeFile, filesOf(pane), mapsOf(pane))?.parent : void 0);
+    if (parent !== void 0 && parent !== pane.activeFile) {
       handSwitch(parent);
       return true;
     }
     return false;
   };
-  const viewWidth = () => usableColumns(process.stdout.columns ?? 100);
-  const viewHeight = () => Math.max(1, (process.stdout.rows ?? 30) - (1 + panelContentRows) - 1 - tabRows());
+  const viewWidth = () => usableColumns(process.stdout.columns ?? FALLBACK_COLUMNS);
+  const viewHeight = () => Math.max(1, (process.stdout.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
   const dividerY = () => tabRows() + viewHeight() + 1;
   const pageTabsOf = (files) => files.map((f) => {
-    const m = pageData.get(f)?.map;
+    const entry = entryOf(pane, f);
+    const m = mapOf(entry);
     return {
-      title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? "main"),
+      title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? DEFAULT_PAGE_TAB_LABEL),
       status: m !== void 0 ? mapStatus(m) : "planned",
-      active: f === activeFile,
-      fresh: pageData.get(f)?.fresh ?? false,
+      active: f === pane.activeFile,
+      fresh: entry?.fresh ?? false,
       neutral: m !== void 0 && isNeutralKind(m)
     };
   });
-  const switchPage = (file) => {
-    if (activeFile !== void 0) pageViews.set(activeFile, { offsetX, offsetY, zoom, selectedId });
-    activeFile = file;
+  const noticeFor = (file) => {
+    const entry = entryOf(pane, file);
+    if (entry === void 0 || entry.state.kind === "absent") {
+      return file === void 0 || file === cfg.file ? standbyNotice : `waiting for ${file} ...`;
+    }
+    if (entry.state.kind === "loaded") return "";
+    return entry.state.transient && entry.state.lastGood !== void 0 ? "" : describePageFault(entry.state.fault);
+  };
+  const adoptPage = () => {
+    map = mapOf(entryOf(pane, pane.activeFile));
+    notice = noticeFor(pane.activeFile);
+  };
+  const adoptView = (previous) => {
+    const file = pane.activeFile;
+    if (file === void 0 || file === previous) return;
+    if (previous !== void 0) pageViews.set(previous, { offsetX, offsetY, zoom, selectedId });
     const view = pageViews.get(file);
     offsetX = view?.offsetX ?? 0;
     offsetY = view?.offsetY ?? 0;
     zoom = view?.zoom ?? ZOOM_DEFAULT;
     selectedId = view?.selectedId;
     hoverId = void 0;
-    const entry = pageData.get(file);
-    if (entry !== void 0 && entry.fresh) pageData.set(file, { ...entry, fresh: false });
-    map = entry?.map;
-    notice = map !== void 0 ? "" : entry?.error ?? (file === cfg.file ? standbyNotice : `waiting for ${file} ...`);
     const top = topFiles();
     const tabIndex = top.indexOf(file);
-    if (tabIndex >= 0) tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex);
+    if (tabIndex >= 0) {
+      tabScroll = tabScrollFor(pageTabsOf(top), viewWidth(), cfg.unicode, tabScroll, tabIndex, mouseActive);
+    }
   };
   const handSwitch = (file) => {
-    pendingFocusFile = void 0;
-    if (follow) {
-      follow = false;
-      flash = { text: "auto-follow off \u2014 press f to re-enable", until: Date.now() + 3e3 };
+    const previous = pane.activeFile;
+    const switched = userSwitch(pane, file);
+    pane = switched.state;
+    if (switched.followTurnedOff) {
+      flash = { text: "auto-follow off \u2014 press f to re-enable", until: Date.now() + FLASH_NOTICE_MS };
     }
-    switchPage(file);
+    adoptView(previous);
+    adoptPage();
   };
   const hitTest = (termX, termY) => {
     const sx = termX - 1;
@@ -1850,41 +2448,57 @@ function main() {
     const cy = sy + offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
-  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ""));
-  const restore = () => {
-    process.stdout.write((mouseActive ? MOUSE_OFF : "") + SHOW_CURSOR + "\n");
-    process.exit(0);
+  const publishPresence = () => {
+    publishViewer(cfg.file, process.pid, viewerReportOf(pane, cfg.file));
   };
-  process.on("SIGINT", restore);
-  process.on("SIGTERM", restore);
-  const paint = () => {
-    const cols = process.stdout.columns ?? 100;
+  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ""));
+  process.on("exit", () => {
+    process.stdout.write(terminalRestoreSequence(mouseActive));
+    retireViewer(cfg.file, process.pid);
+  });
+  const quit = () => process.exit(0);
+  process.on("SIGINT", quit);
+  process.on("SIGTERM", quit);
+  process.on("uncaughtException", (e) => {
+    process.stderr.write(`
+the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
+`);
+    process.exit(1);
+  });
+  const paint2 = () => {
+    const cols = process.stdout.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
-    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? 30, tabRows());
+    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
     let body;
     let panned = "";
     let pannable = false;
     if (map !== void 0) {
-      const windowed = renderMapWindow(
+      const rendered = renderWindow(
         map,
         { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
         { x: offsetX, y: offsetY, width: viewW, height: viewH }
       );
-      const maxX = Math.max(0, windowed.contentWidth - viewW);
-      const maxY = Math.max(0, windowed.contentHeight - viewH);
-      if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
-        offsetX = Math.min(Math.max(0, offsetX), maxX);
-        offsetY = Math.min(Math.max(0, offsetY), maxY);
-        paint();
-        return;
+      if (!rendered.ok) {
+        body = ["", fitWidth(`  ! ${rendered.error}`, viewW), ""];
+        lastHits = [];
+      } else {
+        const windowed = rendered.value;
+        const maxX = Math.max(0, windowed.contentWidth - viewW);
+        const maxY = Math.max(0, windowed.contentHeight - viewH);
+        if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
+          offsetX = Math.min(Math.max(0, offsetX), maxX);
+          offsetY = Math.min(Math.max(0, offsetY), maxY);
+          paint2();
+          return;
+        }
+        pannable = maxX > 0 || maxY > 0;
+        body = windowed.lines;
+        lastHits = windowed.hits;
+        lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
+        if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
       }
-      pannable = maxX > 0 || maxY > 0;
-      body = windowed.lines;
-      lastHits = windowed.hits;
-      lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
-      if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
     } else {
       const info = waitingInfo(
         {
@@ -1892,7 +2506,9 @@ function main() {
           pagesDir: join2(dirname2(cfg.file), PAGES_DIR_NAME),
           intervalMs: cfg.intervalMs,
           elapsedMs: interactive ? Date.now() - startedAt : void 0,
-          broken: [...pageData.values()].flatMap((e) => e.map === void 0 && e.error !== void 0 ? [e.error] : [])
+          broken: pane.pages.flatMap(
+            (p) => p.state.kind === "faulted" && p.state.lastGood === void 0 ? [describePageFault(p.state.fault)] : []
+          )
         },
         Math.max(1, viewW - 2)
       );
@@ -1910,7 +2526,7 @@ function main() {
     } else {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
-    const separator = dividerRow(viewW, cfg.unicode, follow);
+    const separator = dividerRow(viewW, cfg.unicode, pane.follow);
     const panelRows = [
       cfg.color ? `\x1B[90m${separator}${RESET}` : separator,
       ...panel.map(
@@ -1919,12 +2535,12 @@ function main() {
     ];
     let tabLine;
     lastTabFiles = topFiles();
-    if (inSubmap() && activeFile !== void 0) {
-      const stackParent = [...diveStack].reverse().find((f) => pageFiles.includes(f));
-      const scanned = diveOrigin(cfg.file, activeFile, pageFiles, maps());
-      const parentFile = stackParent ?? scanned?.parent;
-      const parentTitle = parentFile !== void 0 ? pageData.get(parentFile)?.map?.title ?? (pageIdOfFile(cfg.file, parentFile) ?? "main") : "main";
-      const nodeLabel = scanned?.label ?? map?.title ?? "";
+    if (inSubmap() && pane.activeFile !== void 0) {
+      const stackParent = pane.diveStack[pane.diveStack.length - 1];
+      const origin = diveOrigin(cfg.file, pane.activeFile, filesOf(pane), mapsOf(pane));
+      const parentFile = stackParent ?? origin?.parent;
+      const parentTitle = parentFile !== void 0 ? mapOf(entryOf(pane, parentFile))?.title ?? (pageIdOfFile(cfg.file, parentFile) ?? DEFAULT_PAGE_TAB_LABEL) : DEFAULT_PAGE_TAB_LABEL;
+      const nodeLabel = origin?.label ?? map?.title ?? "";
       const crumbHead = ` ${cfg.unicode ? "\u232B" : "<"} ${parentTitle} ${cfg.unicode ? "\u25B8" : ">"} `;
       const head = { text: crumbHead, sgr: "90", lo: 1, hi: displayWidth(crumbHead), action: { kind: "back" } };
       const tailText = fitWidth(`${nodeLabel} `, Math.max(1, viewW - displayWidth(crumbHead)));
@@ -1938,14 +2554,14 @@ function main() {
       lastTabSegments = [head, tail];
       tabLine = lastTabSegments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
     } else if (tabRows() > 0) {
-      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll);
+      const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll, mouseActive);
       lastTabSegments = segments;
       tabLine = segments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
     } else {
       lastTabSegments = [];
     }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
-    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 q quit";
+    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 x delete page \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
     let frame = HOME;
@@ -1963,89 +2579,87 @@ function main() {
     lastRows = process.stdout.rows ?? lastRows;
     lastFrame = "";
     process.stdout.write(CLEAR_ALL);
-    paint();
+    paint2();
   };
   const tick = () => {
+    if (takeQuitRequest(cfg.file)) quit();
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
     const discovered = listPageFiles(cfg.file);
-    pageFiles = discovered.length > 0 ? discovered : [cfg.file];
-    for (const known of [...pageData.keys()]) {
-      if (!pageFiles.includes(known)) {
-        pageData.delete(known);
-        pageViews.delete(known);
-      }
-    }
-    const changedFiles = [];
-    for (const file of pageFiles) {
-      let mtimeMs;
-      try {
-        mtimeMs = statSync(file).mtimeMs;
-      } catch {
-        continue;
-      }
-      const entry = pageData.get(file);
-      if (mtimeMs === entry?.mtimeMs) continue;
-      const loaded = loadMapFile(file);
-      if (loaded.ok) {
-        if (!firstScan) changedFiles.push(file);
-        const becameFresh = !firstScan && file !== activeFile;
-        pageData.set(file, { map: loaded.value, mtimeMs, fresh: becameFresh });
-        if (file === activeFile) {
-          map = loaded.value;
-          notice = "";
-        } else if (becameFresh && !topFiles().includes(file)) {
-          const title = loaded.value.title ?? (pageIdOfFile(cfg.file, file) ?? "?");
-          flash = { text: `${cfg.unicode ? "\u229E " : ""}${title} updated`, until: Date.now() + 4e3 };
-        }
-      } else if (loaded.error.kind === "malformed-json") {
-        pageData.set(file, {
-          map: entry?.map,
-          mtimeMs: entry?.mtimeMs ?? -1,
-          fresh: entry?.fresh ?? false,
-          error: describeStoreError(loaded.error)
-        });
-        if (file === activeFile && entry?.map === void 0) notice = describeStoreError(loaded.error);
-      } else {
-        pageData.set(file, { map: entry?.map, mtimeMs, fresh: entry?.fresh ?? false, error: describeStoreError(loaded.error) });
-        if (file === activeFile) notice = describeStoreError(loaded.error);
-      }
-    }
+    const files = discovered.length > 0 ? discovered : [cfg.file];
     const request = takeFocusRequest(cfg.file);
-    if (request !== void 0 && !(firstScan && pendingFocusFile !== void 0)) {
-      pendingFocusFile = pageFilePath(cfg.file, request.page);
+    const previous = pane.activeFile;
+    const scanned = scan(pane, {
+      files,
+      mtimeAt: (file) => {
+        try {
+          return statSync2(file).mtimeMs;
+        } catch {
+          return void 0;
+        }
+      },
+      load: readPage,
+      focusRequest: request === void 0 ? void 0 : pageFilePath(cfg.file, request.page),
+      // a drag in progress holds auto-follow off: the user is engaged with
+      // THIS page, and a missed switch is re-triggered by the next save
+      engaged: dragAnchor !== void 0
+    });
+    pane = scanned.state;
+    for (const known of [...pageViews.keys()]) {
+      if (!files.includes(known)) pageViews.delete(known);
     }
-    let requestApplied = false;
-    if (pendingFocusFile !== void 0 && pageFiles.includes(pendingFocusFile)) {
-      if (pendingFocusFile !== activeFile) switchPage(pendingFocusFile);
-      pendingFocusFile = void 0;
-      requestApplied = true;
+    adoptView(previous);
+    adoptPage();
+    if (flash?.confirm === true && pane.pendingDelete === void 0) flash = void 0;
+    const top = topFiles();
+    for (const file of scanned.freshened) {
+      if (top.includes(file)) continue;
+      const title = mapOf(entryOf(pane, file))?.title ?? (pageIdOfFile(cfg.file, file) ?? "?");
+      flash = { text: `${cfg.unicode ? "\u229E " : ""}${title} updated`, until: Date.now() + FLASH_BACKGROUND_NEWS_MS };
     }
-    if (follow && !requestApplied && changedFiles.length > 0 && dragAnchor === void 0) {
-      const target = mostRecentPageFile(changedFiles, (f) => pageData.get(f)?.mtimeMs);
-      if (target !== activeFile) switchPage(target);
-    }
-    firstScan = false;
-    if (activeFile === void 0 || !pageFiles.includes(activeFile)) {
-      switchPage(mostRecentPageFile(pageFiles, (f) => pageData.get(f)?.mtimeMs));
-    }
-    if ([...pageData.values()].some((p) => p.map?.nodes.some((n) => n.status === "in-progress"))) spinnerFrame++;
+    if (pane.pages.some((p) => mapOf(p)?.nodes.some((n) => n.status === "in-progress"))) spinnerFrame++;
     if (flash !== void 0 && Date.now() > flash.until) flash = void 0;
-    paint();
+    paint2();
+  };
+  const pageName = (file) => pageIdOfFile(cfg.file, file) ?? DEFAULT_PAGE_TAB_LABEL;
+  const askDelete = () => {
+    const now = Date.now();
+    const asked = requestDelete(pane, now, CONFIRM_WINDOW_MS);
+    pane = asked.state;
+    if (asked.request.kind === "none") return;
+    if (asked.request.kind === "absent") {
+      flash = {
+        text: `nothing to delete \u2014 ${pageName(asked.request.file)} has no file`,
+        until: now + FLASH_NOTICE_MS
+      };
+      return;
+    }
+    if (asked.request.kind === "armed") {
+      flash = {
+        text: `press x again to delete ${pageName(asked.request.file)} \u2014 its file is removed`,
+        until: asked.request.until,
+        confirm: true
+      };
+      return;
+    }
+    const file = asked.request.file;
+    const removed = deletePageFile(file);
+    flash = removed.ok ? { text: `deleted ${pageName(file)}`, until: now + FLASH_ACK_MS } : { text: describeStoreError(removed.error), until: now + FLASH_NOTICE_MS };
+    tick();
   };
   if (interactive) {
     process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
-      const parsed = parseInput(pendingInput + chunk);
-      pendingInput = parsed.rest;
+      const parsed2 = parseInput(pendingInput + chunk);
+      pendingInput = parsed2.rest;
       let dirty = false;
-      for (const event of parsed.events) {
+      for (const event of parsed2.events) {
         switch (event.kind) {
           case "quit":
-            restore();
+            quit();
             return;
           case "reset":
             offsetX = 0;
@@ -2054,7 +2668,10 @@ function main() {
             dirty = true;
             break;
           case "clear":
-            if (selectedId !== void 0) selectedId = void 0;
+            if (pane.pendingDelete !== void 0) {
+              pane = disarmDelete(pane);
+              flash = void 0;
+            } else if (selectedId !== void 0) selectedId = void 0;
             else climbBack();
             dirty = true;
             break;
@@ -2074,11 +2691,16 @@ function main() {
             const anchorId = hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
             zoom = next;
-            const sized = renderMapWindow(
+            const measured = renderWindow(
               map,
               { color: false, unicode: cfg.unicode, spinnerFrame: 0, zoom },
               { x: 0, y: 0, width: 0, height: 0 }
             );
+            if (!measured.ok) {
+              dirty = true;
+              break;
+            }
+            const sized = measured.value;
             const after = before === void 0 ? void 0 : sized.hits.find((h) => h.id === before.id);
             const moved = anchorOffsets(
               before !== void 0 && after !== void 0 ? { before, after } : void 0,
@@ -2109,7 +2731,7 @@ function main() {
             break;
           case "mouse-drag":
             if (dividerDrag) {
-              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? 30, tabRows());
+              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
                 dirty = true;
@@ -2139,22 +2761,25 @@ function main() {
                   climbBack();
                 } else if (tabHit.action.kind === "scroll") {
                   tabScroll = Math.max(0, Math.min(tabScroll + tabHit.action.delta, lastTabFiles.length - 1));
+                } else if (tabHit.action.kind === "delete") {
+                  askDelete();
                 } else {
                   const target = lastTabFiles[tabHit.action.index];
-                  if (target !== void 0 && target !== activeFile) handSwitch(target);
+                  if (target !== void 0 && target !== pane.activeFile) handSwitch(target);
                 }
               } else {
                 const id = hitTest(event.x, event.y);
                 const now = Date.now();
-                if (id !== void 0 && lastClick?.id === id && now - lastClick.at <= 450) {
+                if (id !== void 0 && lastClick?.id === id && now - lastClick.at <= DOUBLE_CLICK_MS) {
                   const submap = map?.nodes.find((n) => n.id === id)?.submap;
-                  if (submap !== void 0 && activeFile !== void 0) {
+                  if (submap !== void 0 && pane.activeFile !== void 0) {
                     const target = pageFilePath(cfg.file, submap);
-                    if (pageFiles.includes(target) && target !== activeFile) {
-                      diveStack.push(activeFile);
+                    const files = filesOf(pane);
+                    if (files.includes(target) && target !== pane.activeFile) {
+                      pane = pushDive(pane, pane.activeFile);
                       handSwitch(target);
-                    } else if (!pageFiles.includes(target)) {
-                      flash = { text: `submap "${submap}" has no page yet`, until: now + 2500 };
+                    } else if (!files.includes(target)) {
+                      flash = { text: `submap "${submap}" has no page yet`, until: now + FLASH_ACK_MS };
                     }
                   }
                   lastClick = void 0;
@@ -2171,11 +2796,11 @@ function main() {
           case "next-page":
           case "prev-page": {
             const top = topFiles();
-            if (top.length > 0 && activeFile !== void 0) {
-              const current = top.indexOf(activeFile);
+            if (top.length > 0 && pane.activeFile !== void 0) {
+              const current = top.indexOf(pane.activeFile);
               const step = event.kind === "next-page" ? 1 : -1;
               const target = top[(current + step + top.length) % top.length];
-              if (target !== activeFile) {
+              if (target !== pane.activeFile) {
                 handSwitch(target);
                 dirty = true;
               }
@@ -2184,7 +2809,7 @@ function main() {
           }
           case "page": {
             const target = topFiles()[event.index];
-            if (target !== void 0 && target !== activeFile) {
+            if (target !== void 0 && target !== pane.activeFile) {
               handSwitch(target);
               dirty = true;
             }
@@ -2194,24 +2819,30 @@ function main() {
             if (climbBack()) dirty = true;
             break;
           case "follow-toggle":
-            follow = !follow;
-            flash = { text: follow ? "auto-follow on" : "auto-follow off", until: Date.now() + 2500 };
+            pane = toggleFollow(pane);
+            flash = { text: pane.follow ? "auto-follow on" : "auto-follow off", until: Date.now() + FLASH_ACK_MS };
+            dirty = true;
+            break;
+          case "delete-page":
+            askDelete();
             dirty = true;
             break;
         }
       }
-      if (dirty) paint();
+      if (dirty) paint2();
     });
     process.stdout.on("resize", handleResize);
   }
   tick();
   setInterval(tick, cfg.intervalMs);
+  publishPresence();
+  setInterval(publishPresence, VIEWER_HEARTBEAT_MS);
   if (interactive) {
     setInterval(() => {
       if (map !== void 0) return;
       splashTick++;
-      paint();
-    }, 80);
+      paint2();
+    }, SPLASH_FRAME_MS);
   }
 }
 function launchedAsEntry(argv1, moduleUrl) {
@@ -2227,30 +2858,30 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
 }
 export {
   PANEL_ROWS_MIN,
-  WAVE_LEVELS,
-  WAVE_NUMBER,
+  USAGE,
   anchorOffsets,
   clampPanelRows,
+  describeArgsError,
+  describePageFault,
   diveOrigin,
   dividerRow,
   elapsedLabel,
   fitWidth,
   launchedAsEntry,
-  liveRipples,
   mapPanel,
-  mostRecentPageFile,
   nearestHit,
   nodePanel,
   pageTabRow,
   panelRowsFromDividerY,
   parseArgs,
+  readPage,
+  renderWindow,
   splashFrame,
   tabScrollFor,
+  terminalRestoreSequence,
   topLevelFiles,
   usableColumns,
+  viewerReportOf,
   waitingInfo,
-  waveAt,
-  waveHash,
-  waveLevel,
   wrapWidth
 };
