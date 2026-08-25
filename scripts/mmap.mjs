@@ -37,7 +37,7 @@ import {
   placePane,
   pluginRootOf,
   takeWatcherFlag,
-  watcherAlreadyRunning,
+  paneIsOpen,
   writeFocusRequest,
   writeQuitRequest,
 } from './pane-core.mjs';
@@ -179,7 +179,7 @@ async function main() {
   const project = nearestProject(candidates, candidates.map((dir) => existsSync(join(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
   const mapFile = join(project.root, store.STATE_FILE_RELATIVE_PATH);
-  const action = toggleAction(watcherAlreadyRunning(mapFile), cfg.pageSlug, cfg.force);
+  const action = toggleAction(paneIsOpen(store, mapFile), cfg.pageSlug, cfg.force);
 
   if (action.kind === 'quit') {
     writeQuitRequest(store.quitFilePath(mapFile));

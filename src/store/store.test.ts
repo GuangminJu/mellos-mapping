@@ -39,8 +39,16 @@ import {
   migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
+  type PageId,
   parseMap,
+  VIEWER_STALE_MS,
+  VIEWER_SWEEP_MS,
+  publishViewer,
   quitFilePath,
+  readLiveViewers,
+  retireViewer,
+  viewerFilePath,
+  viewersDirPath,
   saveMapFile,
   saveMappingPolicy,
   serializeMap,
@@ -506,6 +514,101 @@ describe('quit requests — one-shot "close the pane" channel', () => {
     expect(existsSync(quitFilePath(defaultFile))).toBe(false);
     expect(takeQuitRequest(defaultFile)).toBe(false);
     sweepQuitRequest(defaultFile); // sweeping nothing is the state it was in
+  });
+});
+
+describe('viewers — the "somebody is looking" channel, pane to readers', () => {
+  const defaultFile = (): string => join(dir, 'map.json');
+
+  it('the reports sit in a directory beside the default file, named by pid', () => {
+    expect(viewersDirPath(defaultFile())).toBe(join(dir, 'viewers'));
+    expect(viewerFilePath(defaultFile(), 4242)).toBe(join(dir, 'viewers', '4242.json'));
+  });
+
+  it('no directory means nobody is looking — the common case, and cheap', () => {
+    expect(readLiveViewers(defaultFile(), Date.now())).toEqual([]);
+  });
+
+  it('a published report reads back as a live viewer', () => {
+    must(publishViewer(defaultFile(), 4242, { page: 'pane-presence' as PageId, follow: true }));
+    const live = readLiveViewers(defaultFile(), Date.now());
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ pid: 4242, page: 'pane-presence', follow: true });
+    expect(live[0]!.ageMs).toBeLessThan(VIEWER_STALE_MS);
+  });
+
+  it('the default page is reported as null on disk and undefined in the value', () => {
+    must(publishViewer(defaultFile(), 7, { page: undefined, follow: false }));
+    const raw: unknown = JSON.parse(readFileSync(viewerFilePath(defaultFile(), 7), 'utf8'));
+    expect(raw).toEqual({ version: 1, page: null, follow: false });
+    expect(readLiveViewers(defaultFile(), Date.now())[0]).toMatchObject({ page: undefined, follow: false });
+  });
+
+  it('two panes on one store both report, youngest first', () => {
+    must(publishViewer(defaultFile(), 100, { page: undefined, follow: true }));
+    must(publishViewer(defaultFile(), 200, { page: 'other' as PageId, follow: false }));
+    // 200 was written last, so at any later instant its report is the younger
+    expect(readLiveViewers(defaultFile(), Date.now() + 1000).map((v) => v.pid)).toEqual([200, 100]);
+  });
+
+  it('a report nobody refreshed is not a pane — and is kept, not swept', () => {
+    must(publishViewer(defaultFile(), 4242, { page: undefined, follow: true }));
+    const later = Date.now() + VIEWER_STALE_MS + 1;
+    expect(readLiveViewers(defaultFile(), later)).toEqual([]);
+    expect(existsSync(viewerFilePath(defaultFile(), 4242))).toBe(true);
+  });
+
+  it('a report far past staleness is deleted by whoever reads it', () => {
+    must(publishViewer(defaultFile(), 4242, { page: undefined, follow: true }));
+    expect(readLiveViewers(defaultFile(), Date.now() + VIEWER_SWEEP_MS + 1)).toEqual([]);
+    expect(existsSync(viewerFilePath(defaultFile(), 4242))).toBe(false);
+  });
+
+  it('retiring takes the report back, and retiring twice is the state it was in', () => {
+    must(publishViewer(defaultFile(), 4242, { page: undefined, follow: true }));
+    retireViewer(defaultFile(), 4242);
+    expect(existsSync(viewerFilePath(defaultFile(), 4242))).toBe(false);
+    expect(readLiveViewers(defaultFile(), Date.now())).toEqual([]);
+    retireViewer(defaultFile(), 4242);
+  });
+
+  it('junk, a wrong version and a bad slug are not panes', () => {
+    mkdirSync(viewersDirPath(defaultFile()), { recursive: true });
+    const junk = [
+      'not json',
+      '"just-a-string"',
+      '[1,2]',
+      '{"version":1,"page":null}',
+      '{"version":1,"follow":"yes","page":null}',
+      '{"version":99,"page":null,"follow":true}',
+      '{"version":1,"page":"NOT A SLUG","follow":true}',
+    ];
+    for (const [i, body] of junk.entries()) {
+      writeFileSync(join(viewersDirPath(defaultFile()), `${900 + i}.json`), body);
+    }
+    expect(readLiveViewers(defaultFile(), Date.now())).toEqual([]);
+  });
+
+  it('a save in flight is not a pane: only <pid>.json is a report', () => {
+    mkdirSync(viewersDirPath(defaultFile()), { recursive: true });
+    const body = '{"version":1,"page":null,"follow":true}';
+    writeFileSync(join(viewersDirPath(defaultFile()), '4242.json.999.abcd1234.tmp'), body);
+    writeFileSync(join(viewersDirPath(defaultFile()), 'notes.txt'), body);
+    expect(readLiveViewers(defaultFile(), Date.now())).toEqual([]);
+  });
+
+  it('a BOM a hand-edit left behind still reads as a report', () => {
+    mkdirSync(viewersDirPath(defaultFile()), { recursive: true });
+    writeFileSync(join(viewersDirPath(defaultFile()), '4242.json'), '﻿{"version":1,"page":null,"follow":true}', 'utf8');
+    expect(readLiveViewers(defaultFile(), Date.now())).toHaveLength(1);
+  });
+
+  it('publishing again replaces the report rather than adding one', () => {
+    must(publishViewer(defaultFile(), 4242, { page: 'first' as PageId, follow: true }));
+    must(publishViewer(defaultFile(), 4242, { page: 'second' as PageId, follow: false }));
+    const live = readLiveViewers(defaultFile(), Date.now());
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ page: 'second', follow: false });
   });
 });
 

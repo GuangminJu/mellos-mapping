@@ -2,7 +2,7 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
 // src/watch/watch.ts
-import { realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync as statSync2 } from "node:fs";
 import { dirname as dirname2, join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -1332,7 +1332,7 @@ function paint(map, opts, geo, unverified) {
 }
 
 // src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // src/store/format.ts
@@ -1549,8 +1549,45 @@ function parseMap(raw, path) {
 }
 
 // src/store/store.ts
+var RENAME_MAX_ATTEMPTS = 10;
+var RENAME_BACKOFF_STEP_MS = 10;
+var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function discardTemp(tmp) {
+  try {
+    rmSync(tmp, { force: true });
+  } catch {
+  }
+}
 function errnoOf(e) {
   return e.code ?? e.message;
+}
+function writeFileAtomic(path, contents) {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, contents, "utf8");
+  } catch (e) {
+    discardTemp(tmp);
+    return err({ kind: "save-failed", path, detail: `writing the temp file failed: ${errnoOf(e)}` });
+  }
+  let attempt = 1;
+  for (; ; ) {
+    try {
+      renameSync(tmp, path);
+      return ok(void 0);
+    } catch (e) {
+      const code = errnoOf(e);
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+        discardTemp(tmp);
+        return err({ kind: "save-failed", path, detail: `${code} after ${attempt} attempt(s)` });
+      }
+      sleepSync(attempt * RENAME_BACKOFF_STEP_MS);
+      attempt += 1;
+    }
+  }
 }
 function isRecord2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -1643,6 +1680,26 @@ function takeQuitRequest(defaultFile) {
 function sweepQuitRequest(defaultFile) {
   try {
     rmSync(quitFilePath(defaultFile), { force: true });
+  } catch {
+  }
+}
+var VIEWERS_DIR_NAME = "viewers";
+var VIEWER_FILE_VERSION = 1;
+var VIEWER_HEARTBEAT_MS = 1e3;
+function viewersDirPath(defaultFile) {
+  return join(dirname(defaultFile), VIEWERS_DIR_NAME);
+}
+function viewerFilePath(defaultFile, pid) {
+  return join(viewersDirPath(defaultFile), `${pid}.json`);
+}
+function publishViewer(defaultFile, pid, report) {
+  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow };
+  return writeFileAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}
+`);
+}
+function retireViewer(defaultFile, pid) {
+  try {
+    rmSync(viewerFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
@@ -2270,6 +2327,10 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
   while (lines.length < rows) lines.push({ text: "", sgr: "" });
   return lines.slice(0, rows);
 }
+function viewerReportOf(pane, defaultFile) {
+  const shown = pane.activeFile ?? pane.pendingFocusFile ?? defaultFile;
+  return { page: pageIdOfFile(defaultFile, shown), follow: pane.follow };
+}
 function main() {
   const parsed = parseArgs(process.argv.slice(2), process.cwd());
   if (!parsed.ok) {
@@ -2387,8 +2448,14 @@ ${USAGE}`);
     const cy = sy + offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
+  const publishPresence = () => {
+    publishViewer(cfg.file, process.pid, viewerReportOf(pane, cfg.file));
+  };
   process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ""));
-  process.on("exit", () => process.stdout.write(terminalRestoreSequence(mouseActive)));
+  process.on("exit", () => {
+    process.stdout.write(terminalRestoreSequence(mouseActive));
+    retireViewer(cfg.file, process.pid);
+  });
   const quit = () => process.exit(0);
   process.on("SIGINT", quit);
   process.on("SIGTERM", quit);
@@ -2527,7 +2594,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       files,
       mtimeAt: (file) => {
         try {
-          return statSync(file).mtimeMs;
+          return statSync2(file).mtimeMs;
         } catch {
           return void 0;
         }
@@ -2768,6 +2835,8 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
   }
   tick();
   setInterval(tick, cfg.intervalMs);
+  publishPresence();
+  setInterval(publishPresence, VIEWER_HEARTBEAT_MS);
   if (interactive) {
     setInterval(() => {
       if (map !== void 0) return;
@@ -2812,6 +2881,7 @@ export {
   terminalRestoreSequence,
   topLevelFiles,
   usableColumns,
+  viewerReportOf,
   waitingInfo,
   wrapWidth
 };

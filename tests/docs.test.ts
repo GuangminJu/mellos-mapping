@@ -63,8 +63,15 @@ describe('the tool names in the docs', () => {
     [...read('src/server/server.ts').matchAll(/registerTool\(\s*'(mmap_[a-z_]+)'/g)].map((m) => m[1]!),
   );
 
-  it('the server registers the five tools the docs are checked against', () => {
-    expect([...registered].sort()).toEqual(['mmap_declare', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
+  it('the server registers the six tools the docs are checked against', () => {
+    expect([...registered].sort()).toEqual([
+      'mmap_declare',
+      'mmap_open',
+      'mmap_remove',
+      'mmap_setup',
+      'mmap_update',
+      'mmap_view',
+    ]);
   });
 
   it('mentions no tool the server does not register', () => {

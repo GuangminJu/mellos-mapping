@@ -228,12 +228,16 @@ get the five `mmap_*` tools and the pane, and bring their own prompting.
 
 1. Ask Claude to build something non-trivial. The bundled skill has Claude
    declare the ghost design and keep the map current as it works.
-2. Run `/mellos-mapping:mmap` to open the live pane (Windows Terminal split
-   on Windows, tmux split inside tmux, or a printed command to run in any
-   second terminal). On Windows the pane opens in the terminal window
-   hosting YOUR session, even with several windows open; pass `--window` to
-   put the map in its own dedicated window instead. Prefer `--ascii` if
-   your font lacks box-drawing glyphs.
+2. The pane opens itself. Every write tells Claude whether anybody is
+   actually looking (see [Who is watching](#who-is-watching)), and Claude
+   opens or retargets the pane with `mmap_open` when nobody is — you never
+   have to remember to. Open or close it yourself with `mmap` in any
+   terminal, or `/mellos-mapping:mmap` in the conversation (Windows
+   Terminal split on Windows, tmux split inside tmux, or a printed command
+   to run in any second terminal). On Windows the pane opens in the terminal
+   window hosting YOUR session, even with several windows open; pass
+   `--window` to put the map in its own dedicated window instead. Prefer
+   `--ascii` if your font lacks box-drawing glyphs.
 3. Watch nodes light up from the bottom. Interrupt when the picture worries
    you — that is what it is for.
 
@@ -396,10 +400,13 @@ State lives in the tool-owned `.mellos/` directory at the project root:
 | `.mellos/pages/<slug>.json` | one file per named page |
 | `.mellos/config.json` | the project's mapping policy (see [Setup](#setup-choose-when-maps-open)) |
 | `.mellos/focus` | one-shot "show this page" request from a launcher to a running pane; the pane consumes it and deletes it within a poll tick |
+| `.mellos/quit` | one-shot "close yourself" request from the `mmap` toggle, consumed and deleted the same way |
+| `.mellos/viewers/<pid>.json` | one report per live pane — the page it is showing, whether auto-follow is on — refreshed every second while it runs (see [Who is watching](#who-is-watching)) |
 | `<any of the above>.<pid>.<random>.tmp` | a save in flight; it is renamed over its target or removed. A leftover means a write failed (and was reported) and even its cleanup could not run |
 
 The map files are plain JSON, safe to commit if you want the maps' history in
-git.
+git. The other three are runtime chatter between a pane and whoever is talking
+to it — gitignore `focus`, `quit` and `viewers/` if you commit the store.
 
 **Concurrency, stated plainly.** Every save is atomic — written to a private
 sibling temp file and renamed over the target — so a reader polling the store
@@ -451,6 +458,7 @@ When a hidden sub-map changes in the background, the footer says so.
 | `mmap_remove` | Revise: drop edges, nodes, groups, lanes, empty bands — and, with `pages`, whole pages, file and all (permanent; applied after this call's map edits) |
 | `mmap_view` | Render the current map as text inline (optional `zoom`, `-4`…`2`), ending with a `pages:` line naming every page the project has and which one you are looking at |
 | `mmap_setup` | Get/set the project's mapping policy — when maps open |
+| `mmap_open` | Put the map on your screen: open the pane, or retarget an open one to a `page` (`window: true` for the dedicated window). It answers with whether a pane actually reported in afterwards, not merely that a command ran — and it can never close one |
 
 A batch applies bands → groups → lanes → node updates, and within one node
 update `layer` moves the node before its other fields, so a node can move and
@@ -477,6 +485,30 @@ mean:
 
 A write that does not land answers `save failed, nothing changed (retry)`:
 the previous file is intact and calling again is the whole recovery.
+
+### Who is watching
+
+A map nobody has on screen is a file, not a map — and nothing in the system
+used to be able to tell the difference. An assistant would declare a design,
+light nodes up as it built them, and report all of it into a store you had
+never opened a pane for.
+
+Every pane now publishes a small report while it runs — `.mellos/viewers/`,
+one file per pane, refreshed once a second — and every write and every view
+ends with what those reports say:
+
+| The line | What it means |
+| --- | --- |
+| `pane: CLOSED` | nobody is seeing this map; the assistant opens one with `mmap_open` instead of asking you to |
+| `pane: open on this page` | you are watching this land |
+| `pane: open on <other>, auto-follow on` | the pane follows the page last written, so it arrives here by itself |
+| `pane: open on <other>, auto-follow OFF` | you pinned that page by hand: the change is real and NOT on your screen. The assistant is told to say so rather than move your view |
+
+The same reports answer "is a pane already open?" for `mmap` and for the
+launcher — a question that used to cost a Windows-only process scan and could
+not say which page was on screen. A report whose pane stopped refreshing it is
+ignored after five seconds and deleted after a minute, so a killed pane cannot
+go on claiming an audience.
 
 ### Setup: choose when maps open
 

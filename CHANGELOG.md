@@ -53,6 +53,12 @@ the git history (`git log --oneline`), which is where this file starts.
 
 ### Changed
 
+- **"Is a pane already open?" is answered by the panes, not by the operating
+  system.** `mmap` and the launcher used to settle it with a PowerShell process
+  scan: Windows-only, a round trip every time, and unable to say WHICH page was
+  on screen. They now read the viewers reports — instant, exact, cross-platform
+  — and fall back to the process scan only for a watcher started before this
+  version, which publishes no report.
 - **The standby screen is text only.** The animated water (the ripple engine)
   is gone: on real terminals its shaded cells rendered as blocks of color
   noise rather than waves, and decoration was never the screen's job. While
@@ -61,6 +67,25 @@ the git history (`git log --oneline`), which is where this file starts.
 
 ### Added
 
+- **A pane says it is there, so nothing has to guess — and `mmap_open` lets
+  the assistant put the map on screen itself.** A map nobody had open looked
+  exactly like a map somebody was watching: the assistant declared a design,
+  lit nodes up as it built them, and the user saw an empty terminal or nothing
+  at all, because opening the pane took a human remembering to. Every pane now
+  publishes a report while it runs (`.mellos/viewers/<pid>.json` — the page on
+  screen and whether auto-follow is on, refreshed once a second, taken back
+  when the pane exits), and every declare, update, remove and view answers
+  with a `pane:` line built from those reports: nobody is looking; the pane is
+  on this page; it is elsewhere but follows what you write; or the user pinned
+  another page by hand and this change is NOT on their screen. `mmap_open` —
+  the sixth tool — opens the pane or retargets an open one by running the same
+  launcher a human runs, so it can never CLOSE one (that stays the user's, the
+  `q` key or `mmap`), and it answers with whether a pane actually reported
+  itself in afterwards rather than merely that a command ran. The
+  `SessionStart` hook and the skill now say to call it without asking, a
+  recorded mapping policy being standing consent. A report nobody refreshes
+  stops counting after five seconds and is deleted after a minute, so a killed
+  pane cannot go on claiming an audience.
 - **`mmap` — one word in any terminal that opens the map pane, and the same
   word that closes it.** Bare `mmap` finds the project the way git finds its
   root (upwards from the cwd to the nearest `.mellos/`), opens the pane if

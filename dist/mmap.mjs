@@ -194,7 +194,9 @@ function runPowerShell(script) {
   );
   return r.stdout ?? "";
 }
-function watcherAlreadyRunning(mapFile) {
+function paneIsOpen(store, mapFile) {
+  if (store.readLiveViewers(mapFile, Date.now()).length > 0) return true;
+  if (process.platform !== "win32") return false;
   const m = runPowerShell(watcherProbeScript(mapFile)).match(/WATCHERS=(\d+)/);
   return m !== null && Number(m[1]) > 0;
 }
@@ -301,7 +303,7 @@ async function main() {
   const project = nearestProject(candidates, candidates.map((dir) => existsSync2(join2(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
   const mapFile = join2(project.root, store.STATE_FILE_RELATIVE_PATH);
-  const action = toggleAction(watcherAlreadyRunning(mapFile), cfg.pageSlug, cfg.force);
+  const action = toggleAction(paneIsOpen(store, mapFile), cfg.pageSlug, cfg.force);
   if (action.kind === "quit") {
     writeQuitRequest(store.quitFilePath(mapFile));
     console.log(`Closing the map pane for ${project.root}.`);

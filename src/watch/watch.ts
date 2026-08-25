@@ -100,6 +100,8 @@ import {
   PAGES_DIR_NAME,
   type PageId,
   STATE_FILE_RELATIVE_PATH,
+  VIEWER_HEARTBEAT_MS,
+  type ViewerReport,
   deletePageFile,
   describeStoreError,
   listPageFiles,
@@ -108,6 +110,8 @@ import {
   migrateLegacyStore,
   pageFilePath,
   pageIdOfFile,
+  publishViewer,
+  retireViewer,
   sweepQuitRequest,
   takeFocusRequest,
   takeQuitRequest,
@@ -883,6 +887,23 @@ export function mapPanel(
  * outside: every pure helper it calls has its own spec, and watch.test.ts
  * covers the panel, the tab strip, the divider and the standby screen.
  */
+/**
+ * What this pane would tell the store about itself right now.
+ *
+ * Before the first scan there is no active page yet; the report then names the
+ * page the pane was ASKED for (`--page`, or a focus request it has not been
+ * able to apply), because that is the page it will show the moment the file
+ * appears. Naming the default page instead would be a small lie told from a
+ * standby screen — and a lie a reader would act on, since "the pane is on the
+ * page I am writing" is exactly what it wants to know.
+ *
+ * @param defaultFile - the store's base path; the page id is relative to it.
+ */
+export function viewerReportOf(pane: PaneState, defaultFile: string): ViewerReport {
+  const shown = pane.activeFile ?? pane.pendingFocusFile ?? defaultFile;
+  return { page: pageIdOfFile(defaultFile, shown), follow: pane.follow };
+}
+
 function main(): void {
   const parsed = parseArgs(process.argv.slice(2), process.cwd());
   if (!parsed.ok) {
@@ -1067,12 +1088,37 @@ function main(): void {
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
 
+  /**
+   * Tell the store that this pane exists, and what it has on screen.
+   *
+   * The one thing a map file cannot say is whether anybody is LOOKING at it.
+   * Without this report an assistant declared a design, lit nodes up as the
+   * work went, and never learned that it was writing into a store nobody had
+   * open — so it never offered to open one either. This is the answer the MCP
+   * server reads back on every write, and the same answer the launcher and
+   * the `mmap` toggle now use instead of asking the operating system which
+   * processes happen to exist.
+   *
+   * The write's Result is deliberately dropped. The next heartbeat is the
+   * whole recovery — and a store this pane cannot write to is one whose map
+   * saves are failing too, which the MCP server already reports at the
+   * surface the user actually reads.
+   */
+  const publishPresence = (): void => {
+    publishViewer(cfg.file, process.pid, viewerReportOf(pane, cfg.file));
+  };
+
   process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ''));
   // ONE cleanup, on the one event every exit path passes through: signals,
   // the q key, a timer callback that threw, a bug nobody predicted. Handlers
   // that each restored the terminal themselves covered only the exits their
   // author thought of, and the pane has more of them than that.
-  process.on('exit', () => process.stdout.write(terminalRestoreSequence(mouseActive)));
+  process.on('exit', () => {
+    process.stdout.write(terminalRestoreSequence(mouseActive));
+    // The pane takes its report back on the way out, so a reader learns
+    // NOW that nobody is watching instead of waiting out VIEWER_STALE_MS.
+    retireViewer(cfg.file, process.pid);
+  });
   const quit = (): void => process.exit(0);
   process.on('SIGINT', quit);
   process.on('SIGTERM', quit);
@@ -1557,6 +1603,13 @@ function main(): void {
 
   tick();
   setInterval(tick, cfg.intervalMs);
+
+  // The heartbeat is on its OWN timer, not the file poll: --interval is the
+  // user's to set (it may be seconds), while what counts as a live pane is
+  // the store's constant. Publishing right after the first tick means the
+  // launcher that spawned this pane can confirm it came up.
+  publishPresence();
+  setInterval(publishPresence, VIEWER_HEARTBEAT_MS);
   // The splash sweep runs faster than the file poll — its own timer, idle
   // (one comparison) the moment a map exists.
   if (interactive) {

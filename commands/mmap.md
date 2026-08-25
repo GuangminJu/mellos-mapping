@@ -21,6 +21,14 @@ that — ask which they mean if `$ARGUMENTS` does not make it obvious. Confirm
 what was saved, at which scope, and where. Then stop.
 
 Otherwise: open the live Mellos map watcher for this project in a separate terminal pane.
+
+The `mmap_open` tool does exactly this and is the shorter route — pass the page
+this conversation is working on (`mmap_open {page: "<slug>"}`), or `window: true`
+for the dedicated window. It reports whether a pane actually came up afterwards.
+Use the platform routes below when the mmap tools are not available in this
+session, or when the tool reports it could not open one. (You do not need this
+command to keep the map visible day to day: every write answers with a `pane:`
+line, and a `pane: CLOSED` is the assistant's cue to call `mmap_open` itself.)
 The watcher is at `${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs`. The store is
 MULTI-PAGE: the default page lives at `.mellos/map.json` and named
 pages at `.mellos/pages/<slug>.json` — the watcher takes the

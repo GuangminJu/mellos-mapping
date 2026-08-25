@@ -74,32 +74,34 @@ usually mean the server was never registered: have the user run
    layer bands (rank 0 = most primitive, at the bottom), every planned node,
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
-2. **Open the pane — showing the RIGHT page.** After the first declare, tell
-   the user the map is live. Under `always` or `complex` this is not an offer:
-   open it. In Claude Code `/mellos-mapping:mmap` opens the
-   pane. In other clients on Windows run
-   `node <plugin root>/scripts/open-pane.mjs <project dir> --page <slug>` —
-   it locates the terminal window hosting THIS session and splits it there,
-   or falls back to a dedicated "mellos-mapping" window when the session
-   window cannot be identified or focused; pass `--window` to deliberately
-   use the dedicated window (some users want the map separate from the
-   chat). Always pass `--page` with the page your effort lives on: without
-   it the pane shows the most recently written page, not necessarily the one
-   under discussion. Once a pane is open, auto-follow (on by default) keeps
-   it on whatever page you write, so your declares and updates bring the
-   audience along by themselves; the user can turn that off with `f`, and a
-   pane with follow off is their deliberate choice — don't fight it.
-   Rerunning the launcher with `--page` retargets an open pane instead of
-   opening another; do that only when the user asks to see a specific page.
-   Declaring on a named page still makes YOU responsible for the audience at
-   OPEN time: open the pane with `--page` yourself rather than telling the
-   user which tab to click. Elsewhere run
-   `node <plugin root>/dist/watch.mjs --page <slug>` from the project
-   directory in a second terminal or split (this skill file lives under
-   `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map inline
-   anywhere. The user has a hand on the pane too: `mmap` in any terminal of
-   the project opens it, and `mmap` again closes it — so a pane that vanishes
-   is them, not a fault.
+2. **Put the map on screen — that is YOUR job, not the user's.** Every
+   declare, update, remove and view answers with a `pane:` line telling you
+   who is actually looking. Read it and act on it:
+   - `pane: CLOSED` — nobody is. Call `mmap_open {page: "<slug>"}` at once,
+     without asking first: a recorded mapping policy IS the user's standing
+     consent to see the map. Then say in conversation that it is live.
+   - `pane: open on this page` — they are watching this land. Carry on.
+   - `pane: open on <other>, auto-follow on` — the pane follows the page
+     last written, so your next write brings the audience along by itself.
+   - `pane: open on <other>, auto-follow OFF` — the user pinned that page by
+     hand. Your changes are real and NOT on their screen: say so, and
+     retarget with `mmap_open {page}` only if they want it moved. A pane
+     with follow off is a deliberate choice — don't fight it.
+   Always pass the page your effort lives on. Without it a fresh pane opens
+   on whichever page was written last, which after a gap is rarely the one
+   under discussion — and declaring on a named page makes YOU responsible
+   for the audience, rather than telling the user which tab to click.
+   `mmap_open {window: true}` puts the map in its own window instead of
+   splitting the conversation's, for users who want it separate. It never
+   CLOSES a pane: that is the user's (the `q` key, or `mmap` in any terminal
+   of the project, which toggles) — so a pane that vanishes is them, not a
+   fault.
+   Where the tool cannot help — a client without it, a machine without
+   Windows Terminal — run the watcher yourself:
+   `node <plugin root>/dist/watch.mjs --file <project>/.mellos/map.json
+   --page <slug>` in a second terminal or tmux split (this skill file lives
+   under `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map
+   inline anywhere.
 3. **Work bottom-up.** Set a node `in-progress` before implementing it, and
    prefer finishing its lower dependencies first. Independent same-band
    siblings need no artificial queue — building them together (several

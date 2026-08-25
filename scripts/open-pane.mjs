@@ -40,7 +40,7 @@ import {
   placePane,
   pluginRootOf,
   takeWatcherFlag,
-  watcherAlreadyRunning,
+  paneIsOpen,
   writeFocusRequest,
 } from './pane-core.mjs';
 
@@ -115,7 +115,7 @@ async function main() {
 
   const mapFile = join(cfg.projectDir, store.STATE_FILE_RELATIVE_PATH);
 
-  if (!cfg.force && watcherAlreadyRunning(mapFile)) {
+  if (!cfg.force && paneIsOpen(store, mapFile)) {
     if (cfg.pageSlug !== undefined) {
       writeFocusRequest(store.focusFilePath(mapFile), cfg.pageSlug);
       console.log(`MMAP_PANE already-open refocused=${cfg.pageSlug}`);

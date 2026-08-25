@@ -18,12 +18,14 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { focusFilePath, quitFilePath, takeFocusRequest, takeQuitRequest } from '../src/store/store.js';
+import * as store from '../src/store/store.js';
+import { focusFilePath, publishViewer, quitFilePath, takeFocusRequest, takeQuitRequest } from '../src/store/store.js';
 import {
   PANE_FLAGS,
   WATCHER_BOOLEAN_FLAGS,
   WATCHER_VALUE_FLAGS,
   paneCommand,
+  paneIsOpen,
   powerShellQuote,
   takeWatcherFlag,
   watcherProbeScript,
@@ -130,6 +132,42 @@ describe('the wt payload', () => {
   it('omits --page when no page is the subject', () => {
     const cfg = { projectDir: 'C:\\proj', pageSlug: undefined, watcherFlags: [] };
     expect(paneCommand(cfg, 'w.mjs', 'm.json')).not.toContain('--page');
+  });
+});
+
+describe('an open pane is one that says so', () => {
+  let dir;
+  let mapFile;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'mellos-pane-core-viewers-'));
+    mapFile = join(dir, '.mellos', 'map.json');
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // The whole point of the viewers channel reaching the launcher: this answer
+  // used to cost a PowerShell process scan, was Windows-only, and could not
+  // say WHICH page was on screen. A report a pane refreshed a moment ago is
+  // the same fact, exactly.
+  it('a live report is an open pane, without asking the operating system', () => {
+    if (!publishViewer(mapFile, 4242, { page: undefined, follow: true }).ok) {
+      throw new Error('the spec could not publish a viewer report');
+    }
+    expect(paneIsOpen(store, mapFile)).toBe(true);
+  });
+
+  it('the launcher asks the store module it was handed, never a copy of the path', () => {
+    let askedFor;
+    const stub = {
+      readLiveViewers: (file) => {
+        askedFor = file;
+        return [{ pid: 1, page: undefined, follow: true, ageMs: 12 }];
+      },
+    };
+    expect(paneIsOpen(stub, mapFile)).toBe(true);
+    expect(askedFor).toBe(mapFile);
   });
 });
 

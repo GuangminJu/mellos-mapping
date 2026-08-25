@@ -24,8 +24,6 @@ import {
 const base: SessionContextInput = {
   policy: 'always',
   hasStore: true,
-  projectDir: 'C:\\proj',
-  pluginRoot: 'C:\\plugin',
 };
 
 const contextFor = (over: Partial<SessionContextInput>): string | undefined =>
@@ -74,7 +72,7 @@ describe('always — the pane opens without being asked', () => {
   it('orders the loop: skill, ghost design, pane, then honest updates', () => {
     const text = ctx();
     expect(text.indexOf('mellos-mapping skill')).toBeLessThan(text.indexOf('mmap_declare'));
-    expect(text.indexOf('mmap_declare')).toBeLessThan(text.indexOf('open-pane.mjs'));
+    expect(text.indexOf('mmap_declare')).toBeLessThan(text.indexOf('mmap_open'));
     expect(text).toContain('done WITH EVIDENCE');
   });
 
@@ -83,9 +81,16 @@ describe('always — the pane opens without being asked', () => {
     expect(ctx()).toContain('standing consent');
   });
 
-  it('gives the launcher command with real paths, not a placeholder to expand', () => {
-    expect(ctx()).toContain('node "C:\\plugin\\scripts\\open-pane.mjs" "C:\\proj" --page <slug>');
+  // A tool call, not a command line: it needs no shell permission, no path
+  // to expand and no host that has one. It is also the only route that says
+  // back whether a pane actually came up.
+  it('names the tool that opens the pane, and the page to open it on', () => {
+    expect(ctx()).toContain('mmap_open {page: "<the page this effort lives on>"}');
     expect(ctx()).not.toContain('CLAUDE_PLUGIN_ROOT');
+  });
+
+  it('tells the session that every write reports whether anybody is looking', () => {
+    expect(ctx()).toContain('pane: CLOSED');
   });
 
   it('leaves an explicit user request on top', () => {
@@ -105,9 +110,9 @@ describe('complex — the same loop, on the tasks that deserve it', () => {
     expect(ctx()).toContain('map only medium or complex tasks');
   });
 
-  it('still opens the pane without asking, and still names the launcher', () => {
+  it('still opens the pane without asking, and still names the tool', () => {
     expect(ctx()).toContain('WITHOUT asking');
-    expect(ctx()).toContain('open-pane.mjs');
+    expect(ctx()).toContain('mmap_open');
   });
 });
 

@@ -22,10 +22,10 @@
  * Claude Code installs by cloning the repo with no build and no npm install,
  * so nothing here may import the TypeScript sources. The store's own
  * vocabulary — where the map lives, what the focus and quit channels are
- * called, what a page slug may look like — is read at runtime from the
- * generated dist/store-paths.mjs (see loadPluginPaths). A second copy of a
- * filename is how the focus request came to be written to a name no watcher
- * ever read.
+ * called, which panes are live, what a page slug may look like — is read at
+ * runtime from the generated dist/store-paths.mjs (see loadPluginPaths). A
+ * second copy of a filename is how the focus request came to be written to a
+ * name no watcher ever read.
  *
  * Pure helpers are exported for the spec; nothing here runs on import.
  */
@@ -346,14 +346,28 @@ function runPowerShell(script) {
 }
 
 /**
- * Is a watcher of `mapFile` already running?
+ * Is a pane of `mapFile` already open?
  *
- * One watcher per map file is enough — watch.mjs redraws on change for every
+ * One pane per map file is enough — watch.mjs redraws on change for every
  * viewer of the same file, and piling up panes on repeated /mmap is noise.
- * Matches only watchers started from this plugin (they carry `--file
- * <mapFile>` on their command line).
+ *
+ * The panes answer this themselves: each one refreshes a report in the
+ * store while it is up (the viewers channel, src/store/store.ts), so a live
+ * report IS a live pane. Exact, instant, cross-platform, and the same
+ * answer the MCP server reads when it tells an assistant whether anybody is
+ * looking — three surfaces, one truth.
+ *
+ * The process scan below is the fallback for exactly one case: a watcher
+ * that started before this version and publishes no report. It costs a
+ * PowerShell round trip and only ever runs on the path that is about to
+ * open a window anyway. It can go once no pre-0.20.2 pane can still be up.
+ *
+ * @param store - the store module (dist/store-paths.mjs), the plugin's one
+ *   definition of where anything lives.
  */
-export function watcherAlreadyRunning(mapFile) {
+export function paneIsOpen(store, mapFile) {
+  if (store.readLiveViewers(mapFile, Date.now()).length > 0) return true;
+  if (process.platform !== 'win32') return false;
   const m = runPowerShell(watcherProbeScript(mapFile)).match(/WATCHERS=(\d+)/);
   return m !== null && Number(m[1]) > 0;
 }

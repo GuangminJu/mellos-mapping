@@ -9,7 +9,7 @@ import { dirname as dirname2, join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // src/domain/types.ts
@@ -86,11 +86,8 @@ function effectiveMappingPolicy(projectConfigFile, userConfigFile) {
 var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
 
 // src/hook/session-start.ts
-function openPaneCommand(pluginRoot, projectDir) {
-  return `node "${join2(pluginRoot, "scripts", "open-pane.mjs")}" "${projectDir}" --page <slug>`;
-}
 function sessionStartContext(input) {
-  const { policy, hasStore, projectDir, pluginRoot } = input;
+  const { policy, hasStore } = input;
   if (policy === void 0) {
     return [
       "mellos-mapping \u2014 first-run setup. This question is asked ONCE EVER, not once per project.",
@@ -111,9 +108,11 @@ function sessionStartContext(input) {
     "  1. Load the mellos-mapping skill and follow it.",
     "  2. Declare the whole ghost design with mmap_declare BEFORE writing code.",
     "  3. Open the map pane WITHOUT asking \u2014 the recorded policy is the user's standing consent:",
-    `       ${openPaneCommand(pluginRoot, projectDir)}`,
-    "     (the slug is the page this effort lives on; the launcher retargets an already-open pane)",
-    "  4. Keep the map current as the work proceeds: in-progress when a node is started,",
+    '       mmap_open {page: "<the page this effort lives on>"}',
+    "     It opens the pane beside this conversation, or retargets one that is already open.",
+    "  4. Watch the `pane:` line every write answers with: it says whether anybody is actually",
+    "     looking. `pane: CLOSED` means the user cannot see this map \u2014 call mmap_open then too.",
+    "  5. Keep the map current as the work proceeds: in-progress when a node is started,",
     "     done WITH EVIDENCE when its verification passes, regressed when something breaks.",
     "An explicit request from the user always outranks this."
   ].join("\n");
@@ -202,9 +201,7 @@ async function main() {
   const pluginRoot = dirname2(dirname2(fileURLToPath(import.meta.url)));
   const context = sessionStartContext({
     policy: scopes.value.effective,
-    hasStore: existsSync2(join2(projectDir, STORE_DIR_NAME)),
-    projectDir,
-    pluginRoot
+    hasStore: existsSync2(join2(projectDir, STORE_DIR_NAME))
   });
   let installNote;
   try {

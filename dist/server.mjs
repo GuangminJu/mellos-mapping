@@ -6913,9 +6913,10 @@ var require_dist = __commonJS({
 });
 
 // src/server/server.ts
-import { realpathSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync as existsSync2, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join as join2 } from "node:path";
+import { dirname as dirname2, join as join2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/external.js
@@ -22431,11 +22432,14 @@ function paint(map, opts, geo, unverified) {
 }
 
 // src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // src/store/format.ts
 var STATE_FILE_VERSION = 1;
+function makePageId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
 function describeStoreError(e) {
   switch (e.kind) {
     case "not-found":
@@ -22735,6 +22739,65 @@ function deletePageFile(path) {
   } catch (e) {
     return err({ kind: "delete-failed", path, detail: errnoOf(e) });
   }
+}
+var VIEWERS_DIR_NAME = "viewers";
+var VIEWER_FILE_VERSION = 1;
+var VIEWER_STALE_MS = 5e3;
+var VIEWER_SWEEP_MS = 6e4;
+function viewersDirPath(defaultFile) {
+  return join(dirname(defaultFile), VIEWERS_DIR_NAME);
+}
+function viewerPidOf(fileName) {
+  const m = /^(\d+)\.json$/.exec(fileName);
+  return m === null ? void 0 : Number(m[1]);
+}
+function parseViewerReport(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stripBom(raw));
+  } catch {
+    return void 0;
+  }
+  if (!isRecord2(parsed)) return void 0;
+  if (parsed["version"] !== VIEWER_FILE_VERSION) return void 0;
+  const follow = parsed["follow"];
+  if (typeof follow !== "boolean") return void 0;
+  const page2 = parsed["page"];
+  if (page2 === null || page2 === void 0) return { page: void 0, follow };
+  if (typeof page2 !== "string") return void 0;
+  const id2 = makePageId(page2);
+  return id2.ok ? { page: id2.value, follow } : void 0;
+}
+function readLiveViewers(defaultFile, nowMs) {
+  const dir = viewersDirPath(defaultFile);
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const live = [];
+  for (const name of names) {
+    const pid = viewerPidOf(name);
+    if (pid === void 0) continue;
+    const path = join(dir, name);
+    let raw;
+    let ageMs;
+    try {
+      ageMs = Math.max(0, nowMs - statSync(path).mtimeMs);
+      if (ageMs > VIEWER_SWEEP_MS) {
+        rmSync(path, { force: true });
+        continue;
+      }
+      if (ageMs > VIEWER_STALE_MS) continue;
+      raw = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    const report = parseViewerReport(raw);
+    if (report !== void 0) live.push({ ...report, pid, ageMs });
+  }
+  return live.sort((a, b) => a.ageMs - b.ageMs || a.pid - b.pid);
 }
 var CONFIG_FILE_NAME = "config.json";
 var CONFIG_FILE_VERSION = 1;
@@ -23140,6 +23203,84 @@ function pagesLine(stateFile, shown) {
   const known = [hasDefault ? DEFAULT_PAGE_NAME : DEFAULT_PAGE_ABSENT, ...named];
   return `pages: ${known.join(", ")} \u2014 this view: ${shown ?? DEFAULT_PAGE_NAME}`;
 }
+function pageName(page2) {
+  return page2 ?? DEFAULT_PAGE_NAME;
+}
+function paneLine(stateFile, touched) {
+  const viewers = readLiveViewers(stateFile, Date.now());
+  if (viewers.length === 0) {
+    return `pane: CLOSED \u2014 nobody is seeing this map. Open it with mmap_open {page: ${touched === void 0 ? "(omit for the default page)" : `"${touched}"`}} and do not ask first: a user with a mapping policy has already said they want the picture.`;
+  }
+  if (viewers.some((v) => v.page === touched)) return "pane: open on this page \u2014 the user is seeing this.";
+  const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(", ");
+  if (viewers.some((v) => v.follow)) {
+    return `pane: open on ${elsewhere}, auto-follow on \u2014 it lands on this page within a second.`;
+  }
+  return `pane: open on ${elsewhere}, auto-follow OFF \u2014 the user pinned that page, so this change is NOT on their screen. Tell them rather than switching it behind them; mmap_open {page} retargets the pane if they want it moved.`;
+}
+var LAUNCH_TIMEOUT_MS = 45e3;
+var PANE_REPORT_TIMEOUT_MS = 8e3;
+var PANE_REPORT_POLL_MS = 250;
+function launcherPath(moduleUrl) {
+  return join2(dirname2(dirname2(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
+}
+function projectDirOf(stateFile) {
+  return dirname2(dirname2(stateFile));
+}
+function launcherArgs(projectDir, page2, window) {
+  const args = [projectDir];
+  if (page2 !== void 0) args.push("--page", page2);
+  if (window) args.push("--window");
+  return args;
+}
+function runLauncher(script, args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let output = "";
+    const collect = (chunk) => {
+      output += chunk.toString("utf8");
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    const abandon = setTimeout(() => child.kill(), LAUNCH_TIMEOUT_MS);
+    child.on("error", (e) => {
+      clearTimeout(abandon);
+      resolve({ ok: false, output: e.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(abandon);
+      resolve({ ok: code === 0, output: output.trim() });
+    });
+  });
+}
+async function awaitPane(stateFile, page2, deadlineMs) {
+  for (; ; ) {
+    const viewers = readLiveViewers(stateFile, Date.now());
+    if (viewers.some((v) => v.page === page2)) return viewers;
+    if (Date.now() >= deadlineMs) return viewers;
+    await new Promise((r) => setTimeout(r, PANE_REPORT_POLL_MS));
+  }
+}
+function openOutcome(run, viewers, page2) {
+  if (!run.ok) {
+    return `could not open the pane: ${run.output === "" ? "the launcher failed without saying why" : run.output}
+Relay this to the user \u2014 on a machine without Windows Terminal the map is opened by running the watcher in any second terminal or tmux split (see the plugin README).`;
+  }
+  if (viewers.some((v) => v.page === page2)) {
+    return `pane: open and showing ${pageName(page2)} \u2014 the user can see the map now.
+${run.output}`;
+  }
+  if (viewers.length > 0) {
+    const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(", ");
+    return `pane: open, but it reports ${elsewhere} rather than ${pageName(page2)}. With auto-follow on it lands there on your next write; with follow off the user is holding that page on purpose.
+` + run.output;
+  }
+  return `the launcher succeeded but no pane has reported in within ${PANE_REPORT_TIMEOUT_MS / 1e3}s. It may still be starting; the \`pane:\` line on your next write says whether it made it.
+` + run.output;
+}
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
@@ -23166,6 +23307,8 @@ function buildServer(stateFile, userConfigFile) {
     if (!saved.ok) return saveFailed(saved.error);
     return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : ""));
   };
+  const withPane = (result, page2) => result.isError === true ? result : text(`${result.content[0]?.text ?? ""}
+${paneLine(stateFile, page2)}`);
   const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
   const refusePageDeletion = (pages, target) => {
     if (target !== void 0 && pages.includes(target)) {
@@ -23266,7 +23409,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       })
     },
     (input) => {
-      const result = mutate(input.page, (map) => applyDeclare(map, input));
+      const result = withPane(mutate(input.page, (map) => applyDeclare(map, input)), input.page);
       if (result.isError === true) return result;
       const nudge = setupNudge();
       return nudge === "" ? result : text((result.content[0]?.text ?? "") + nudge);
@@ -23309,7 +23452,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
         lanes: external_exports.array(closed({ id: id("id of the lane to relabel"), label: line(LABEL_MAX, "new column name") })).min(1).optional().describe("relabel existing lanes; order and membership are untouched")
       })
     },
-    (input) => mutate(input.page, (map) => applyUpdate(map, input))
+    (input) => withPane(mutate(input.page, (map) => applyUpdate(map, input)), input.page)
   );
   server.registerTool(
     "mmap_remove",
@@ -23331,7 +23474,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       })
     },
     (input) => {
-      if (input.pages === void 0) return mutate(input.page, (map) => applyRemove(map, input));
+      if (input.pages === void 0) return withPane(mutate(input.page, (map) => applyRemove(map, input)), input.page);
       const refusal = refusePageDeletion(input.pages, input.page);
       if (refusal !== void 0) return refusal;
       const editsAnything = (input.edges?.length ?? 0) + (input.nodes?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0) + (input.layers?.length ?? 0) > 0;
@@ -23342,7 +23485,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
         summary = `${edited.content[0]?.text ?? ""}
 `;
       }
-      return deletePages(input.pages, summary);
+      return withPane(deletePages(input.pages, summary), input.page);
     }
   );
   server.registerTool(
@@ -23398,7 +23541,35 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
       return text(`${picture}
-${pagesLine(stateFile, input.page)}`);
+${pagesLine(stateFile, input.page)}
+${paneLine(stateFile, input.page)}`);
+    }
+  );
+  server.registerTool(
+    "mmap_open",
+    {
+      title: "Open the map pane",
+      description: "Put the live map on the user's screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.",
+      inputSchema: closed({
+        page: id(
+          "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
+        ).optional(),
+        window: external_exports.boolean().optional().describe(
+          `open the map in its own "mellos-mapping" window instead of splitting this conversation's window. Pass it only when the user asked for the map separate (a second monitor, a small screen); the split is the default because the map is meant to sit beside what it describes.`
+        )
+      })
+    },
+    async (input) => {
+      const script = launcherPath(import.meta.url);
+      if (!existsSync2(script)) {
+        return text(
+          `cannot open the pane: the launcher is missing at ${script}. This install is incomplete \u2014 tell the user to reinstall the plugin (a source checkout needs "npm run build").`,
+          true
+        );
+      }
+      const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS) : [];
+      return text(openOutcome(run, viewers, input.page), !run.ok);
     }
   );
   return server;
@@ -23436,6 +23607,10 @@ export {
   SERVER_VERSION,
   buildServer,
   launchedAsEntry,
+  launcherArgs,
+  launcherPath,
+  openOutcome,
+  projectDirOf,
   resolveStateFile,
   resolveUserConfigFile
 };

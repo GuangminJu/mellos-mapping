@@ -29,6 +29,7 @@ import {
 import { SPINNER_FRAMES, spinnerGlyph, statusGlyph } from '../semantics/semantics.js';
 import { type BoxHit, type RenderOptions, type Viewport, renderMapWindow, statusSgr } from '../render/render.js';
 import { serializeMap } from '../store/store.js';
+import { initialPaneState } from './pane-state.js';
 import {
   type PageTab,
   anchorOffsets,
@@ -54,6 +55,7 @@ import {
   readPage,
   renderWindow,
   terminalRestoreSequence,
+  viewerReportOf,
 } from './watch.js';
 
 function must<T, E>(r: Result<T, E>): T {
@@ -633,6 +635,37 @@ describe('auto-follow', () => {
     expect(ascii).toHaveLength(40);
     expect(ascii).toContain(' ~ ');
     expect(ascii.slice(-11, -1)).toBe(' > follow ');
+  });
+});
+
+describe('the report a live pane publishes about itself', () => {
+  const base = join('/w', '.mellos', 'map.json');
+  const pageFile = join('/w', '.mellos', 'pages', 'pane-presence.json');
+
+  it('names the page on screen, and the default page as no page at all', () => {
+    const onPage = { ...initialPaneState(true, undefined), activeFile: pageFile };
+    expect(viewerReportOf(onPage, base)).toEqual({ page: 'pane-presence', follow: true });
+
+    const onDefault = { ...initialPaneState(true, undefined), activeFile: base };
+    expect(viewerReportOf(onDefault, base)).toEqual({ page: undefined, follow: true });
+  });
+
+  it('carries auto-follow, which is what says whether a write will be seen', () => {
+    const pinned = { ...initialPaneState(false, undefined), activeFile: pageFile };
+    expect(viewerReportOf(pinned, base).follow).toBe(false);
+  });
+
+  // A pane on its standby screen has no active page yet. Reporting the
+  // default page there would tell a reader "your page is not the one being
+  // shown" about a pane that is seconds away from showing exactly it.
+  it('on standby it names the page it was asked for, not the default one', () => {
+    const requested = initialPaneState(true, pageFile);
+    expect(requested.activeFile).toBeUndefined();
+    expect(viewerReportOf(requested, base)).toEqual({ page: 'pane-presence', follow: true });
+  });
+
+  it('asked for nothing and showing nothing, it reports the default page', () => {
+    expect(viewerReportOf(initialPaneState(true, undefined), base)).toEqual({ page: undefined, follow: true });
   });
 });
 

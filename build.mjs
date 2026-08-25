@@ -105,6 +105,8 @@ await build({
       '  focusFilePath,',
       '  QUIT_FILE_NAME,',
       '  quitFilePath,',
+      '  VIEWERS_DIR_NAME,',
+      '  readLiveViewers,',
       "} from './src/store/store.js';",
       "export { ID_RULE } from './src/domain/types.js';",
     ].join('\n'),

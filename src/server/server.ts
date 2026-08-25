@@ -1,5 +1,5 @@
 /**
- * Layer 3 — the MCP server: five tools over one state file.
+ * Layer 3 — the MCP server: six tools over one state file.
  *
  *   mmap_declare  grow the map (title, bands, lanes, groups, nodes, edges)
  *   mmap_update   record progress AND revise (status, evidence, moves, renames)
@@ -8,6 +8,13 @@
  *   mmap_view     render the map as text, and name the project's pages
  *   mmap_setup    get/set the mapping policy (when maps open), user-wide by
  *                 default and per-project where a project must differ
+ *   mmap_open     put the map on the user's screen — the one tool that reaches
+ *                 outside the store, by running the same launcher a human runs
+ *
+ * Every write and every view also reports WHO IS SEEING IT (paneLine, from
+ * the viewers channel in Layer 1). Without that line an assistant could fill
+ * a ledger nobody had on screen and never learn it — the single most common
+ * way this plugin used to fail its user.
  *
  * Every mutating call is load -> apply (all-or-nothing, Layer 2) -> save
  * (atomic, Layer 1). The server holds no map state between calls: the file
@@ -33,9 +40,10 @@
  * variable or a home directory for itself.
  */
 
-import { realpathSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -59,6 +67,7 @@ import {
   MAPPING_POLICIES,
   type MappingPolicy,
   POLICY_SCOPES,
+  type LiveViewer,
   type PageId,
   type PolicyScope,
   STATE_FILE_RELATIVE_PATH,
@@ -73,6 +82,7 @@ import {
   loadMapFile,
   pageFilePath,
   pageIdOfFile,
+  readLiveViewers,
   saveMapFile,
   saveMappingPolicy,
   userConfigFilePath,
@@ -257,6 +267,209 @@ function pagesLine(stateFile: string, shown: string | undefined): string {
   return `pages: ${known.join(', ')} — this view: ${shown ?? DEFAULT_PAGE_NAME}`;
 }
 
+// ---------------------------------------------------------------------------
+// the pane line — who, if anyone, is SEEING what this call just did
+// ---------------------------------------------------------------------------
+//
+// The ledger's oldest blind spot. An assistant declared a design, lit nodes
+// up as it built them, and had no way to know whether any of it was on a
+// screen: opening the pane took a human typing `mmap`, and a map written into
+// a store nobody had open looks exactly like a map somebody is watching.
+// Users watched nothing happen and concluded the tool did nothing.
+//
+// So every write and every view now carries what the panes themselves report
+// (readLiveViewers). It is a STATE line first — this is the fact — and an
+// instruction second, because the assistant is the only party in a position
+// to act on it: it knows which page it just wrote, and mmap_open takes one.
+
+/** How a page reads in the pane line; the default page has no slug to print. */
+function pageName(page: string | undefined): string {
+  return page ?? DEFAULT_PAGE_NAME;
+}
+
+/**
+ * One line on whether the user can SEE the page this call touched.
+ *
+ * @param stateFile - the default page's file path (the store's base).
+ * @param touched - the page this call wrote or rendered; undefined = default.
+ *
+ * Four facts, and only one of them is good news:
+ *   - no pane at all: the work is invisible, and opening one is the fix.
+ *   - a pane on this very page: the user is watching this land.
+ *   - a pane elsewhere with auto-follow on: it comes here by itself, because
+ *     follow tracks the page last WRITTEN — which this call just was.
+ *   - a pane elsewhere with follow off: the user pinned that page by hand.
+ *     The change is real and unseen, and the honest move is to say so, not to
+ *     yank their view around behind them (SKILL.md: don't fight it).
+ */
+function paneLine(stateFile: string, touched: string | undefined): string {
+  const viewers = readLiveViewers(stateFile, Date.now());
+  if (viewers.length === 0) {
+    return (
+      'pane: CLOSED — nobody is seeing this map. Open it with mmap_open ' +
+      `{page: ${touched === undefined ? '(omit for the default page)' : `"${touched}"`}} ` +
+      'and do not ask first: a user with a mapping policy has already said they want the picture.'
+    );
+  }
+  if (viewers.some((v) => v.page === touched)) return 'pane: open on this page — the user is seeing this.';
+  const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(', ');
+  if (viewers.some((v) => v.follow)) {
+    return `pane: open on ${elsewhere}, auto-follow on — it lands on this page within a second.`;
+  }
+  return (
+    `pane: open on ${elsewhere}, auto-follow OFF — the user pinned that page, so this change is ` +
+    'NOT on their screen. Tell them rather than switching it behind them; mmap_open {page} ' +
+    'retargets the pane if they want it moved.'
+  );
+}
+
+// ---------------------------------------------------------------------------
+// mmap_open — the assistant's own way to put the map on a screen
+// ---------------------------------------------------------------------------
+//
+// Opening the pane used to be a human's job: `/mmap`, or the `mmap` command,
+// or a node command line the assistant had to be told to run through a shell
+// it may not be allowed to use. So the map went un-opened, the ledger filled
+// up unseen, and the plugin looked broken to the one person it is for.
+//
+// This is the only tool that touches anything outside the store, and it does
+// as little of that as it can: it runs the SAME launcher a human runs
+// (scripts/open-pane.mjs) and reports what came of it. Two consequences are
+// deliberate. It cannot close a pane — the launcher has no such power, so
+// neither has any assistant driving it; taking the map off a user's screen
+// stays theirs (the `q` key, or `mmap` in a terminal). And it cannot place a
+// pane differently from the way the human command does, because there is one
+// placement policy and it lives in the launcher.
+
+/**
+ * How long the launcher may run before it is abandoned. It is the sum of what
+ * the launcher itself allows — a 30s window probe plus a 15s `wt` call — so
+ * this timeout can only fire when the launcher has stopped answering, never
+ * on a slow-but-working machine.
+ */
+const LAUNCH_TIMEOUT_MS = 45_000;
+
+/**
+ * How long to wait for the NEW pane to report itself in (the viewers channel)
+ * before answering without it. Generous next to a pane's first heartbeat: a
+ * cold `wt` window, node's startup and the first paint all happen in here.
+ */
+const PANE_REPORT_TIMEOUT_MS = 8_000;
+
+/** How often the wait above looks. */
+const PANE_REPORT_POLL_MS = 250;
+
+/**
+ * Where the agent's launcher lives, given this module's URL.
+ *
+ * One rule serves both shapes this module runs in, because both sit exactly
+ * one directory below the root: `dist/server.mjs` in an installed plugin,
+ * `src/server/server.ts` in a checkout under test.
+ */
+export function launcherPath(moduleUrl: string): string {
+  return join(dirname(dirname(fileURLToPath(moduleUrl))), 'scripts', 'open-pane.mjs');
+}
+
+/** The project a store belongs to: `<project>/.mellos/map.json` -> `<project>`. */
+export function projectDirOf(stateFile: string): string {
+  return dirname(dirname(stateFile));
+}
+
+/**
+ * The launcher's command line for one open request — the whole translation
+ * from tool arguments to the flags scripts/open-pane.mjs understands.
+ */
+export function launcherArgs(projectDir: string, page: string | undefined, window: boolean): string[] {
+  const args = [projectDir];
+  if (page !== undefined) args.push('--page', page);
+  if (window) args.push('--window');
+  return args;
+}
+
+/** What running the launcher came to. */
+export interface LauncherRun {
+  /** It exited 0: the pane was placed, or an already-open one was retargeted. */
+  readonly ok: boolean;
+  /** Everything it said, both streams, trimmed — including its `MMAP_PANE …` line. */
+  readonly output: string;
+}
+
+/**
+ * Run the launcher and collect what it said.
+ *
+ * stdio is PIPED, never inherited: this process's stdout is the JSON-RPC
+ * channel, and one line of a child's chatter on it would end the session.
+ * Asynchronous for the same reason the server is — a spawnSync here would
+ * hold the whole server still for as long as a window probe takes.
+ */
+function runLauncher(script: string, args: readonly string[]): Promise<LauncherRun> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const collect = (chunk: Buffer): void => {
+      output += chunk.toString('utf8');
+    };
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    const abandon = setTimeout(() => child.kill(), LAUNCH_TIMEOUT_MS);
+    child.on('error', (e: Error) => {
+      clearTimeout(abandon);
+      resolve({ ok: false, output: e.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(abandon);
+      resolve({ ok: code === 0, output: output.trim() });
+    });
+  });
+}
+
+/** Wait until a pane reports `page` on screen, or until the deadline passes. */
+async function awaitPane(stateFile: string, page: string | undefined, deadlineMs: number): Promise<readonly LiveViewer[]> {
+  for (;;) {
+    const viewers = readLiveViewers(stateFile, Date.now());
+    if (viewers.some((v) => v.page === page)) return viewers;
+    if (Date.now() >= deadlineMs) return viewers;
+    await new Promise((r) => setTimeout(r, PANE_REPORT_POLL_MS));
+  }
+}
+
+/**
+ * What to tell the caller, given how the launcher went and what the panes
+ * report afterwards. Pure, so the wording is a thing the spec can hold.
+ *
+ * The distinction that matters is between "a pane exists" and "the page you
+ * are working on is on it" — the first was always guessable from the exit
+ * code, and it is the second that the user actually experiences.
+ */
+export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], page: string | undefined): string {
+  if (!run.ok) {
+    return (
+      `could not open the pane: ${run.output === '' ? 'the launcher failed without saying why' : run.output}\n` +
+      'Relay this to the user — on a machine without Windows Terminal the map is opened by running ' +
+      'the watcher in any second terminal or tmux split (see the plugin README).'
+    );
+  }
+  if (viewers.some((v) => v.page === page)) {
+    return `pane: open and showing ${pageName(page)} — the user can see the map now.\n${run.output}`;
+  }
+  if (viewers.length > 0) {
+    const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(', ');
+    return (
+      `pane: open, but it reports ${elsewhere} rather than ${pageName(page)}. With auto-follow on it ` +
+      'lands there on your next write; with follow off the user is holding that page on purpose.\n' +
+      run.output
+    );
+  }
+  return (
+    `the launcher succeeded but no pane has reported in within ${PANE_REPORT_TIMEOUT_MS / 1000}s. It may still be ` +
+    'starting; the `pane:` line on your next write says whether it made it.\n' +
+    run.output
+  );
+}
+
 interface ToolText {
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;
@@ -313,6 +526,16 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
     return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
   };
 
+
+  /**
+   * Append the pane line to a result that actually happened.
+   *
+   * Refusals and failed saves are left alone: they are about the CALL, and
+   * telling a caller who was watching a write that did not occur would only
+   * bury the reason it did not.
+   */
+  const withPane = (result: ToolText, page: string | undefined): ToolText =>
+    result.isError === true ? result : text(`${result.content[0]?.text ?? ''}\n${paneLine(stateFile, page)}`);
   /** The named pages this project has right now, read from the store. */
   const knownPages = (): PageId[] =>
     listPageFiles(stateFile)
@@ -493,7 +716,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       }),
     },
     (input) => {
-      const result = mutate(input.page, (map) => applyDeclare(map, input));
+      const result = withPane(mutate(input.page, (map) => applyDeclare(map, input)), input.page);
       if (result.isError === true) return result;
       const nudge = setupNudge();
       return nudge === '' ? result : text((result.content[0]?.text ?? '') + nudge);
@@ -567,7 +790,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
           .describe('relabel existing lanes; order and membership are untouched'),
       }),
     },
-    (input) => mutate(input.page, (map) => applyUpdate(map, input)),
+    (input) => withPane(mutate(input.page, (map) => applyUpdate(map, input)), input.page),
   );
 
   server.registerTool(
@@ -608,7 +831,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       }),
     },
     (input) => {
-      if (input.pages === undefined) return mutate(input.page, (map) => applyRemove(map, input));
+      if (input.pages === undefined) return withPane(mutate(input.page, (map) => applyRemove(map, input)), input.page);
       // validate → prepare → commit: everything refusable is refused before
       // the first file is touched, because a deletion has no rollback.
       const refusal = refusePageDeletion(input.pages, input.page);
@@ -629,7 +852,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
         if (edited.isError === true) return edited; // edits refused: nothing deleted either
         summary = `${edited.content[0]?.text ?? ''}\n`;
       }
-      return deletePages(input.pages, summary);
+      return withPane(deletePages(input.pages, summary), input.page);
     },
   );
 
@@ -728,7 +951,54 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n');
-      return text(`${picture}\n${pagesLine(stateFile, input.page)}`);
+      return text(`${picture}\n${pagesLine(stateFile, input.page)}\n${paneLine(stateFile, input.page)}`);
+    },
+  );
+
+  server.registerTool(
+    'mmap_open',
+    {
+      title: 'Open the map pane',
+      description:
+        'Put the live map on the user\'s screen: a terminal pane beside this conversation that ' +
+        'redraws on every write. Call it whenever a result says `pane: CLOSED` — and do NOT ask ' +
+        'permission first, because a user who has set a mapping policy has already said they ' +
+        'want to see the map. With a pane already open this RETARGETS it to `page` instead of ' +
+        'opening a second one, so it is also how you show the user a particular page when they ' +
+        'ask for one. It never closes a pane: taking the map off the screen belongs to the user ' +
+        '(the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a ' +
+        'pane actually reported itself in afterwards, not merely that a command was run. ' +
+        'Windows Terminal is the supported route; anywhere else it says so and you relay the ' +
+        'manual command from the README.',
+      inputSchema: closed({
+        page: id(
+          'page to show first — the page THIS effort lives on, the same slug you pass to the ' +
+            'other tools. Omit only for the default page: without it a fresh pane opens on ' +
+            'whichever page was written last, which after a gap is rarely the one under discussion.',
+        ).optional(),
+        window: z
+          .boolean()
+          .optional()
+          .describe(
+            'open the map in its own "mellos-mapping" window instead of splitting this ' +
+              'conversation\'s window. Pass it only when the user asked for the map separate ' +
+              '(a second monitor, a small screen); the split is the default because the map is ' +
+              'meant to sit beside what it describes.',
+          ),
+      }),
+    },
+    async (input) => {
+      const script = launcherPath(import.meta.url);
+      if (!existsSync(script)) {
+        return text(
+          `cannot open the pane: the launcher is missing at ${script}. This install is incomplete — ` +
+            'tell the user to reinstall the plugin (a source checkout needs "npm run build").',
+          true,
+        );
+      }
+      const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS) : [];
+      return text(openOutcome(run, viewers, input.page), !run.ok);
     },
   );
 

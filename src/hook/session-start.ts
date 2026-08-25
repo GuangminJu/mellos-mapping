@@ -68,16 +68,8 @@ export interface SessionContextInput {
   readonly policy: MappingPolicy | undefined;
   /** This project already has a Mellos store on disk. */
   readonly hasStore: boolean;
-  /** The project the session is working in (the hook's `cwd`). */
-  readonly projectDir: string;
-  /** Where the plugin is installed, for the commands the context names. */
-  readonly pluginRoot: string;
 }
 
-/** The launcher line the context hands the assistant, with real paths in it. */
-function openPaneCommand(pluginRoot: string, projectDir: string): string {
-  return `node "${join(pluginRoot, 'scripts', 'open-pane.mjs')}" "${projectDir}" --page <slug>`;
-}
 
 /**
  * What the assistant is told about mapping in this session — or undefined when
@@ -92,7 +84,7 @@ function openPaneCommand(pluginRoot: string, projectDir: string): string {
  * this decides what to say about them.
  */
 export function sessionStartContext(input: SessionContextInput): string | undefined {
-  const { policy, hasStore, projectDir, pluginRoot } = input;
+  const { policy, hasStore } = input;
 
   if (policy === undefined) {
     return [
@@ -121,9 +113,11 @@ export function sessionStartContext(input: SessionContextInput): string | undefi
     '  1. Load the mellos-mapping skill and follow it.',
     '  2. Declare the whole ghost design with mmap_declare BEFORE writing code.',
     '  3. Open the map pane WITHOUT asking — the recorded policy is the user\'s standing consent:',
-    `       ${openPaneCommand(pluginRoot, projectDir)}`,
-    '     (the slug is the page this effort lives on; the launcher retargets an already-open pane)',
-    '  4. Keep the map current as the work proceeds: in-progress when a node is started,',
+    '       mmap_open {page: "<the page this effort lives on>"}',
+    '     It opens the pane beside this conversation, or retargets one that is already open.',
+    '  4. Watch the `pane:` line every write answers with: it says whether anybody is actually',
+    '     looking. `pane: CLOSED` means the user cannot see this map — call mmap_open then too.',
+    '  5. Keep the map current as the work proceeds: in-progress when a node is started,',
     '     done WITH EVIDENCE when its verification passes, regressed when something breaks.',
     'An explicit request from the user always outranks this.',
   ].join('\n');
@@ -262,8 +256,6 @@ async function main(): Promise<void> {
   const context = sessionStartContext({
     policy: scopes.value.effective,
     hasStore: existsSync(join(projectDir, STORE_DIR_NAME)),
-    projectDir,
-    pluginRoot,
   });
   let installNote: string | undefined;
   try {

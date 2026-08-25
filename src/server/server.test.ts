@@ -5,9 +5,9 @@
  * watcher-visible file actually changes.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -15,7 +15,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { buildServer, launchedAsEntry, resolveStateFile } from './server.js';
+import { type PageId, VIEWER_STALE_MS, publishViewer, viewerFilePath } from '../store/store.js';
+
+import {
+  buildServer,
+  launcherArgs,
+  launcherPath,
+  launchedAsEntry,
+  openOutcome,
+  projectDirOf,
+  resolveStateFile,
+} from './server.js';
 
 let dir: string;
 let client: Client;
@@ -49,9 +59,9 @@ async function callText(name: string, args: Record<string, unknown>): Promise<{ 
 }
 
 describe('mellos-mapping MCP server', () => {
-  it('exposes exactly the five mmap tools', async () => {
+  it('exposes exactly the six mmap tools', async () => {
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(['mmap_declare', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
+    expect(tools).toEqual(['mmap_declare', 'mmap_open', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
   });
 
   it('declares a ghost design and persists it to the project state file', async () => {
@@ -155,7 +165,7 @@ describe('mellos-mapping MCP server', () => {
     });
     const removed = await callText('mmap_remove', { nodes: ['shell'] });
     expect(removed.isError).toBe(false);
-    expect(removed.text).toBe('map now: 2 layer(s), 1 node(s) [1 planned], 0 edge(s)');
+    expect(removed.text).toContain('map now: 2 layer(s), 1 node(s) [1 planned], 0 edge(s)');
   });
 });
 
@@ -242,7 +252,7 @@ describe('mmap_remove deletes whole pages', () => {
 
     const removed = await callText('mmap_remove', { pages: ['alpha'] });
     expect(removed.isError).toBe(false);
-    expect(removed.text).toBe('deleted page(s): alpha');
+    expect(removed.text).toContain('deleted page(s): alpha');
     expect(existsSync(pageFile('alpha'))).toBe(false);
     expect(existsSync(pageFile('beta'))).toBe(true);
 
@@ -254,7 +264,7 @@ describe('mmap_remove deletes whole pages', () => {
     for (const slug of ['alpha', 'beta', 'gamma']) await callText('mmap_declare', { ...PAGE, page: slug });
     const removed = await callText('mmap_remove', { pages: ['alpha', 'gamma'] });
     expect(removed.isError).toBe(false);
-    expect(removed.text).toBe('deleted page(s): alpha, gamma');
+    expect(removed.text).toContain('deleted page(s): alpha, gamma');
     expect(readdirSync(join(dir, '.mellos', 'pages'))).toEqual(['beta.json']);
     // a call that only deletes pages must touch no map — least of all create one
     expect(existsSync(stateFile)).toBe(false);
@@ -774,6 +784,122 @@ describe('mapping policy setup — chosen once, per user, over the wire', () => 
     expect(declared.isError).toBe(false); // the ledger still works —
     expect(declared.text).toContain('note:'); // — but the breakage is named
     expect(declared.text).toContain('not valid JSON');
+  });
+});
+
+describe('the pane line — whether anybody is SEEING what the call did', () => {
+  /** Publish a report exactly as a running pane would. */
+  const paneShowing = (pid: number, page: string | undefined, follow = true): void => {
+    const published = publishViewer(stateFile, pid, { page: page as PageId | undefined, follow });
+    if (!published.ok) throw new Error('the spec could not publish a viewer report');
+  };
+
+  const declareSomething = (page?: string) =>
+    callText('mmap_declare', {
+      ...(page === undefined ? {} : { page }),
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base' }],
+    });
+
+  it('with no pane running, a write says so and names the way to fix it', async () => {
+    const declared = await declareSomething('effort');
+    expect(declared.isError).toBe(false);
+    expect(declared.text).toContain('pane: CLOSED');
+    expect(declared.text).toContain('mmap_open');
+    expect(declared.text).toContain('"effort"');
+  });
+
+  it('a pane on the same page reports that the user is seeing it', async () => {
+    paneShowing(4242, 'effort');
+    const declared = await declareSomething('effort');
+    expect(declared.text).toContain('pane: open on this page');
+  });
+
+  it('a pane elsewhere with auto-follow on is on its way here', async () => {
+    paneShowing(4242, 'other', true);
+    const declared = await declareSomething('effort');
+    expect(declared.text).toContain('auto-follow on');
+    expect(declared.text).toContain('other');
+  });
+
+  it('a pane the user pinned elsewhere means the change is NOT on their screen', async () => {
+    paneShowing(4242, 'other', false);
+    const declared = await declareSomething('effort');
+    expect(declared.text).toContain('auto-follow OFF');
+    expect(declared.text).toContain('NOT on their screen');
+  });
+
+  it('the default page is named, not printed as an empty slug', async () => {
+    paneShowing(4242, undefined, false);
+    const declared = await declareSomething('effort');
+    expect(declared.text).toContain('(default)');
+  });
+
+  it('a stale report is no pane at all', async () => {
+    paneShowing(4242, 'effort');
+    // age the report past the staleness window without waiting for it
+    const file = viewerFilePath(stateFile, 4242);
+    const old = new Date(Date.now() - VIEWER_STALE_MS - 1000);
+    utimesSync(file, old, old);
+    const declared = await declareSomething('effort');
+    expect(declared.text).toContain('pane: CLOSED');
+  });
+
+  it('mmap_update and mmap_view carry the same line', async () => {
+    await declareSomething('effort');
+    paneShowing(4242, 'effort');
+    const updated = await callText('mmap_update', { page: 'effort', updates: [{ id: 'core', status: 'in-progress' }] });
+    expect(updated.text).toContain('pane: open on this page');
+    const viewed = await callText('mmap_view', { page: 'effort' });
+    expect(viewed.text).toContain('pane: open on this page');
+  });
+
+  it('a REFUSED call carries no pane line — the news is the refusal', async () => {
+    const refused = await callText('mmap_update', { page: 'effort', updates: [{ id: 'nobody', status: 'done' }] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).not.toContain('pane:');
+  });
+});
+
+describe('mmap_open — the assistant putting the map on screen', () => {
+  it('the launcher is found next to the server, in scripts/', () => {
+    // both shapes this module runs in sit one directory below the plugin root
+    const root = resolve('/plugin');
+    expect(launcherPath(pathToFileURL(join(root, 'dist', 'server.mjs')).href)).toBe(
+      join(root, 'scripts', 'open-pane.mjs'),
+    );
+    expect(projectDirOf(join('/work', 'proj', '.mellos', 'map.json'))).toBe(join('/work', 'proj'));
+  });
+
+  it('the command line carries the project, the page and nothing it was not asked for', () => {
+    expect(launcherArgs('/proj', 'effort', false)).toEqual(['/proj', '--page', 'effort']);
+    expect(launcherArgs('/proj', undefined, false)).toEqual(['/proj']);
+    expect(launcherArgs('/proj', 'effort', true)).toEqual(['/proj', '--page', 'effort', '--window']);
+  });
+
+  it('a launcher that failed is reported as a failure, with what it said', () => {
+    const said = openOutcome({ ok: false, output: 'open-pane.mjs is Windows Terminal-only' }, [], 'effort');
+    expect(said).toContain('could not open the pane');
+    expect(said).toContain('Windows Terminal-only');
+  });
+
+  it('a pane that reported the requested page is the success case', () => {
+    const viewers = [{ pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 }];
+    expect(openOutcome({ ok: true, output: 'MMAP_PANE mode=split' }, viewers, 'effort')).toContain('open and showing');
+  });
+
+  it('a pane that came up elsewhere is not reported as showing the page', () => {
+    const viewers = [{ pid: 1, page: 'other' as PageId, follow: false, ageMs: 10 }];
+    const said = openOutcome({ ok: true, output: 'MMAP_PANE already-open' }, viewers, 'effort');
+    expect(said).toContain('but it reports');
+    expect(said).toContain('other');
+  });
+
+  // The whole point of the viewers channel: "the command exited 0" is not the
+  // same claim as "the user can see the map", and only the second one matters.
+  it('a launcher that succeeded with no pane reporting in says exactly that', () => {
+    const said = openOutcome({ ok: true, output: 'MMAP_PANE mode=window' }, [], 'effort');
+    expect(said).toContain('no pane has reported in');
   });
 });
 
