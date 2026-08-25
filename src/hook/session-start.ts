@@ -54,8 +54,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   MAPPING_POLICIES,
   type MappingPolicy,
+  PAGES_DIR_NAME,
   STATE_FILE_RELATIVE_PATH,
-  STORE_DIR_NAME,
   configFilePath,
   describeMappingPolicy,
   effectiveMappingPolicy,
@@ -121,6 +121,23 @@ export function sessionStartContext(input: SessionContextInput): string | undefi
     '     done WITH EVIDENCE when its verification passes, regressed when something breaks.',
     'An explicit request from the user always outranks this.',
   ].join('\n');
+}
+
+/**
+ * Does this project have a Mellos MAP — not merely a `.mellos/` directory?
+ *
+ * The two stopped being the same question when panes began publishing a
+ * report while they run: opening the pane on a virgin project creates the
+ * store directory before any map exists in it, and a hook that mistook that
+ * for a map would tell an `on-request` session about a picture nobody ever
+ * drew. A map is a page file: the default one, or the pages directory.
+ *
+ * Two existsSync calls, both on paths already in hand — the FAST promise in
+ * the module header still holds.
+ * @param stateFile - the project's default page path.
+ */
+export function hasMap(stateFile: string): boolean {
+  return existsSync(stateFile) || existsSync(join(dirname(stateFile), PAGES_DIR_NAME));
 }
 
 /**
@@ -255,7 +272,7 @@ async function main(): Promise<void> {
   const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const context = sessionStartContext({
     policy: scopes.value.effective,
-    hasStore: existsSync(join(projectDir, STORE_DIR_NAME)),
+    hasStore: hasMap(stateFile),
   });
   let installNote: string | undefined;
   try {

@@ -28,6 +28,7 @@ function stripBom(text) {
 }
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
+var PAGES_DIR_NAME = "pages";
 var CONFIG_FILE_NAME = "config.json";
 var CONFIG_FILE_VERSION = 1;
 function configFilePath(defaultFile) {
@@ -117,6 +118,9 @@ function sessionStartContext(input) {
     "An explicit request from the user always outranks this."
   ].join("\n");
 }
+function hasMap(stateFile) {
+  return existsSync2(stateFile) || existsSync2(join2(dirname2(stateFile), PAGES_DIR_NAME));
+}
 function mmapShimFilePath(localAppData) {
   return join2(localAppData, "mellos-mapping", "bin", "mmap.cmd");
 }
@@ -201,7 +205,7 @@ async function main() {
   const pluginRoot = dirname2(dirname2(fileURLToPath(import.meta.url)));
   const context = sessionStartContext({
     policy: scopes.value.effective,
-    hasStore: existsSync2(join2(projectDir, STORE_DIR_NAME))
+    hasStore: hasMap(stateFile)
   });
   let installNote;
   try {
@@ -224,6 +228,7 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
   main().catch(() => process.exit(0));
 }
 export {
+  hasMap,
   hookOutput,
   installContextLine,
   launchedAsEntry,

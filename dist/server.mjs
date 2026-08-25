@@ -23145,7 +23145,7 @@ function summarize(map) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.20.1";
+var SERVER_VERSION = "0.20.2";
 var TITLE_MAX = 120;
 var LABEL_MAX = 60;
 var DETAIL_MAX = 600;
@@ -23256,10 +23256,13 @@ function runLauncher(script, args) {
     });
   });
 }
+function paneShows(viewers, page2) {
+  return page2 === void 0 ? viewers.length > 0 : viewers.some((v) => v.page === page2);
+}
 async function awaitPane(stateFile, page2, deadlineMs) {
   for (; ; ) {
     const viewers = readLiveViewers(stateFile, Date.now());
-    if (viewers.some((v) => v.page === page2)) return viewers;
+    if (paneShows(viewers, page2)) return viewers;
     if (Date.now() >= deadlineMs) return viewers;
     await new Promise((r) => setTimeout(r, PANE_REPORT_POLL_MS));
   }
@@ -23269,7 +23272,7 @@ function openOutcome(run, viewers, page2) {
     return `could not open the pane: ${run.output === "" ? "the launcher failed without saying why" : run.output}
 Relay this to the user \u2014 on a machine without Windows Terminal the map is opened by running the watcher in any second terminal or tmux split (see the plugin README).`;
   }
-  if (viewers.some((v) => v.page === page2)) {
+  if (paneShows(viewers, page2)) {
     return `pane: open and showing ${pageName(page2)} \u2014 the user can see the map now.
 ${run.output}`;
   }

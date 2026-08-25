@@ -90,7 +90,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.20.1';
+export const SERVER_VERSION = '0.20.2';
 
 // ---------------------------------------------------------------------------
 // the advertised schema — what a model reads BEFORE it calls
@@ -426,11 +426,23 @@ function runLauncher(script: string, args: readonly string[]): Promise<LauncherR
   });
 }
 
-/** Wait until a pane reports `page` on screen, or until the deadline passes. */
+/**
+ * Is what was asked for on a screen?
+ *
+ * A call that named a page is answered by THAT page being shown. A call
+ * that named none asked for the map, not for a particular page of it, so
+ * any live pane answers it — including the one that was already open, which
+ * would otherwise be waited on for a page it was never asked to switch to.
+ */
+function paneShows(viewers: readonly LiveViewer[], page: string | undefined): boolean {
+  return page === undefined ? viewers.length > 0 : viewers.some((v) => v.page === page);
+}
+
+/** Wait until a pane shows what was asked for, or until the deadline passes. */
 async function awaitPane(stateFile: string, page: string | undefined, deadlineMs: number): Promise<readonly LiveViewer[]> {
   for (;;) {
     const viewers = readLiveViewers(stateFile, Date.now());
-    if (viewers.some((v) => v.page === page)) return viewers;
+    if (paneShows(viewers, page)) return viewers;
     if (Date.now() >= deadlineMs) return viewers;
     await new Promise((r) => setTimeout(r, PANE_REPORT_POLL_MS));
   }
@@ -452,7 +464,7 @@ export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], pa
       'the watcher in any second terminal or tmux split (see the plugin README).'
     );
   }
-  if (viewers.some((v) => v.page === page)) {
+  if (paneShows(viewers, page)) {
     return `pane: open and showing ${pageName(page)} — the user can see the map now.\n${run.output}`;
   }
   if (viewers.length > 0) {

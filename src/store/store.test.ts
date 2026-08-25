@@ -3,7 +3,7 @@
  * invariants) and P2 (writes are atomic; round-trips are lossless).
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -547,20 +547,36 @@ describe('viewers — the "somebody is looking" channel, pane to readers', () =>
   it('two panes on one store both report, youngest first', () => {
     must(publishViewer(defaultFile(), 100, { page: undefined, follow: true }));
     must(publishViewer(defaultFile(), 200, { page: 'other' as PageId, follow: false }));
-    // 200 was written last, so at any later instant its report is the younger
-    expect(readLiveViewers(defaultFile(), Date.now() + 1000).map((v) => v.pid)).toEqual([200, 100]);
+    // Two writes a microsecond apart share an mtime as often as not, and
+    // equal ages fall back to the pid — so age one report deliberately
+    // rather than asking the clock to have moved between two statements.
+    const beat = new Date(Date.now() - 2000);
+    utimesSync(viewerFilePath(defaultFile(), 100), beat, beat);
+    expect(readLiveViewers(defaultFile(), Date.now()).map((v) => v.pid)).toEqual([200, 100]);
+  });
+
+  it('reports written in the same millisecond order by pid, never at random', () => {
+    for (const pid of [300, 100, 200]) {
+      must(publishViewer(defaultFile(), pid, { page: undefined, follow: true }));
+    }
+    const sameInstant = new Date(Date.now() - 500);
+    for (const pid of [100, 200, 300]) utimesSync(viewerFilePath(defaultFile(), pid), sameInstant, sameInstant);
+    expect(readLiveViewers(defaultFile(), Date.now()).map((v) => v.pid)).toEqual([100, 200, 300]);
   });
 
   it('a report nobody refreshed is not a pane — and is kept, not swept', () => {
     must(publishViewer(defaultFile(), 4242, { page: undefined, follow: true }));
-    const later = Date.now() + VIEWER_STALE_MS + 1;
-    expect(readLiveViewers(defaultFile(), later)).toEqual([]);
+    const missed = new Date(Date.now() - VIEWER_STALE_MS - 1000);
+    utimesSync(viewerFilePath(defaultFile(), 4242), missed, missed);
+    expect(readLiveViewers(defaultFile(), Date.now())).toEqual([]);
     expect(existsSync(viewerFilePath(defaultFile(), 4242))).toBe(true);
   });
 
   it('a report far past staleness is deleted by whoever reads it', () => {
     must(publishViewer(defaultFile(), 4242, { page: undefined, follow: true }));
-    expect(readLiveViewers(defaultFile(), Date.now() + VIEWER_SWEEP_MS + 1)).toEqual([]);
+    const abandoned = new Date(Date.now() - VIEWER_SWEEP_MS - 1000);
+    utimesSync(viewerFilePath(defaultFile(), 4242), abandoned, abandoned);
+    expect(readLiveViewers(defaultFile(), Date.now())).toEqual([]);
     expect(existsSync(viewerFilePath(defaultFile(), 4242))).toBe(false);
   });
 

@@ -6,13 +6,16 @@
  * that is easiest to break and hardest to notice — when it is told nothing.
  */
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { MappingPolicy } from '../store/store.js';
 import {
   type SessionContextInput,
+  hasMap,
   hookOutput,
   installContextLine,
   mmapShimCurrent,
@@ -113,6 +116,41 @@ describe('complex — the same loop, on the tasks that deserve it', () => {
   it('still opens the pane without asking, and still names the tool', () => {
     expect(ctx()).toContain('WITHOUT asking');
     expect(ctx()).toContain('mmap_open');
+  });
+});
+
+describe('a project HAS a map when a page file does, not when a directory does', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'mellos-hook-hasmap-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const stateFile = (): string => join(dir, '.mellos', 'map.json');
+
+  it('says no for a project with nothing at all', () => {
+    expect(hasMap(stateFile())).toBe(false);
+  });
+
+  // A pane publishes its viewer report from the moment it opens, so the
+  // store directory now exists in projects that have never had a map. It
+  // must not read as one.
+  it('says no for a store directory a running pane created', () => {
+    mkdirSync(join(dir, '.mellos', 'viewers'), { recursive: true });
+    writeFileSync(join(dir, '.mellos', 'viewers', '4242.json'), '{}');
+    expect(hasMap(stateFile())).toBe(false);
+  });
+
+  it('says yes for the default page, and for a pages directory', () => {
+    mkdirSync(join(dir, '.mellos'), { recursive: true });
+    writeFileSync(stateFile(), '{}');
+    expect(hasMap(stateFile())).toBe(true);
+
+    rmSync(stateFile());
+    mkdirSync(join(dir, '.mellos', 'pages'), { recursive: true });
+    expect(hasMap(stateFile())).toBe(true);
   });
 });
 

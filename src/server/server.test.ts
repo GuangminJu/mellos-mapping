@@ -895,6 +895,16 @@ describe('mmap_open — the assistant putting the map on screen', () => {
     expect(said).toContain('other');
   });
 
+  // "Open the map" asks for the map, not for a page of it — so the pane that
+  // was already open answers it, instead of being waited on for a page it was
+  // never asked to switch to.
+  it('a call that named no page is answered by any live pane', () => {
+    const viewers = [{ pid: 1, page: 'other' as PageId, follow: true, ageMs: 10 }];
+    expect(openOutcome({ ok: true, output: 'MMAP_PANE already-open' }, viewers, undefined)).toContain(
+      'open and showing',
+    );
+  });
+
   // The whole point of the viewers channel: "the command exited 0" is not the
   // same claim as "the user can see the map", and only the second one matters.
   it('a launcher that succeeded with no pane reporting in says exactly that', () => {
