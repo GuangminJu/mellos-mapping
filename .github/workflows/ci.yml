@@ -5,9 +5,7 @@
 # `npm run verify` ends in `check:package`, which packs the tarball through
 # the real prepack lifecycle and fails if any `exports`/`bin` target is
 # missing from it — the npm half of the same "what ships is what was built"
-# guarantee the dist diff gives the plugin half. It also typechecks and runs
-# what the dsh plugin packages under packages/ can prove without the
-# @deepseek-ai framework (tsconfig.packages.json, vitest.config.ts).
+# guarantee the dist diff gives the plugin half.
 name: CI
 
 on:
@@ -33,13 +31,3 @@ jobs:
       - name: committed dist matches src
         if: runner.os == 'Linux'
         run: git diff --exit-code -- dist
-      # packages/*/lib is built inside a dsh workspace and committed here, so
-      # nothing in this repo can rebuild it and no diff can check it. What CAN
-      # go wrong silently is tracking: .gitignore excludes `lib/` and re-includes
-      # `packages/*/lib` by negation, and git's "a file cannot be re-included if
-      # its parent directory is excluded" rule makes that ordering fragile —
-      # break it and the published plugin packages ship with an empty lib/.
-      # (The lib-vs-src structure itself is covered by tests/packages.test.ts.)
-      - name: dsh plugin bundles are tracked
-        if: runner.os == 'Linux'
-        run: git ls-files --error-unmatch packages/dsh/lib packages/dsh-client/lib > /dev/null

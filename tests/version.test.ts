@@ -23,8 +23,6 @@ const VERSIONED_FILES = [
   '.codex-plugin/plugin.json',
   // .agents/plugins/marketplace.json carries no version field on purpose:
   // its plugin entry points at the local source, which names its own.
-  'packages/dsh/package.json',
-  'packages/dsh-client/package.json',
 ] as const;
 
 describe('one version, many manifests', () => {

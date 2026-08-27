@@ -493,9 +493,7 @@ npm install
 npm run verify
 ```
 
-`verify` 是按顺序的五步：`typecheck`（本仓库自己的源码）、
-`typecheck:packages`（dsh 插件包里不依赖框架的模块，且把 `mellos-mapping/*`
-指向本仓库源码）、`test`、`build`（打包 `dist/`、产出带声明的 `lib/`，两个
+`verify` 是按顺序的四步：`typecheck`、`test`、`build`（打包 `dist/`、产出带声明的 `lib/`，两个
 目录都先清空），以及 `check:package`——它按真实的 `prepack` 生命周期打出
 tarball，只要 `exports` 或 `bin` 里有任何目标没被打进去就失败。
 
@@ -512,25 +510,11 @@ tarball，只要 `exports` 或 `bin` 里有任何目标没被打进去就失败�
 | 4 render | `src/render/` | `render.test.ts`、`routing.test.ts` | ASCII 渲染器与它的走线 |
 | 4 pane | `src/watch/` | `watch.test.ts`、`pane-state.test.ts`、`input.test.ts` | 轮询面板：页集、输入解析、详情面板与外框 |
 | — 启动脚本 | `scripts/` | `open-pane.test.mjs`、`codex-register.test.mjs` | 纯 node 的入口 |
-| — 打包 | `package.json`、`packages/` | `tests/lockfile.test.ts`、`tests/packages.test.ts`、`browser-safe.test.ts` | 发出去的是什么、发给谁 |
+| — 打包 | `package.json` | `tests/lockfile.test.ts`、`browser-safe.test.ts` | 发出去的是什么、发给谁 |
 
 `dist/` 是刻意提交的：插件安装就是克隆本仓库、不运行任何东西，所以入口
 文件以打包形式随仓库分发。CI 会把提交的 `dist/` 和一次全新构建做 diff，
 所以改了源码却忘了重新构建会直接失败。
-
-### dsh 插件包
-
-`packages/dsh` 与 `packages/dsh-client` 是 DeepSeek Harness 的那一面：一个
-读取并监视工作区 `.mellos/` 存储的宿主插件，加上用同一套语义作画的浏览器
-地图面板。它们在 dsh workspace 检出里*开发*（由那边的工具链构建），从这里
-*发布*——源码、规格测试和 `lib/` 都提交在这儿，用
-`node scripts/sync-dsh-plugin.mjs <deepseek-harness 检出路径>` 刷新，该脚本
-会把 dsh 内部包名改写成发布用的名字。本仓库构建不了它们，所以只证明它能
-证明的：`typecheck:packages` 和不依赖框架的规格测试在 CI 里跑，
-`tests/packages.test.ts` 守住 src↔lib 的结构、共享版本线和 MCP 行的拉起
-方式。需要 `@deepseek-ai` 框架或 DOM 的规格测试连同理由一起写在
-`vitest.config.ts` 里。详见
-[`packages/dsh/README.md`](packages/dsh/README.md)。
 
 ### 库
 
@@ -549,8 +533,7 @@ tarball，只要 `exports` 或 `bin` 里有任何目标没被打进去就失败�
 
 **浏览器安全**的意思是 import 闭包里没有任何 Node 内建模块，由测试门禁
 守护——图形客户端（web 面板、编辑器视图）可以直接解析状态文件，并复用与
-终端面板完全一致的聚合、缩放与字形语义。`packages/dsh-client` 就是这样一个
-客户端。
+终端面板完全一致的聚合、缩放与字形语义。
 
 ## 许可证
 
