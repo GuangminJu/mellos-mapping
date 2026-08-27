@@ -3,6 +3,16 @@
 Notable, user-visible changes. Releases before 0.20.2 are recorded only in
 the git history (`git log --oneline`), which is where this file starts.
 
+## Unreleased
+
+### Removed
+
+- **The DeepSeek Harness packages are gone.** `packages/dsh` and
+  `packages/dsh-client` were never published to npm and could not be built
+  here; they are dropped with their sync script, typecheck project, CI step
+  and release bumps. The library surface — the `mellos-mapping/*` subpath
+  exports and the browser-safe gate — stays: it is host-neutral.
+
 ## 0.20.2
 
 ### Breaking

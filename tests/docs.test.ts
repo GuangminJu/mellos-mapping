@@ -27,14 +27,9 @@ const DOCS = [
   'CHANGELOG.md',
   'skills/mellos-mapping/SKILL.md',
   'commands/mmap.md',
-  'packages/dsh/README.md',
-  'packages/dsh-client/README.md',
 ];
 
-/**
- * Documents that tell a user how to open the pane. The dsh package READMEs
- * are out: their flags belong to `dsh plugin`, not to this repo's launcher.
- */
+/** Documents that tell a user how to open the pane. */
 const PANE_DOCS = ['README.md', 'README.zh-CN.md', 'skills/mellos-mapping/SKILL.md', 'commands/mmap.md'];
 
 describe('the store path in the docs', () => {

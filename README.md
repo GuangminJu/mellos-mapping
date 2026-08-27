@@ -556,9 +556,7 @@ npm install
 npm run verify
 ```
 
-`verify` is five steps, in this order: `typecheck` (the repo's own sources),
-`typecheck:packages` (the dsh plugin packages' framework-free modules, with
-`mellos-mapping/*` pointed at these sources), `test`, `build` (bundles
+`verify` is four steps, in this order: `typecheck`, `test`, `build` (bundles
 `dist/`, emits `lib/` with declarations, cleaning both first), and
 `check:package` — which packs the tarball through the real `prepack`
 lifecycle and fails if any `exports` or `bin` target is missing from it.
@@ -576,26 +574,11 @@ The repo is itself layered bottom-up, and each layer has its spec:
 | 4 render | `src/render/` | `render.test.ts`, `routing.test.ts` | the ASCII renderer and its wire routing |
 | 4 pane | `src/watch/` | `watch.test.ts`, `pane-state.test.ts`, `input.test.ts` | the polling pane: page set, input parsing, panel and chrome |
 | — launchers | `scripts/` | `open-pane.test.mjs`, `codex-register.test.mjs` | plain-node entry points |
-| — packaging | `package.json`, `packages/` | `tests/lockfile.test.ts`, `tests/packages.test.ts`, `browser-safe.test.ts` | what ships, and to whom |
+| — packaging | `package.json` | `tests/lockfile.test.ts`, `browser-safe.test.ts` | what ships, and to whom |
 
 `dist/` is committed deliberately: plugin installation clones this repo and
 runs nothing, so entry points ship bundled. CI diffs the committed `dist/`
 against a fresh build, so a source change that forgets the rebuild fails.
-
-### The dsh packages
-
-`packages/dsh` and `packages/dsh-client` are the DeepSeek Harness surface: a
-host plugin that reads and watches a workspace's `.mellos/` store, and the
-browser map panel that draws it with these same semantics. They are
-*developed* inside a dsh workspace checkout (its toolchain builds them) and
-*published* from here — sources, specs and `lib/` committed, refreshed by
-`node scripts/sync-dsh-plugin.mjs <path-to-deepseek-harness>`, which rewrites
-the dsh-internal package names to the published ones. This repo cannot build
-them, so it proves what it can: `typecheck:packages` and the framework-free
-specs run in CI, and `tests/packages.test.ts` guards the src↔lib structure,
-the shared version line, and the MCP row's spawn form. Specs that need the
-`@deepseek-ai` framework or a DOM are named, with their reason, in
-`vitest.config.ts`. See [`packages/dsh/README.md`](packages/dsh/README.md).
 
 ### Library
 
@@ -615,7 +598,7 @@ declarations; npm packs it). Subpath exports mirror the source:
 **Browser-safe** means no Node builtins anywhere in the import closure, gated
 by a test, so a graphical client (a web panel, an editor view) can parse state
 files and reuse the exact aggregation, zoom and glyph semantics the terminal
-pane draws with. `packages/dsh-client` is that client.
+pane draws with.
 
 ## License
 

@@ -37,12 +37,6 @@
  * confirmed only by a second press on the SAME page inside its window,
  * withdrawn by a switch, by the scan moving the view, or by silence. This
  * module never touches a file; it only decides what a press meant.
- *
- * The shape mirrors packages/dsh-client's pages.ts, which folds the same
- * store for a browser: one page set, keep-last-good merging, fresh marking,
- * most-recently-written selection. Two media, one set of rules — but no
- * import between them, because the wire's page keys and a filesystem's paths
- * are not the same thing.
  */
 
 import type { MellosMap } from '../domain/types.js';
