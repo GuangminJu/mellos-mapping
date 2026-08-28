@@ -57,6 +57,15 @@ non-overlapping wire segments share track rows to keep the bands close.
 
 *(This is the plugin's own map, mid-development. The spinner really spins.)*
 
+And here it is beside a real conversation — Claude Code on the left, the map
+pane on the right, building a small game engine bottom-up. L0 primitives are
+verified and green, L1 has just lit up, and the contracts and systems above
+are still ghosts waiting for their foundations:
+
+<p align="center">
+  <img alt="A Claude Code session with the Mellos map pane beside it: a six-layer game engine design, L0 and L1 nodes solid green, the upper layers still dashed ghost nodes" src="docs/session-claude-code.png">
+</p>
+
 ## Why
 
 Most progress reporting is a task list — a top-down worldview. A Mellos map
