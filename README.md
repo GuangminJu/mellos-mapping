@@ -1,6 +1,10 @@
 # Mellos Mapping
 
-[![CI](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/mellos-mapping?logo=npm&logoColor=white&label=npm&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
+[![downloads](https://img.shields.io/npm/dm/mellos-mapping?label=downloads&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
+[![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
+[![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=master&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
 
@@ -10,7 +14,7 @@ A live, terminal-native map of bottom-up development for
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="docs/demo-light.svg">
-    <img alt="A Mellos map building itself: ghost design first, spinners climbing the layers, a cracked foundation spreading upward, honest recovery" src="docs/demo.svg" width="620">
+    <img alt="One declare puts the whole ghost design on screen, then the nodes light up from the bottom — a foundation cracks, the damage spreads upward, and green is earned back" src="docs/demo.svg" width="620">
   </picture>
 </p>
 

@@ -1,6 +1,10 @@
 # Mellos Mapping · 梅勒斯地图
 
-[![CI](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/mellos-mapping?logo=npm&logoColor=white&label=npm&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
+[![downloads](https://img.shields.io/npm/dm/mellos-mapping?label=downloads&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
+[![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
+[![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=master&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
 
 [English](README.md) | 简体中文
 
@@ -10,7 +14,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="docs/demo-light.svg">
-    <img alt="一张梅勒斯地图的自我构建：幽灵设计先行，spinner 逐层攀升，地基开裂向上传染，诚实修复" src="docs/demo.svg" width="620">
+    <img alt="一次 declare 铺开整张幽灵设计，节点自下而上逐个点亮 —— 地基开裂向上传染，绿色再被挣回来" src="docs/demo.svg" width="620">
   </picture>
 </p>
 
