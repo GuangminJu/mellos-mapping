@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "title": "Release 0.20.3 — 从 tag 到两个注册表",
+  "layers": [
+    {
+      "id": "preconditions",
+      "name": "前置条件",
+      "rank": 0
+    },
+    {
+      "id": "npm-dist",
+      "name": "npm 分发",
+      "rank": 1
+    },
+    {
+      "id": "registry",
+      "name": "MCP registry",
+      "rank": 2
+    },
+    {
+      "id": "confirm",
+      "name": "发布确认",
+      "rank": 3
+    }
+  ],
+  "nodes": [
+    {
+      "id": "tree-verified",
+      "label": "0.20.3 源码树已验证",
+      "layer": "preconditions",
+      "status": "done",
+      "evidence": "npm run verify: typecheck + 521 tests passed + build + check:package(44 files/16 targets); rebuild 后 git diff 为空",
+      "detail": "master 4ebbbf6 的工作区就是要发的东西。dist/ 是提交进仓库的，重新 build 后与提交内容字节一致 —— 发出去的包和 tag 指的代码是同一份。"
+    },
+    {
+      "id": "origin-at-0-20-3",
+      "label": "origin 上有 v0.20.3",
+      "layer": "preconditions",
+      "status": "done",
+      "evidence": "git ls-remote --tags origin: refs/tags/v0.20.3 = 4ebbbf687f5f，与本地 master 同一 commit",
+      "detail": "tag 已推送。MCP registry 的 workflow 会 checkout 这个状态去读 server.json，里面的版本号已经是 0.20.3。"
+    },
+    {
+      "id": "npm-auth",
+      "label": "npm 登录态",
+      "layer": "preconditions",
+      "status": "done",
+      "evidence": "npm whoami: me1los；npm owner ls mellos-mapping 列出 me1los 为唯一 owner，具备 publish 权限",
+      "detail": "旧 token 已过期，用户重新登录后凭据可用。账号 me1los 是该包的 owner，不是只能读的旁观者。"
+    },
+    {
+      "id": "npm-publish",
+      "label": "npm publish 0.20.3",
+      "layer": "npm-dist",
+      "status": "done",
+      "evidence": "npm view: version 0.20.3, dist-tags.latest 0.20.3；dist.shasum e34264e6057f2286853d819257448ba232257711 与本地 verify 时打出的 tarball 完全一致",
+      "detail": "用户交互完成 2FA 后发布成功。发出去的包与本地验证过的字节相同（shasum 对得上），不是“重新打了一个差不多的包”。"
+    },
+    {
+      "id": "mcp-registry",
+      "label": "MCP registry 0.20.3",
+      "layer": "registry",
+      "status": "done",
+      "evidence": "workflow run 33138603706 成功（publish 作业 7s，OIDC 登录 + mcp-publisher publish 均绿）",
+      "detail": "gh workflow run publish-mcp-registry.yml --ref master。Actions 用 OIDC 证明 io.github.GuangminJu 命名空间，无需 device-flow 登录。"
+    },
+    {
+      "id": "release-confirmed",
+      "label": "两个注册表都是 0.20.3",
+      "layer": "confirm",
+      "status": "done",
+      "evidence": "npm dist-tags.latest = 0.20.3；MCP registry 返回 0.20.3 isLatest=True。两个注册表一致",
+      "detail": "npm view mellos-mapping version 和 registry.modelcontextprotocol.io 的 isLatest 都要答 0.20.3。两边都确认之前，这次发布不算完成。"
+    }
+  ],
+  "edges": [
+    {
+      "from": "npm-publish",
+      "to": "tree-verified",
+      "label": "要发的字节"
+    },
+    {
+      "from": "npm-publish",
+      "to": "npm-auth",
+      "label": "凭据"
+    },
+    {
+      "from": "mcp-registry",
+      "to": "npm-publish",
+      "label": "校验版本存在"
+    },
+    {
+      "from": "mcp-registry",
+      "to": "origin-at-0-20-3",
+      "label": "server.json"
+    },
+    {
+      "from": "release-confirmed",
+      "to": "npm-publish"
+    },
+    {
+      "from": "release-confirmed",
+      "to": "mcp-registry"
+    }
+  ]
+}
