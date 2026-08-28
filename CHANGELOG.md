@@ -5,6 +5,21 @@ the git history (`git log --oneline`), which is where this file starts.
 
 ## Unreleased
 
+### Changed
+
+- **A refused edge says how to fix it, and says it differently for a
+  same-band edge than for an upward one.** The refusal used to stop at
+  "is not strictly downward; dependencies may only point to a lower layer"
+  — one sentence for two different mistakes, and the remedy the skill
+  prescribes (if A needs sibling B, either B is really a lower concept or A
+  and B are one node) was nowhere near the moment it was needed: a whole
+  declare batch is refused for one such edge, and the caller composing it
+  had read the skill text long before. A same-band edge now names both
+  honest fixes — declare the used node on a lower band, or merge the two —
+  and an upward edge says to reverse the arrow if the other node is really
+  the user, or to move or re-rank otherwise. The ledger refuses exactly
+  what it refused before; only the words changed.
+
 ### Removed
 
 - **The DeepSeek Harness packages are gone.** `packages/dsh` and

@@ -102,6 +102,47 @@ describe('applyDeclare', () => {
     expect(mustFail(result)).toContain('not strictly downward');
   });
 
+  /**
+   * The refusal carries the remedy, and the remedy depends on which way the
+   * edge went wrong. The skill text prescribes both; a caller mid-batch is
+   * not reading the skill text, they are reading this line.
+   */
+  it('an upward edge is refused with the reversal prescribed', () => {
+    const result = applyDeclare(EMPTY_MAP, {
+      layers: [
+        { id: 'base', name: 'Base', rank: 0 },
+        { id: 'top', name: 'Top', rank: 1 },
+      ],
+      nodes: [
+        { id: 'a', label: 'A', layer: 'top' },
+        { id: 'b', label: 'B', layer: 'base' },
+      ],
+      edges: [{ from: 'b', to: 'a' }],
+    });
+    const text = mustFail(result);
+    expect(text).toContain('reverse the edge if "a" is the user');
+    expect(text).toContain('re-rank so "b" sits above "a"');
+    expect(text).not.toContain('same-band');
+  });
+
+  it('a same-band edge is refused with the two honest fixes prescribed: lower one node, or merge them', () => {
+    const result = applyDeclare(EMPTY_MAP, {
+      layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [
+        { id: 'page-store', label: 'store', layer: 'base' },
+        { id: 'map-file', label: 'file', layer: 'base' },
+      ],
+      edges: [{ from: 'page-store', to: 'map-file' }],
+    });
+    const text = mustFail(result);
+    expect(text).toContain('edges[0]');
+    expect(text).toContain('not strictly downward');
+    expect(text).toContain('same-band siblings may not depend on each other');
+    expect(text).toContain('"map-file" is really a lower concept (declare it on a lower band)');
+    expect(text).toContain('"page-store" and "map-file" are one node (merge them)');
+    expect(text).not.toContain('reverse the edge');
+  });
+
   it('reports the failing item with its index', () => {
     const result = applyDeclare(ghostMap(), {
       nodes: [

@@ -306,9 +306,18 @@ export function describeMapError(e: MapError): string {
     case 'layer-holds-group':
       return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups (removeGroup) first`;
     case 'edge-not-downward':
+      // The fault is one invariant (I4) but the remedy is not: a same-band
+      // edge is a modeling error the caller fixes by restructuring, an
+      // upward edge is usually a reversed arrow. The refusal is the moment
+      // the caller needs the remedy, so it is spelled out here, not only in
+      // the skill text they read before the batch was composed.
       return (
         `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; ` +
-        `dependencies may only point to a lower layer`
+        (e.fromRank === e.toRank
+          ? `same-band siblings may not depend on each other — either "${e.to}" is really a lower concept ` +
+            `(declare it on a lower band) or "${e.from}" and "${e.to}" are one node (merge them)`
+          : `"${e.from}" would USE "${e.to}" from a lower band — reverse the edge if "${e.to}" is the user, ` +
+            `otherwise move or re-rank so "${e.from}" sits above "${e.to}"`)
       );
   }
 }

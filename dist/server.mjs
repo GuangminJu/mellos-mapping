@@ -21237,7 +21237,7 @@ function describeMapError(e) {
     case "layer-holds-group":
       return `layer "${e.id}" still holds group "${e.occupant}"; remove its groups (removeGroup) first`;
     case "edge-not-downward":
-      return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; dependencies may only point to a lower layer`;
+      return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; ` + (e.fromRank === e.toRank ? `same-band siblings may not depend on each other \u2014 either "${e.to}" is really a lower concept (declare it on a lower band) or "${e.from}" and "${e.to}" are one node (merge them)` : `"${e.from}" would USE "${e.to}" from a lower band \u2014 reverse the edge if "${e.to}" is the user, otherwise move or re-rank so "${e.from}" sits above "${e.to}"`);
   }
 }
 
