@@ -3,7 +3,7 @@
 Notable, user-visible changes. Releases before 0.20.2 are recorded only in
 the git history (`git log --oneline`), which is where this file starts.
 
-## Unreleased
+## 0.20.3
 
 ### Changed
 

@@ -90,7 +90,7 @@ import {
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.20.2';
+export const SERVER_VERSION = '0.20.3';
 
 // ---------------------------------------------------------------------------
 // the advertised schema — what a model reads BEFORE it calls
