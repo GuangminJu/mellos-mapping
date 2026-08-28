@@ -20,51 +20,12 @@ dependency edges that may only point downward, ghost nodes for what is
 designed, a spinner on what is being built right now, and solid green for
 what is built *and verified*.
 
-```
-  Mellos Mapping · the plugin itself
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━ orchestration
-
-  ╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮
-  ╎ · MCP Server ╎
-  ╰╌╌╌╌┬╌┬╌╌┬╌╌╌╌╯
-       │ │  │
-       └─┼──┼─────────────┐
-         │  └──────┐      │
-         │         │      │
-━━━━━━━━━┿━━━━━━━━━┿━━━━━━┿━━━ contracts
-         │         │      │
-  ┏━━━━━━┷━━━━━━━━┓│ ╭╌╌╌╌┴╌╌╌╌╌╌╮
-  ┃ ■ State Store ┃│ ╎ · Watcher ╎
-  ┗━━━━━┯━━━━━━━━━┛│ ╰╌╌╌╌╌┬╌╌╌╌╌╯
-        │          │       │
-        │ ┌────────┘       │
-        │ │                │
-━━━━━━━━┿━┿━━━━━━━━━━━━━━━━┿━ primitives
-        │ │                │
-  ┏━━━━━┷━┷━━━━━━┓  ╭──────┴───────────╮
-  ┃ ■ Map Domain ┃  │ ⠋ ASCII Renderer │
-  ┗━━━━━━━━━━━━━━┛  ╰──────────────────╯
-
-  · planned   ⠋ in-progress   ■ done   ✗ regressed
-```
-
-In a real terminal the wiring and band bars render FAINT while node boxes
-glow in their status colors with bold labels — a dark circuit board where
-the components are the bright things. Skip-level edges thread through gaps
-between boxes (watch the line dive between State Store and Watcher above);
-non-overlapping wire segments share track rows to keep the bands close.
-
-*(This is the plugin's own map, mid-development. The spinner really spins.)*
-
-And here it is beside a real conversation — Claude Code on the left, the map
-pane on the right, building a small game engine bottom-up. L0 primitives are
-verified and green, L1 has just lit up, and the contracts and systems above
-are still ghosts waiting for their foundations:
-
 <p align="center">
   <img alt="A Claude Code session with the Mellos map pane beside it: a six-layer game engine design, L0 and L1 nodes solid green, the upper layers still dashed ghost nodes" src="docs/session-claude-code.png">
 </p>
+
+*A real session: Claude Code on the left, the map pane on the right. L0 is
+verified, L1 just lit up, everything above is still a ghost.*
 
 ## Why
 
