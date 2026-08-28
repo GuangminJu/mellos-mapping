@@ -4,11 +4,22 @@
  * by rendering a scripted build story through the REAL renderer — no screen
  * recording, fully reproducible: `node scripts/demo-svg.mjs`.
  *
- * Each animation frame is one renderMap() call with color on; the ANSI
- * output is converted to positioned SVG text runs and the frames cycle via
- * CSS. The story shows the core loop: ghost design → spinner climbing the
- * layers → all green → a foundation cracks and the damage spreads upward →
- * honest re-verification back to green.
+ * One fixed shot of one map, and the story is what happens inside it: ONE
+ * declare puts the whole ghost design up, the nodes light from the bottom, a
+ * foundation cracks, the damage spreads upward, and green is earned back.
+ *
+ * The design arriving all at once is not an animator's shortcut: it is what
+ * the skill prescribes and what the tool does — one `mmap_declare` carrying
+ * the whole intended structure, so the user can veto a bad design while it is
+ * still only a picture. An opening that grew the design node by node would be
+ * the prettier lie.
+ *
+ * Every line of the map is renderMap() output with color on, frame by frame,
+ * converted from ANSI into positioned SVG text runs and cycled by CSS. The one
+ * line this script writes itself is the caption underneath, and even its
+ * glyphs come from the renderer's status alphabet — as do the spinner frames
+ * and the width accounting — so the picture cannot drift from what a terminal
+ * shows.
  */
 import { build } from 'esbuild';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -28,7 +39,7 @@ await build({
   outfile: bundle,
   logLevel: 'silent',
 });
-const { renderMap } = await import(pathToFileURL(bundle).href);
+const { displayWidth, renderMap, spinnerGlyph, statusGlyph } = await import(pathToFileURL(bundle).href);
 rmSync(bundle, { force: true });
 
 // ---------------------------------------------------------------- the story
@@ -44,12 +55,19 @@ const EDGES = [
   { from: 'store', to: 'domain' },
   { from: 'watcher', to: 'render' },
 ];
+
+// Each node carries the run that verifies it — the real counts from this
+// repo's own suite. Without it the renderer would be right to draw every
+// finished box as □ (done, nothing recorded behind it), and an animation
+// selling "done means verified" would be demonstrating the rule being broken.
+// Evidence rides along only where the status is done: on a planned node it
+// would be a claim about work nobody has started.
 const NODE = {
-  mcp: { id: 'mcp', label: 'MCP Server', layer: 'orchestration' },
-  store: { id: 'store', label: 'State Store', layer: 'contracts' },
-  watcher: { id: 'watcher', label: 'Watcher', layer: 'contracts' },
-  domain: { id: 'domain', label: 'Map Domain', layer: 'primitives' },
-  render: { id: 'render', label: 'ASCII Renderer', layer: 'primitives' },
+  mcp: { id: 'mcp', label: 'MCP Server', layer: 'orchestration', evidence: 'server.test.ts: 70 passed' },
+  store: { id: 'store', label: 'State Store', layer: 'contracts', evidence: 'store.test.ts: 72 passed' },
+  watcher: { id: 'watcher', label: 'Watcher', layer: 'contracts', evidence: 'watch.test.ts: 64 passed' },
+  domain: { id: 'domain', label: 'Map Domain', layer: 'primitives', evidence: 'ops.test.ts: 51 passed' },
+  render: { id: 'render', label: 'ASCII Renderer', layer: 'primitives', evidence: 'render.test.ts: 37 passed' },
 };
 
 function mapWith(statuses) {
@@ -58,58 +76,61 @@ function mapWith(statuses) {
     layers: LAYERS,
     groups: [],
     lanes: [],
-    nodes: ['mcp', 'store', 'watcher', 'domain', 'render'].map((id) => ({
-      ...NODE[id],
-      status: statuses[id],
-    })),
+    nodes: ['mcp', 'store', 'watcher', 'domain', 'render'].map((id) => {
+      const { evidence, ...node } = NODE[id];
+      const status = statuses[id];
+      return status === 'done' ? { ...node, status, evidence } : { ...node, status };
+    }),
     edges: EDGES,
   };
 }
 
-// [statuses, holdFrames] — the spinner keeps rotating across every frame.
+const GHOST = { mcp: 'planned', store: 'planned', watcher: 'planned', domain: 'planned', render: 'planned' };
+const GREEN = { mcp: 'done', store: 'done', watcher: 'done', domain: 'done', render: 'done' };
+
+// The caption under the map: [glyph, color, text]. A null glyph is the spinner
+// at the current frame, so the line breathes with the boxes; the settled
+// glyphs come from the renderer's status alphabet rather than being retyped.
+const DECLARED = [statusGlyph('planned', true), 'f', 'whole design declared — nothing built yet'];
+const BUILDING = [null, 'a', 'building bottom-up — done means verified'];
+const VERIFIED = [statusGlyph('done', true), 'g', 'five nodes, every one with evidence'];
+const CRACKED = [statusGlyph('regressed', true), 'r', 'a foundation cracked — it spreads upward'];
+const REPAIRING = [null, 'a', 're-verifying everything above the fix'];
+
+/** [statuses, caption, frames to hold]. The spinner turns across every frame. */
 const STAGES = [
-  [{ mcp: 'planned', store: 'planned', watcher: 'planned', domain: 'planned', render: 'planned' }, 4],
-  [{ mcp: 'planned', store: 'planned', watcher: 'planned', domain: 'in-progress', render: 'planned' }, 5],
-  [{ mcp: 'planned', store: 'planned', watcher: 'planned', domain: 'done', render: 'in-progress' }, 5],
-  [{ mcp: 'planned', store: 'in-progress', watcher: 'planned', domain: 'done', render: 'done' }, 5],
-  [{ mcp: 'planned', store: 'done', watcher: 'in-progress', domain: 'done', render: 'done' }, 5],
-  [{ mcp: 'in-progress', store: 'done', watcher: 'done', domain: 'done', render: 'done' }, 5],
-  [{ mcp: 'done', store: 'done', watcher: 'done', domain: 'done', render: 'done' }, 6],
+  [GHOST, DECLARED, 6],
+
+  [{ ...GHOST, domain: 'in-progress' }, BUILDING, 4],
+  [{ ...GHOST, domain: 'done', render: 'in-progress' }, BUILDING, 4],
+  [{ ...GHOST, domain: 'done', render: 'done', store: 'in-progress' }, BUILDING, 4],
+  [{ ...GHOST, domain: 'done', render: 'done', store: 'done', watcher: 'in-progress' }, BUILDING, 4],
+  [{ ...GREEN, mcp: 'in-progress' }, BUILDING, 4],
+  [GREEN, VERIFIED, 6],
+
   // a foundation cracks — and the crack spreads up the dependency edges
-  [{ mcp: 'regressed', store: 'done', watcher: 'regressed', domain: 'done', render: 'regressed' }, 6],
-  [{ mcp: 'regressed', store: 'done', watcher: 'regressed', domain: 'done', render: 'in-progress' }, 5],
-  [{ mcp: 'regressed', store: 'done', watcher: 'in-progress', domain: 'done', render: 'done' }, 4],
-  [{ mcp: 'in-progress', store: 'done', watcher: 'done', domain: 'done', render: 'done' }, 4],
-  [{ mcp: 'done', store: 'done', watcher: 'done', domain: 'done', render: 'done' }, 8],
+  [{ ...GREEN, render: 'regressed', watcher: 'regressed', mcp: 'regressed' }, CRACKED, 6],
+  [{ ...GREEN, render: 'in-progress', watcher: 'regressed', mcp: 'regressed' }, REPAIRING, 4],
+  [{ ...GREEN, watcher: 'in-progress', mcp: 'regressed' }, REPAIRING, 4],
+  [{ ...GREEN, mcp: 'in-progress' }, REPAIRING, 4],
+  [GREEN, VERIFIED, 7],
 ];
 
-const frames = [];
-let spin = 0;
-for (const [statuses, hold] of STAGES) {
-  for (let i = 0; i < hold; i += 1) {
-    frames.push(
-      renderMap(mapWith(statuses), { color: true, unicode: true, spinnerFrame: spin, zoom: 0 }),
-    );
-    spin += 1;
-  }
-}
-
-// ------------------------------------------------------- ANSI → styled runs
-/** CJK-aware terminal column width (mirrors the renderer's own accounting). */
-function charWidth(cp) {
-  return (cp >= 0x1100 && cp <= 0x115f) ||
-    (cp >= 0x2e80 && cp <= 0xa4cf) ||
-    (cp >= 0xac00 && cp <= 0xd7a3) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0xff00 && cp <= 0xff60) ||
-    (cp >= 0x20000 && cp <= 0x3fffd)
-    ? 2
-    : 1;
-}
-
+// ------------------------------------------------------------- styled runs
 const COLOR_OF = { 31: 'r', 32: 'g', 33: 'a', 90: 'f' };
 
-/** One rendered line → [{ col, text, color, bold }] runs. */
+/** Segments [text, color, bold] → positioned runs on one line. */
+function runsOf(segments) {
+  const runs = [];
+  let col = 0;
+  for (const [text, color, bold] of segments) {
+    if (text !== '') runs.push({ col, text, color, bold: bold === true });
+    col += displayWidth(text);
+  }
+  return runs;
+}
+
+/** One ANSI-colored rendered line → [{ col, text, color, bold }] runs. */
 function lineToRuns(line) {
   const runs = [];
   let col = 0;
@@ -131,18 +152,52 @@ function lineToRuns(line) {
       i = end + 1;
       continue;
     }
-    const cp = line.codePointAt(i);
-    const ch = String.fromCodePoint(cp);
+    const ch = String.fromCodePoint(line.codePointAt(i));
     if (current === null) {
       current = { col, text: '', color, bold };
       runs.push(current);
     }
     current.text += ch;
-    col += charWidth(cp);
+    col += displayWidth(ch);
     i += ch.length;
   }
   return runs;
 }
+
+// ------------------------------------------------------------------ frames
+function captionLine([glyph, color, text], spin) {
+  return runsOf([
+    [glyph ?? spinnerGlyph(spin, true), color, false],
+    [` ${text}`, 'f', false],
+  ]);
+}
+
+const frames = [];
+let spin = 0;
+for (const [statuses, caption, hold] of STAGES) {
+  for (let i = 0; i < hold; i += 1) {
+    const opts = { color: true, unicode: true, spinnerFrame: spin, zoom: 0 };
+    const lines = renderMap(mapWith(statuses), opts).map(lineToRuns);
+    lines.push([], captionLine(caption, spin));
+    frames.push(lines);
+    spin += 1;
+  }
+}
+
+/**
+ * Which stage is on screen the moment the picture loads — index into STAGES.
+ *
+ * It needs saying explicitly, because the default is wrong and not obviously
+ * so: the frames are stacked groups whose negative animation-delays put the
+ * LAST one at t=0, so an untouched sequence opens on the end of the story — a
+ * flash of the finished green map before it resets to ghosts. Rotating the
+ * sequence puts the chosen stage in that slot instead. The loop is circular,
+ * so nothing about the story changes except where it is entered, and the same
+ * frame is the still that `prefers-reduced-motion` viewers get.
+ */
+const OPENS_ON_STAGE = 1;
+const openAt = STAGES.slice(0, OPENS_ON_STAGE).reduce((n, [, , hold]) => n + hold, 0);
+frames.push(...frames.splice(0, (openAt + 1) % frames.length));
 
 // ---------------------------------------------------------------- SVG emit
 const PALETTES = {
@@ -153,28 +208,37 @@ const CHAR_W = 7.8;
 const LINE_H = 17;
 const FONT = 13;
 const PAD = 18;
-const DT = 0.26;
+// Two knobs, and they do different jobs: DT is the frame rate — how fast the
+// spinner turns — while each stage's `hold` is how long that beat reads for.
+// Speeding the animation up means lowering DT; keeping a beat legible while
+// doing so means raising its hold.
+const DT = 0.16;
 
+const ARIA =
+  'Animated Mellos map: one declare puts the whole ghost design on screen, the nodes light up from the ' +
+  'bottom, a foundation cracks and the damage spreads upward, then green is earned back';
+
+// Spaces become U+00A0 so a run of them survives as layout rather than being
+// collapsed by an SVG renderer that ignores white-space:pre.
 function escapeXml(s) {
-  return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll(' ', ' ');
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll(' ', '\u00a0');
 }
 
 function toSvg(palette) {
-  const parsed = frames.map((lines) => lines.map(lineToRuns));
-  const rows = Math.max(...parsed.map((f) => f.length));
+  const rows = Math.max(...frames.map((f) => f.length));
   const cols = Math.max(
-    ...parsed.flatMap((f) =>
-      f.map((runs) =>
-        runs.reduce((w, r) => Math.max(w, r.col + [...r.text].reduce((n, c) => n + charWidth(c.codePointAt(0)), 0)), 0),
-      ),
-    ),
+    ...frames.flatMap((f) => f.map((runs) => runs.reduce((w, r) => Math.max(w, r.col + displayWidth(r.text)), 0))),
   );
   const width = Math.round(PAD * 2 + cols * CHAR_W);
   const height = Math.round(PAD * 2 + rows * LINE_H);
   const total = (frames.length * DT).toFixed(2);
   const slice = (100 / frames.length).toFixed(4);
 
-  const groups = parsed
+  const groups = frames
     .map((frame, fi) => {
       const texts = frame
         .map((runs, li) => {
@@ -192,7 +256,7 @@ function toSvg(palette) {
     })
     .join('\n');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" font-family="ui-monospace,'Cascadia Mono',Consolas,'JetBrains Mono',Menlo,monospace" font-size="${FONT}" aria-label="Animated Mellos map: ghost design, spinner climbing the layers, all green, a regression spreading upward, honest recovery">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" font-family="ui-monospace,'Cascadia Mono',Consolas,'JetBrains Mono',Menlo,monospace" font-size="${FONT}" aria-label="${ARIA}">
 <style>
 text{white-space:pre;font-variant-ligatures:none}
 .d{fill:${palette.d}}.f{fill:${palette.f}}.g{fill:${palette.g}}.a{fill:${palette.a}}.r{fill:${palette.r}}
