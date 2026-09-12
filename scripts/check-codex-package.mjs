@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Verify the actual distribution over stdio in two independent projects. */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,8 @@ import { packageCodex } from './package-codex.mjs';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundle = packageCodex(root);
 const expectedVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
-const temporary = mkdtempSync(join(tmpdir(), 'mellos-codex-check-'));
+// Node's child cwd resolves macOS /var to /private/var; compare the same path.
+const temporary = realpathSync(mkdtempSync(join(tmpdir(), 'mellos-codex-check-')));
 
 async function checkProject(name) {
   const project = join(temporary, name);
