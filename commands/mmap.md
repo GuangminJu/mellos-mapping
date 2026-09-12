@@ -56,17 +56,15 @@ Follow the platform-appropriate route:
    the map open), or for the default page. The
    launcher identifies the Windows Terminal window hosting THIS session
    (console-title nonce probe), brings it to the foreground, and splits it
-   vertically — the map lands beside the conversation even with several
-   terminal windows open. If the session window cannot be identified or
-   focused (session tab inactive, screen locked, not hosted in Windows
-   Terminal), it deterministically falls back to a dedicated window named
-   "mellos-mapping" — never a random window — and its output says which
-   mode it used and why; relay that to the user.
+   vertically, then returns keyboard focus to the conversation. If the session
+   window cannot be identified or focused, report that failure and ask the user
+   to activate this conversation's PowerShell tab before retrying. Do not open
+   a separate window unless the user explicitly asks for one.
 
    Flags: `--page <slug>` names the page to show first. Once open, the pane
    AUTO-FOLLOWS the page being written (the map the agent is operating on),
    so it tracks the work by itself; the user can toggle that with the `f`
-   key, and `--no-follow` starts it off. When a watcher for the project is
+   key, and `--no-follow` starts it off. When a watcher bound to this console is
    ALREADY running, the launcher does not open another pane — it retargets
    the existing one (output says `refocused=<slug>`, picked up within a
    poll tick); rerun with `--page` when the user asks to see a specific
@@ -85,8 +83,8 @@ Follow the platform-appropriate route:
    deletes that page's file. `mmap_remove {pages: [...]}` does the same from
    a tool call — with the user behind it, never on your own initiative.
 
-   The user also has the pane on a toggle of their own: `mmap` typed in any
-   terminal of the project opens it, and `mmap` again closes it. So a pane
+   The user also has the pane on a toggle of their own: `mmap` typed in the
+   current console opens its pane, and `mmap` again closes that pane. So a pane
    that disappears mid-session is a decision, not a crash — say so rather
    than reopening it uninvited.
 

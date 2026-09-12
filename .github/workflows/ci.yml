@@ -2,15 +2,16 @@
 # guard that the committed dist/ really is the build of the committed src/
 # (plugin installs clone the repo and run nothing, so dist drift would ship).
 #
-# `npm run verify` ends in `check:package`, which packs the tarball through
+# `npm run verify` includes `check:package`, which packs the tarball through
 # the real prepack lifecycle and fails if any `exports`/`bin` target is
 # missing from it — the npm half of the same "what ships is what was built"
 # guarantee the dist diff gives the plugin half.
+# It also checks the Codex distribution over stdio in isolated projects.
 name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]
   pull_request:
 
 jobs:
@@ -24,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run verify

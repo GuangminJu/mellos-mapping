@@ -617,7 +617,9 @@ var SGR = {
   greenDim: "32;2",
   // done, but nothing behind the claim: green, not fully lit
   red: "31",
-  faint: "90"
+  faint: "90",
+  focus: "97"
+  // bright foreground without changing font weight
 };
 var ANSI_RESET = "\x1B[0m";
 var UP = 1;
@@ -737,7 +739,7 @@ var Canvas = class {
         } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
           ch = " ";
         }
-        const params = ch === " " ? "" : isWire ? c.bright ? "1" : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
+        const params = ch === " " ? "" : isWire ? c.bright ? SGR.focus : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
         if (opts.color && params !== open) {
           line += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
           open = params;
@@ -1086,6 +1088,7 @@ function drawBands(canvas, columns, rows, wiredWidth, totalWidth) {
 function drawBox(canvas, box, opts, neutral, face, focused = false) {
   const { node, x, y, w } = box;
   const skin = neutral ? neutralSkin(opts.unicode) : skinFor(face, opts.unicode);
+  const borderStyle = focused ? "focus" : skin.style;
   const slotGlyph = neutral ? neutralGlyph(node, opts.unicode) : glyphFor(face, opts);
   if (box.borderless) {
     canvas.text(x + 1, y, slotGlyph, skin.style, true);
@@ -1093,18 +1096,18 @@ function drawBox(canvas, box, opts, neutral, face, focused = false) {
   }
   const inner = w - 2;
   const pad = box.pad === 1 ? " " : "";
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
-  canvas.text(x, y + 1, skin.v, skin.style, focused);
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], borderStyle);
+  canvas.text(x, y + 1, skin.v, borderStyle);
   canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  canvas.text(x + w - 1, y + 1, skin.v, borderStyle);
   for (let i = 0; i < box.extra.length; i++) {
     const row = box.extra[i];
     const yy = y + 2 + i;
-    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x, yy, skin.v, borderStyle);
     canvas.text(x + 1, yy, row.text, row.style);
-    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+    canvas.text(x + w - 1, yy, skin.v, borderStyle);
   }
-  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], borderStyle);
 }
 function drawEdges(canvas, edges, rows, opts) {
   for (const edge of edges) {
@@ -1283,7 +1286,27 @@ function layoutRows(columns, geo, gapRowCount, hasTitle, hasLanes) {
 
 // src/render/render.ts
 function renderMapWindow(map, opts, viewport) {
-  const built = buildCanvas(map, opts);
+  return renderSceneWindow(prepareScene(map, opts), opts, viewport);
+}
+function createWindowRenderer() {
+  let previous;
+  let frame;
+  return (map, opts, viewport) => {
+    const zoom = opts.zoom ?? ZOOM_DEFAULT;
+    if (previous?.map !== map || previous.unicode !== opts.unicode || previous.zoom !== zoom) {
+      previous = { map, unicode: opts.unicode, zoom, scene: prepareScene(map, opts) };
+    }
+    const scene = previous.scene;
+    if (frame?.scene !== scene || frame.spinner !== opts.spinnerFrame || frame.focus !== opts.focus || frame.color !== opts.color) {
+      frame = { scene, spinner: opts.spinnerFrame, focus: opts.focus, color: opts.color, built: paint(scene, opts) };
+    }
+    return emitWindow(frame.built, opts, viewport);
+  };
+}
+function renderSceneWindow(scene, opts, viewport) {
+  return emitWindow(paint(scene, opts), opts, viewport);
+}
+function emitWindow(built, opts, viewport) {
   return {
     lines: built.canvas.emit(opts, viewport),
     contentWidth: built.canvas.width,
@@ -1291,26 +1314,40 @@ function renderMapWindow(map, opts, viewport) {
     hits: built.hits
   };
 }
-function buildCanvas(map, opts) {
+function prepareScene(map, opts) {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
   const drawn = aggregated ?? oriented;
-  return paint(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo, unverifiedDoneIds(oriented, drawn));
+  const unverified = unverifiedDoneIds(oriented, drawn);
+  if (drawn.layers.length === 0) return { map: drawn, unverified };
+  return { map: drawn, unverified, geometry: prepareGeometry(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo) };
 }
-function paint(map, opts, geo, unverified) {
-  const canvas = new Canvas();
-  if (map.layers.length === 0) {
-    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
-    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return { canvas, hits: [] };
-  }
+function prepareGeometry(map, opts, geo) {
   const neutral = isNeutralKind(map);
   const columns = layoutColumns(map, geo, opts.unicode, neutral);
   const routing = routeEdges(map, columns);
   const rows = layoutRows(columns, geo, routing.gapRowCount, map.title !== void 0, map.lanes.length > 0);
   const wiredWidth = routing.fallbackCount > 0 ? columns.contentWidth + 2 + routing.fallbackCount * 2 : columns.contentWidth;
   const totalWidth = wiredWidth + Math.max(...columns.bandLabel.map(displayWidth));
+  const hits = [...rows.boxOf.values()].map((b) => ({
+    id: b.node.id,
+    x: b.x,
+    y: b.y,
+    w: b.w,
+    h: b.h
+  }));
+  return { neutral, columns, routing, rows, wiredWidth, totalWidth, hits };
+}
+function paint(scene, opts) {
+  const { map, unverified, geometry } = scene;
+  const canvas = new Canvas();
+  if (geometry === void 0) {
+    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
+    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
+    return { canvas, hits: [] };
+  }
+  const { neutral, columns, routing, rows, wiredWidth, totalWidth, hits } = geometry;
   if (map.title !== void 0) drawTitle(canvas, map.title);
   drawLaneHeaders(canvas, map, columns, rows);
   drawBands(canvas, columns, rows, wiredWidth, totalWidth);
@@ -1321,13 +1358,6 @@ function paint(map, opts, geo, unverified) {
   }
   drawEdges(canvas, routing.edges, rows, opts);
   drawLegend(canvas, map, opts, rows.legendY, neutral, unverified.size > 0);
-  const hits = [...rows.boxOf.values()].map((b) => ({
-    id: b.node.id,
-    x: b.x,
-    y: b.y,
-    w: b.w,
-    h: b.h
-  }));
   return { canvas, hits };
 }
 
@@ -1549,7 +1579,6 @@ function parseMap(raw, path) {
 }
 
 // src/store/store.ts
-var RENAME_MAX_ATTEMPTS = 10;
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
 function sleepSync(ms) {
@@ -1564,7 +1593,7 @@ function discardTemp(tmp) {
 function errnoOf(e) {
   return e.code ?? e.message;
 }
-function writeFileAtomic(path, contents) {
+function writeAtomic(path, contents, maxAttempts) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -1580,7 +1609,7 @@ function writeFileAtomic(path, contents) {
       return ok(void 0);
     } catch (e) {
       const code = errnoOf(e);
-      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= maxAttempts) {
         discardTemp(tmp);
         return err({ kind: "save-failed", path, detail: `${code} after ${attempt} attempt(s)` });
       }
@@ -1628,11 +1657,17 @@ function deletePageFile(path) {
   }
 }
 var FOCUS_FILE_NAME = "focus";
-function focusFilePath(defaultFile) {
-  return join(dirname(defaultFile), FOCUS_FILE_NAME);
+function focusFilePath(defaultFile, pid) {
+  return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
 }
-function takeFocusRequest(defaultFile) {
-  const path = focusFilePath(defaultFile);
+function paneChannelPath(defaultFile, channel, pid) {
+  if (pid === void 0) return join(dirname(defaultFile), channel);
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid pane process id");
+  return join(viewersDirPath(defaultFile), `${pid}.${channel}`);
+}
+function takeFocusRequest(defaultFile, pid) {
+  const targeted = pid === void 0 ? void 0 : focusFilePath(defaultFile, pid);
+  const path = targeted !== void 0 && existsSync(targeted) ? targeted : focusFilePath(defaultFile);
   let raw;
   try {
     raw = readFileSync(path, "utf8");
@@ -1657,18 +1692,19 @@ function takeFocusRequest(defaultFile) {
   return id.ok ? { page: id.value } : void 0;
 }
 var QUIT_FILE_NAME = "quit";
-function quitFilePath(defaultFile) {
-  return join(dirname(defaultFile), QUIT_FILE_NAME);
+function quitFilePath(defaultFile, pid) {
+  return paneChannelPath(defaultFile, QUIT_FILE_NAME, pid);
 }
-function takeQuitRequest(defaultFile) {
-  const path = quitFilePath(defaultFile);
+function takeQuitRequest(defaultFile, pid) {
+  const targeted = pid === void 0 ? void 0 : quitFilePath(defaultFile, pid);
+  const path = targeted !== void 0 && existsSync(targeted) ? targeted : quitFilePath(defaultFile);
   let raw;
   try {
     raw = readFileSync(path, "utf8");
   } catch {
     return false;
   }
-  sweepQuitRequest(defaultFile);
+  sweepQuitRequest(defaultFile, path === targeted ? pid : void 0);
   let parsed;
   try {
     parsed = JSON.parse(stripBom(raw));
@@ -1677,9 +1713,9 @@ function takeQuitRequest(defaultFile) {
   }
   return isRecord2(parsed);
 }
-function sweepQuitRequest(defaultFile) {
+function sweepQuitRequest(defaultFile, pid) {
   try {
-    rmSync(quitFilePath(defaultFile), { force: true });
+    rmSync(quitFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
@@ -1693,9 +1729,9 @@ function viewerFilePath(defaultFile, pid) {
   return join(viewersDirPath(defaultFile), `${pid}.json`);
 }
 function publishViewer(defaultFile, pid, report) {
-  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow };
-  return writeFileAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}
-`);
+  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow, owner: report.owner };
+  return writeAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}
+`, 1);
 }
 function retireViewer(defaultFile, pid) {
   try {
@@ -1841,6 +1877,92 @@ function parseInput(chunk) {
     i += 1;
   }
   return { events, rest: "" };
+}
+
+// src/watch/terminal-session.ts
+var HIDE_CURSOR = "\x1B[?25l";
+var SHOW_CURSOR = "\x1B[?25h";
+var ENTER_SCREEN = "\x1B[?1049h";
+var LEAVE_SCREEN = "\x1B[?1049l";
+var CLEAR_SCREEN = "\x1B[H\x1B[2J";
+var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
+var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
+var RESET = "\x1B[0m";
+function terminalRestoreSequence(mouseActive, alternateScreen = false) {
+  return (mouseActive ? MOUSE_OFF : "") + RESET + (alternateScreen ? LEAVE_SCREEN : "") + SHOW_CURSOR + (alternateScreen ? "" : "\n");
+}
+function openTerminalSession(options) {
+  const { interactive, write } = options;
+  const mouseActive = interactive && options.mouse;
+  write((interactive ? ENTER_SCREEN : "") + HIDE_CURSOR + CLEAR_SCREEN + (mouseActive ? MOUSE_ON : ""));
+  const timer = mouseActive ? setInterval(() => write(HIDE_CURSOR + MOUSE_ON), 1e3) : void 0;
+  timer?.unref();
+  let closed = false;
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      clearInterval(timer);
+      write(terminalRestoreSequence(mouseActive, interactive));
+    }
+  };
+}
+
+// src/watch/frame-output.ts
+function frameDifference(previous, next) {
+  const compatible = previous?.columns === next.columns;
+  let output = "";
+  for (let row = 0; row < Math.max(next.rows.length, previous?.rows.length ?? 0); row++) {
+    const text = next.rows[row] ?? "";
+    if (compatible && text === previous?.rows[row]) continue;
+    output += `\x1B[${row + 1};1H${text}\x1B[0m\x1B[K`;
+  }
+  return output;
+}
+function createFrameOutput(port) {
+  let previous;
+  let latest;
+  let pending;
+  let unsubscribe;
+  let closed = false;
+  const flush = () => {
+    if (closed || unsubscribe !== void 0 || pending === void 0) return;
+    const frame = pending;
+    pending = void 0;
+    const output = frameDifference(previous, frame);
+    if (output === "") return;
+    previous = frame;
+    if (!port.write(output)) {
+      unsubscribe = port.onDrain(() => {
+        unsubscribe?.();
+        unsubscribe = void 0;
+        flush();
+      });
+    }
+  };
+  const refresh = setInterval(() => {
+    previous = void 0;
+    pending = latest;
+    flush();
+  }, 1e3);
+  refresh.unref();
+  return {
+    present(frame) {
+      if (closed) return;
+      latest = pending = frame;
+      flush();
+    },
+    invalidate() {
+      previous = void 0;
+    },
+    close() {
+      closed = true;
+      clearInterval(refresh);
+      unsubscribe?.();
+      unsubscribe = void 0;
+      pending = latest = previous = void 0;
+    }
+  };
 }
 
 // src/watch/pane-state.ts
@@ -2018,6 +2140,7 @@ function parseArgs(argv, cwd) {
   let mouse = true;
   let page;
   let follow = true;
+  let owner;
   const valueOf = (flag, raw) => raw === void 0 || raw.startsWith("--") ? err({ kind: "missing-value", flag }) : ok(raw);
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -2034,6 +2157,14 @@ function parseArgs(argv, cwd) {
         const parsed = makePageId(value.value);
         if (!parsed.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed.error.rule });
         page = parsed.value;
+        break;
+      }
+      case "--owner": {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed.error.rule });
+        owner = parsed.value;
         break;
       }
       case "--interval": {
@@ -2062,7 +2193,7 @@ function parseArgs(argv, cwd) {
         return err({ kind: "unknown-flag", flag });
     }
   }
-  return ok({ file, intervalMs, unicode, color, mouse, page, follow });
+  return ok({ file, intervalMs, unicode, color, mouse, page, follow, ...owner === void 0 ? {} : { owner } });
 }
 function readPage(file) {
   try {
@@ -2071,9 +2202,9 @@ function readPage(file) {
     return err({ kind: "unreadable", path: file, detail: e.code ?? e.message });
   }
 }
-function renderWindow(map, opts, viewport) {
+function renderWindow(map, opts, viewport, render = renderMapWindow) {
   try {
-    return ok(renderMapWindow(map, opts, viewport));
+    return ok(render(map, opts, viewport));
   } catch (e) {
     return err(`this map could not be drawn: ${e.message}`);
   }
@@ -2090,17 +2221,10 @@ function dividerRow(width, unicode, follow) {
   }
   return bar;
 }
-var HIDE_CURSOR = "\x1B[?25l";
-var SHOW_CURSOR = "\x1B[?25h";
 var CLEAR_ALL = "\x1B[H\x1B[2J";
 var HOME = "\x1B[H";
 var ERASE_LINE_END = "\x1B[K";
-var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
-var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
-var RESET = "\x1B[0m";
-function terminalRestoreSequence(mouseActive) {
-  return (mouseActive ? MOUSE_OFF : "") + SHOW_CURSOR + RESET + "\n";
-}
+var RESET2 = "\x1B[0m";
 var PANEL_CONTENT_ROWS = 6;
 var PANEL_ROWS_MIN = 2;
 var MAP_ROWS_MIN = 4;
@@ -2300,7 +2424,7 @@ function waitingInfo(s, width) {
 }
 function splashFrame(notice, info, frame, width, height, unicode, color) {
   if (width < 24 || height < info.length + 3) return void 0;
-  const dim = (s) => color ? `\x1B[90m${s}${RESET}` : s;
+  const dim = (s) => color ? `\x1B[90m${s}${RESET2}` : s;
   const spinner = SPINNER_FRAMES[unicode ? "unicode" : "ascii"];
   const status = fitWidth(`${spinner[frame % spinner.length]} ${notice}`, Math.max(1, width - 2));
   const statusIndent = " ".repeat(Math.max(0, Math.floor((width - displayWidth(status)) / 2)));
@@ -2339,8 +2463,10 @@ ${USAGE}`);
     process.exit(1);
   }
   const cfg = parsed.value;
+  const renderScene = createWindowRenderer();
   if (migrateLegacyStore(cfg.file)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
   sweepQuitRequest(cfg.file);
+  sweepQuitRequest(cfg.file, process.pid);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";
@@ -2449,11 +2575,27 @@ ${USAGE}`);
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
   const publishPresence = () => {
-    publishViewer(cfg.file, process.pid, viewerReportOf(pane, cfg.file));
+    publishViewer(cfg.file, process.pid, {
+      ...viewerReportOf(pane, cfg.file),
+      ...cfg.owner === void 0 ? {} : { owner: cfg.owner }
+    });
   };
-  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ""));
+  if (interactive) process.stdin.setRawMode(true);
+  const terminal = openTerminalSession({ interactive, mouse: cfg.mouse, write: (text) => process.stdout.write(text) });
+  const frameOutput = interactive ? createFrameOutput({
+    write: (text) => process.stdout.write(text),
+    onDrain: (ready) => {
+      process.stdout.once("drain", ready);
+      return () => {
+        process.stdout.off("drain", ready);
+      };
+    }
+  }) : void 0;
+  let paintTimer;
   process.on("exit", () => {
-    process.stdout.write(terminalRestoreSequence(mouseActive));
+    clearTimeout(paintTimer);
+    frameOutput?.close();
+    terminal.close();
     retireViewer(cfg.file, process.pid);
   });
   const quit = () => process.exit(0);
@@ -2465,7 +2607,17 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
 `);
     process.exit(1);
   });
+  const sceneOptions = () => ({
+    color: cfg.color,
+    unicode: cfg.unicode,
+    zoom,
+    focus: hoverId ?? selectedId,
+    // A spinner on another page must not invalidate this completed picture.
+    spinnerFrame: map?.nodes.some((node) => node.status === "in-progress") ? spinnerFrame : 0
+  });
   const paint2 = () => {
+    clearTimeout(paintTimer);
+    paintTimer = void 0;
     const cols = process.stdout.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
     panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
@@ -2477,8 +2629,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     if (map !== void 0) {
       const rendered = renderWindow(
         map,
-        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
-        { x: offsetX, y: offsetY, width: viewW, height: viewH }
+        sceneOptions(),
+        { x: offsetX, y: offsetY, width: viewW, height: viewH },
+        renderScene
       );
       if (!rendered.ok) {
         body = ["", fitWidth(`  ! ${rendered.error}`, viewW), ""];
@@ -2528,9 +2681,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     }
     const separator = dividerRow(viewW, cfg.unicode, pane.follow);
     const panelRows = [
-      cfg.color ? `\x1B[90m${separator}${RESET}` : separator,
+      cfg.color ? `\x1B[90m${separator}${RESET2}` : separator,
       ...panel.map(
-        (l) => cfg.color && l.sgr !== "" && l.text !== "" ? ` \x1B[${l.sgr}m${l.text}${RESET}` : ` ${l.text}`
+        (l) => cfg.color && l.sgr !== "" && l.text !== "" ? ` \x1B[${l.sgr}m${l.text}${RESET2}` : ` ${l.text}`
       )
     ];
     let tabLine;
@@ -2552,43 +2705,53 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         action: { kind: "back" }
       };
       lastTabSegments = [head, tail];
-      tabLine = lastTabSegments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
+      tabLine = lastTabSegments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET2}` : s.text).join("");
     } else if (tabRows() > 0) {
       const segments = pageTabRow(pageTabsOf(lastTabFiles), viewW, cfg.unicode, tabScroll, mouseActive);
       lastTabSegments = segments;
-      tabLine = segments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET}` : s.text).join("");
+      tabLine = segments.map((s) => cfg.color && s.sgr !== "" ? `\x1B[${s.sgr}m${s.text}${RESET2}` : s.text).join("");
     } else {
       lastTabSegments = [];
     }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
     const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 x delete page \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
-    const footer = cfg.color ? `\x1B[90m${footerText}${RESET}` : footerText;
-    let frame = HOME;
-    if (tabLine !== void 0) frame += tabLine + ERASE_LINE_END + "\n";
-    for (let i = 0; i < viewH; i++) frame += (body[i] ?? "") + ERASE_LINE_END + "\n";
-    for (const row of panelRows) frame += row + ERASE_LINE_END + "\n";
-    frame += footer + ERASE_LINE_END;
-    if (frame !== lastFrame) {
-      process.stdout.write(frame);
-      lastFrame = frame;
+    const footer = cfg.color ? `\x1B[90m${footerText}${RESET2}` : footerText;
+    const rows = [
+      ...tabLine === void 0 ? [] : [tabLine],
+      ...Array.from({ length: viewH }, (_, i) => body[i] ?? ""),
+      ...panelRows,
+      footer
+    ];
+    if (frameOutput !== void 0) {
+      frameOutput.present({ columns: cols, rows });
+    } else {
+      const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join("\n");
+      if (frame !== lastFrame) {
+        process.stdout.write(frame);
+        lastFrame = frame;
+      }
     }
+  };
+  const requestPaint = () => {
+    paintTimer ??= setTimeout(paint2, 16);
   };
   const handleResize = () => {
     lastCols = process.stdout.columns ?? lastCols;
     lastRows = process.stdout.rows ?? lastRows;
     lastFrame = "";
+    frameOutput?.invalidate();
     process.stdout.write(CLEAR_ALL);
     paint2();
   };
   const tick = () => {
-    if (takeQuitRequest(cfg.file)) quit();
+    if (takeQuitRequest(cfg.file, process.pid)) quit();
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
     const discovered = listPageFiles(cfg.file);
     const files = discovered.length > 0 ? discovered : [cfg.file];
-    const request = takeFocusRequest(cfg.file);
+    const request = takeFocusRequest(cfg.file, process.pid);
     const previous = pane.activeFile;
     const scanned = scan(pane, {
       files,
@@ -2649,7 +2812,6 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     tick();
   };
   if (interactive) {
-    process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
@@ -2693,8 +2855,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             zoom = next;
             const measured = renderWindow(
               map,
-              { color: false, unicode: cfg.unicode, spinnerFrame: 0, zoom },
-              { x: 0, y: 0, width: 0, height: 0 }
+              sceneOptions(),
+              { x: 0, y: 0, width: 0, height: 0 },
+              renderScene
             );
             if (!measured.ok) {
               dirty = true;
@@ -2710,6 +2873,8 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             );
             offsetX = moved.x;
             offsetY = moved.y;
+            lastHits = sized.hits;
+            lastContent = { w: sized.contentWidth, h: sized.contentHeight };
             dirty = true;
             break;
           }
@@ -2829,7 +2994,11 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             break;
         }
       }
-      if (dirty) paint2();
+      if (dirty) {
+        const motionOnly = parsed2.events.every((event) => event.kind === "mouse-move" || event.kind === "mouse-drag");
+        if (motionOnly) requestPaint();
+        else paint2();
+      }
     });
     process.stdout.on("resize", handleResize);
   }
@@ -2878,7 +3047,6 @@ export {
   renderWindow,
   splashFrame,
   tabScrollFor,
-  terminalRestoreSequence,
   topLevelFiles,
   usableColumns,
   viewerReportOf,

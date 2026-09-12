@@ -16,7 +16,7 @@
  * machine-readable report on top.
  *
  * --page <slug> opens the map ON that page (the effort under discussion, not
- * whatever page the store lists first). With a watcher already running it
+ * whatever page the store lists first). With a watcher owned by this console already running it
  * writes the one-shot focus file instead — the existing pane retargets within
  * a poll tick — so re-running with --page is also how you steer an open pane.
  * Every other flag belongs to the WATCHER and is forwarded verbatim; an
@@ -38,9 +38,10 @@ import {
   launchedAsEntry,
   loadPluginPaths,
   placePane,
+  preparePane,
+  awaitNewPane,
   pluginRootOf,
   takeWatcherFlag,
-  paneIsOpen,
   writeFocusRequest,
 } from './pane-core.mjs';
 
@@ -115,28 +116,39 @@ async function main() {
 
   const mapFile = join(cfg.projectDir, store.STATE_FILE_RELATIVE_PATH);
 
-  if (!cfg.force && paneIsOpen(store, mapFile)) {
+  const prepared = preparePane(cfg, store, mapFile);
+  if (!prepared.ok) {
+    console.error(prepared.error);
+    process.exit(1);
+  }
+  const context = prepared.value;
+  if (!cfg.force && context.viewer) {
     if (cfg.pageSlug !== undefined) {
-      writeFocusRequest(store.focusFilePath(mapFile), cfg.pageSlug);
-      console.log(`MMAP_PANE already-open refocused=${cfg.pageSlug}`);
+      writeFocusRequest(store.focusFilePath(mapFile, context.viewer.pid), cfg.pageSlug);
+      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} refocused=${cfg.pageSlug}`);
       console.log(`A watcher for ${mapFile} is already running — asked it to show page "${cfg.pageSlug}".`);
     } else {
-      console.log('MMAP_PANE already-open');
+      console.log(`MMAP_PANE already-open pid=${context.viewer.pid}`);
       console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
     }
     process.exit(0);
   }
 
-  const placed = placePane(cfg, watchPath, mapFile);
+  const placed = placePane(cfg, watchPath, mapFile, context.target);
   if (!placed.ok) {
     console.error(placed.error);
     process.exit(1);
   }
+  const reported = await awaitNewPane(store, mapFile, context);
+  if (!reported.ok) {
+    console.error(reported.error);
+    process.exit(1);
+  }
   if (placed.value.mode === PANE_MODE.window) {
-    console.log(`MMAP_PANE mode=window name=${DEDICATED_WINDOW_NAME} reason=${placed.value.reason}`);
+    console.log(`MMAP_PANE mode=window pid=${reported.value.pid} name=${DEDICATED_WINDOW_NAME} reason=${placed.value.reason}`);
     console.log(`Map opened in the dedicated "${DEDICATED_WINDOW_NAME}" window.`);
   } else {
-    console.log(`MMAP_PANE mode=split hwnd=${placed.value.hwnd}`);
+    console.log(`MMAP_PANE mode=split pid=${reported.value.pid} hwnd=${placed.value.hwnd}`);
     console.log('Map opened beside this conversation (vertical split).');
   }
 }

@@ -29,7 +29,7 @@
  *
  * Pure helpers are exported for the spec; nothing here runs on import.
  */
-import { spawnSync } from 'node:child_process';
+import * as terminal from './terminal-session.mjs';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -190,229 +190,58 @@ export function paneCommand(cfg, watchPath, mapFile) {
   return cmd;
 }
 
-/** Quote one value into a PowerShell single-quoted string literal. */
-export function powerShellQuote(value) {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-/**
- * Script that counts running watchers of `mapFile`.
- *
- * String.IndexOf, not `-like`: a wildcard match treats `[`, `]`, `?` and `*`
- * in the path as pattern syntax, so a project under `C:\work\[wip]\app` never
- * matched its own watcher and every /mmap opened another pane. Ordinal
- * case-insensitive keeps the old matching behavior for Windows paths that
- * differ only in case.
- */
-export function watcherProbeScript(mapFile) {
-  return (
-    `$ErrorActionPreference = 'SilentlyContinue'\n` +
-    `$needle = ${powerShellQuote(mapFile)}\n` +
-    `$w = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {\n` +
-    `  $_.CommandLine -and\n` +
-    `  $_.CommandLine.IndexOf('watch.mjs', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and\n` +
-    `  $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0\n` +
-    `})\n` +
-    `Write-Output "WATCHERS=$($w.Count)"`
-  );
-}
-
-// Prints IDENT=<hwnd|0> and, when identified, FOCUS=<1|0>.
-const IDENTIFY_AND_FOCUS = String.raw`
-$ErrorActionPreference = 'SilentlyContinue'
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class MmapWin {
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lp);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
-  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("kernel32.dll")] public static extern bool FreeConsole();
-  [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint pid);
-  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool SetConsoleTitle(string title);
-  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern uint GetConsoleTitle(StringBuilder sb, uint size);
-}
-"@
-function Get-WtWindows {
-  $wins = New-Object System.Collections.ArrayList
-  $cb = {
-    param($h, $lp)
-    if ([MmapWin]::IsWindowVisible($h)) {
-      $cls = New-Object System.Text.StringBuilder 256
-      [void][MmapWin]::GetClassName($h, $cls, 256)
-      if ($cls.ToString() -eq 'CASCADIA_HOSTING_WINDOW_CLASS') {
-        $t = New-Object System.Text.StringBuilder 512
-        [void][MmapWin]::GetWindowText($h, $t, 512)
-        [void]$wins.Add(@{ hwnd = $h.ToInt64(); title = $t.ToString() })
-      }
-    }
-    return $true
-  }
-  [void][MmapWin]::EnumWindows($cb, [IntPtr]::Zero)
-  return ,$wins
-}
-
-$ancestors = @()
-$p = $PID
-for ($i = 0; $i -lt 12 -and $p; $i++) {
-  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$p"
-  if (-not $proc) { break }
-  if ($i -gt 0) { $ancestors += [uint32]$proc.ProcessId }
-  $p = $proc.ParentProcessId
-}
-
-# The agent CLI (claude/codex/...) is some ancestor holding the console that a
-# WT window renders; hidden-console ancestors just never light a window up.
-$nonce = "__NONCE__"
-$hwnd = [IntPtr]::Zero
-foreach ($apid in $ancestors) {
-  [void][MmapWin]::FreeConsole()
-  if (-not [MmapWin]::AttachConsole($apid)) { continue }
-  $sb = New-Object System.Text.StringBuilder 1024
-  [void][MmapWin]::GetConsoleTitle($sb, 1024)
-  $orig = $sb.ToString()
-  for ($i = 0; $i -lt 6 -and $hwnd -eq [IntPtr]::Zero; $i++) {
-    [void][MmapWin]::SetConsoleTitle($nonce)
-    Start-Sleep -Milliseconds 60
-    foreach ($w in (Get-WtWindows)) {
-      if ($w.title -like "*$nonce*") { $hwnd = [IntPtr]$w.hwnd; break }
-    }
-  }
-  Start-Sleep -Milliseconds 100
-  [void][MmapWin]::SetConsoleTitle($orig)
-  Start-Sleep -Milliseconds 200
-  [void][MmapWin]::FreeConsole()
-  if ($hwnd -ne [IntPtr]::Zero) { break }
-}
-
-if ($hwnd -eq [IntPtr]::Zero) { Write-Output 'IDENT=0'; exit 0 }
-Write-Output "IDENT=$($hwnd.ToInt64())"
-
-if ([MmapWin]::IsIconic($hwnd)) { [void][MmapWin]::ShowWindow($hwnd, 9) }
-$focused = $false
-[void][MmapWin]::SetForegroundWindow($hwnd)
-Start-Sleep -Milliseconds 150
-if ([MmapWin]::GetForegroundWindow() -eq $hwnd) { $focused = $true }
-if (-not $focused) {
-  [MmapWin]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)
-  [void][MmapWin]::SetForegroundWindow($hwnd)
-  [MmapWin]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
-  Start-Sleep -Milliseconds 150
-  if ([MmapWin]::GetForegroundWindow() -eq $hwnd) { $focused = $true }
-}
-if (-not $focused) {
-  $fgpid = 0
-  $fgThread = [MmapWin]::GetWindowThreadProcessId([MmapWin]::GetForegroundWindow(), [ref]$fgpid)
-  $myThread = [MmapWin]::GetCurrentThreadId()
-  [void][MmapWin]::AttachThreadInput($myThread, $fgThread, $true)
-  [void][MmapWin]::BringWindowToTop($hwnd)
-  [void][MmapWin]::SetForegroundWindow($hwnd)
-  [void][MmapWin]::AttachThreadInput($myThread, $fgThread, $false)
-  Start-Sleep -Milliseconds 150
-  if ([MmapWin]::GetForegroundWindow() -eq $hwnd) { $focused = $true }
-}
-Write-Output "FOCUS=$(if ($focused) { 1 } else { 0 })"
-`;
-
-/** How long the window probe may take before it is abandoned, in ms. */
-const PROBE_TIMEOUT_MS = 30_000;
-/** How long `wt` may take to open a pane before it is abandoned, in ms. */
-const WT_TIMEOUT_MS = 15_000;
-/** Fraction of the session window the split pane takes. */
-const SPLIT_SIZE = '0.42';
-/** Name of the window the pane falls back to — deterministic, never a random one. */
+/** Explicitly requested independent window; default opens never fall back here. */
 export const DEDICATED_WINDOW_NAME = 'mellos-mapping';
+const SPLIT_SIZE = '0.42';
 
-function runPowerShell(script) {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  const r = spawnSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-    { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS, windowsHide: true },
-  );
-  return r.stdout ?? '';
+/** Pure reuse rule: a live viewer belongs to a console, not just to a project. */
+export function selectPaneViewer(viewers, owners) {
+  return viewers.find((viewer) => viewer.owner !== undefined && owners.includes(viewer.owner));
 }
 
-/**
- * Is a pane of `mapFile` already open?
- *
- * One pane per map file is enough — watch.mjs redraws on change for every
- * viewer of the same file, and piling up panes on repeated /mmap is noise.
- *
- * The panes answer this themselves: each one refreshes a report in the
- * store while it is up (the viewers channel, src/store/store.ts), so a live
- * report IS a live pane. Exact, instant, cross-platform, and the same
- * answer the MCP server reads when it tells an assistant whether anybody is
- * looking — three surfaces, one truth.
- *
- * The process scan below is the fallback for exactly one case: a watcher
- * that started before this version and publishes no report. It costs a
- * PowerShell round trip and only ever runs on the path that is about to
- * open a window anyway. It can go once no pre-0.20.2 pane can still be up.
- *
- * @param store - the store module (dist/store-paths.mjs), the plugin's one
- *   definition of where anything lives.
- */
-export function paneIsOpen(store, mapFile) {
-  if (store.readLiveViewers(mapFile, Date.now()).length > 0) return true;
-  if (process.platform !== 'win32') return false;
-  const m = runPowerShell(watcherProbeScript(mapFile)).match(/WATCHERS=(\d+)/);
-  return m !== null && Number(m[1]) > 0;
+/** Resolve identity before deciding whether to reuse, open or toggle. */
+export function preparePane(cfg, store, mapFile, io = terminal) {
+  const inspected = cfg.mode === PANE_MODE.window
+    ? { ok: true, value: { owners: ['window'], owner: 'window' } }
+    : io.inspectSession();
+  if (!inspected.ok) return inspected;
+  const session = inspected.value;
+  const viewers = store.readLiveViewers(mapFile, Date.now());
+  const viewer = selectPaneViewer(viewers, session.owners);
+  if (cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
+    return { ok: false, error: 'Could not identify this conversation’s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window.' };
+  }
+  return { ok: true, value: {
+    target: { mode: cfg.mode, owner: session.owner ?? viewer?.owner, hwnd: session.hwnd },
+    viewer,
+    previousPids: viewers.map((item) => item.pid),
+  } };
 }
 
-function openWt(args, what) {
-  const r = spawnSync('wt', args, { stdio: 'ignore', timeout: WT_TIMEOUT_MS, windowsHide: true });
-  return r.status === 0
-    ? { ok: true, value: undefined }
-    : { ok: false, error: `wt failed to ${what} (exit ${r.status ?? 'timeout'}) — is Windows Terminal installed?` };
+/** Compose a verified target with the watcher payload. Never changes the requested mode. */
+export function placePane(cfg, watchPath, mapFile, target, io = terminal) {
+  const payload = [...paneCommand(cfg, watchPath, mapFile), '--owner', target.owner];
+  if (target.mode === PANE_MODE.window) {
+    const opened = io.openWt(['-w', DEDICATED_WINDOW_NAME, 'nt', ...payload], 'open the requested window');
+    return opened.ok ? { ok: true, value: { ...target, reason: 'requested' } } : opened;
+  }
+  const focused = io.focusSession(target.hwnd);
+  if (!focused.ok) return focused;
+  const opened = io.openWt([
+    '-w', '0', 'sp', '-V', '--size', SPLIT_SIZE, ...payload,
+    ';', 'move-focus', 'previous',
+  ], 'split the session window');
+  return opened.ok ? { ok: true, value: target } : opened;
 }
 
-/**
- * Open the pane, wherever it can honestly be put.
- *
- * `--window` (cfg.mode === PANE_MODE.window) goes straight to the dedicated
- * window. Otherwise the session's own Windows Terminal window is identified
- * by a console-title nonce and brought to the foreground; only once it is
- * provably the foreground window does `wt -w 0 sp` split it, because
- * "most recently used" is the only thing `wt` can be told to target. Either
- * step failing falls back to the dedicated window — deterministic, never a
- * random one.
- *
- * @returns ok with how it was placed (the caller words the news for its own
- *   audience), or err with a message when `wt` itself refused.
- */
-export function placePane(cfg, watchPath, mapFile) {
-  const dedicated = (reason) => {
-    const opened = openWt(['-w', DEDICATED_WINDOW_NAME, 'nt', ...paneCommand(cfg, watchPath, mapFile)], 'open the dedicated window');
-    return opened.ok ? { ok: true, value: { mode: PANE_MODE.window, reason } } : opened;
-  };
-  if (cfg.mode === PANE_MODE.window) return dedicated('requested');
-
-  const nonce = `MMAP-NONCE-${process.pid}`;
-  const out = runPowerShell(IDENTIFY_AND_FOCUS.replaceAll('__NONCE__', nonce));
-  const ident = out.match(/IDENT=(\d+)/)?.[1] ?? '0';
-  if (ident === '0') return dedicated('session-window-not-identified');
-  if (!/FOCUS=1/.test(out)) return dedicated('session-window-focus-denied');
-
-  // The identified window is foreground right now, so "most recently used" is
-  // deterministically it. Known race, accepted: a user who focuses a DIFFERENT
-  // terminal window in the ~1s before wt reads its MRU state can still get the
-  // split there — a window they are at least actively in.
-  const split = openWt(
-    ['-w', '0', 'sp', '-V', '--size', SPLIT_SIZE, ...paneCommand(cfg, watchPath, mapFile)],
-    'split the session window',
-  );
-  return split.ok ? { ok: true, value: { mode: PANE_MODE.split, hwnd: ident } } : split;
+/** Wait for the newly launched, correctly bound watcher rather than an older window. */
+export async function awaitNewPane(store, mapFile, context, timeoutMs = 8_000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const viewer = store.readLiveViewers(mapFile, Date.now()).find((item) =>
+      item.owner === context.target.owner && !context.previousPids.includes(item.pid));
+    if (viewer) return { ok: true, value: viewer };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  return { ok: false, error: 'The requested pane has not reported in. Its placement is unverified; do not assume that another open map is the requested split.' };
 }

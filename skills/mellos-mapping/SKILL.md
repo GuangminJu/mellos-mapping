@@ -13,12 +13,12 @@ description: >-
 
 # Mellos Mapping — the map discipline
 
-Five MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`,
-`mmap_setup`)
+Six MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`,
+`mmap_setup`, `mmap_open`)
 maintain a **Mellos map**: a layered dependency map of the system under
 construction, persisted in `.mellos/map.json` (default page) plus
 `.mellos/pages/<slug>.json` (named pages) and rendered live in
-a terminal split pane beside the conversation. To learn whether a map already
+a terminal split pane, a desktop Markdown file panel, or an interactive local web viewer beside the conversation. To learn whether a map already
 exists — and under which page slugs — call `mmap_view`: every response ends
 with a `pages:` line naming the pages this project has and which one you are
 looking at. Never probe the default file to decide: it is absent whenever all
@@ -62,10 +62,74 @@ getting honest updates whatever the policy says.
 
 Caught mid-implementation without a map on work that deserves one? Stop and
 declare it with honest statuses (written-but-unverified is `in-progress`, not
-`done`). If the mmap tools are missing from the session, SAY SO and offer a
-restart — never silently skip the map. (Under Codex CLI, missing tools
-usually mean the server was never registered: have the user run
-`node <plugin root>/scripts/codex-register.mjs`.)
+`done`). If the mmap tools are missing from the session, explain that mapping
+is unavailable and continue the user's implementation. In Codex, look for
+tools by their `mmap_*` suffix: a host may add a server namespace. Installing
+or repairing the plugin includes running
+`node <plugin root>/scripts/codex-register.mjs`, then starting a new
+conversation. Existing installation authorization covers this registration;
+ordinary implementation work alone does not authorize changing host config.
+The plugin root is two directories above this skill's directory. See
+`<plugin root>/docs/codex.md` for Codex packaging and installation details.
+
+## Desktop document panel
+
+When the current host exposes a file side panel (for example Codex desktop's
+`open_in_codex`) and the user has not chosen a terminal or web viewer, use the Markdown
+surface. This replaces the terminal-placement instructions in step 2 below.
+
+1. Call `mmap_open {surface: "markdown", page: "<effort-slug>"}`. This generates
+   local Markdown with a colored SVG map and enables automatic preview updates
+   after successful map mutations in this project. It starts no terminal or web
+   server. Keep the JSON maps as the source; generated documents are not inputs.
+2. Pass the returned absolute `markdown:` path to the host's file-opening tool,
+   in the current conversation's right panel. With `open_in_codex`, use
+   `placement: "right"` and `target: {type: "file", path: "<returned path>"}`.
+   Do not set another conversation id unless the user asked for that placement.
+3. A generated file is not evidence that the user sees it. Report `queued`
+   opening as queued, and do not claim a live viewer or automatic UI refresh.
+   If the preview stays stale, regenerate with `mmap_open` and reopen the same
+   file. Avoid reopening after every write when the viewer already refreshes.
+4. `preview: STALE` means the map mutation succeeded but export failed. Fix
+   the export problem and regenerate; do not repeat the map mutation. A terminal
+   `pane:` report does not describe the desktop file panel.
+
+If this conversation still has the previous MCP schema after a local upgrade,
+use `node "<plugin root>/dist/preview.mjs" "<project directory>" --page <slug>`
+to generate the same files. Until a new conversation loads the updated server,
+rerun this command after map writes. Use the actual installed runtime path from
+`docs/codex.md` when the skill cache differs from the runtime install.
+
+The document contains a static vector image, module details, evidence and
+links to existing child pages. Image nodes do not support dragging, hover
+details, animated spinners or double-click navigation. Desktop rendering and
+refresh behavior belong to the host, not the plugin.
+
+## Optional interactive web panel
+
+Keep the user's chosen surface. Markdown/SVG remains available with its existing
+workflow; adding the web viewer never disables or replaces it. When the user
+asks for a web map or live interaction, call `mmap_open {surface: "web", page:
+"<effort-slug>"}`. Pass the returned `web:` URL to the host's browser-opening
+tool. In Codex use `open_in_codex` with `placement: "right"` and
+`target: {type: "browser", url: "<returned URL>"}` in the current conversation.
+Report queued opening honestly; a running local service does not prove visibility.
+
+The viewer reads the same project maps and refreshes automatically, including
+writes from older MCP clients. It supports zoom/pan, hover and pinned details,
+dependency highlighting, search/status filters, page selection, child-map
+navigation, groups, lanes, light/dark themes and confirmed page deletion.
+Manual page selection disables auto-follow; do not override a pinned page.
+Web page deletion also refreshes enabled Markdown previews.
+
+If this conversation has an older schema, run
+`node "<plugin root>/dist/web.mjs" "<project directory>" --page <slug>` and open
+the JSON response's `url`. It reuses a local service for that project; no public
+hosting or dependency download is required. Close an unused service with the
+same command plus `--stop` instead of `--page <slug>`. It also exits after five
+minutes without browser requests. Reopen with the tool/CLI after that, or after
+a plugin update. A `web: configured` report describes a runtime record, not a
+confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle details.
 
 ## The working loop
 
@@ -74,7 +138,13 @@ usually mean the server was never registered: have the user run
    layer bands (rank 0 = most primitive, at the bottom), every planned node,
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
-2. **Put the map on screen — that is YOUR job, not the user's.** Every
+2. **Put the map on screen — that is YOUR job, not the user's.** Use the
+   desktop document flow above when applicable. For terminal hosts, at the first
+   map decision in a session, ensure the requested placement with `mmap_open`
+   even if a project viewer is already reported. Use no page for this initial
+   placement check so an existing pane pinned by the user keeps its view;
+   subsequent opens name the effort's page as usual. A project-wide viewer
+   report alone does not prove this session has its right split. Every
    declare, update, remove and view answers with a `pane:` line telling you
    who is actually looking. Read it and act on it:
    - `pane: CLOSED` — nobody is. Call `mmap_open {page: "<slug>"}` at once,
@@ -87,6 +157,11 @@ usually mean the server was never registered: have the user run
      hand. Your changes are real and NOT on their screen: say so, and
      retarget with `mmap_open {page}` only if they want it moved. A pane
      with follow off is a deliberate choice — don't fight it.
+   Default open means a right split beside THIS conversation. A live viewer in
+   another window is not proof of that placement. If opening reports that the
+   source tab is inactive or Windows refused focus, relay it and ask the user
+   to activate this conversation's terminal tab before retrying. Do not retry
+   with `window: true` unless the user chose a separate window.
    Always pass the page your effort lives on. Without it a fresh pane opens
    on whichever page was written last, which after a gap is rarely the one
    under discussion — and declaring on a named page makes YOU responsible

@@ -87,6 +87,7 @@ import {
   type ZoomStep,
   ZOOM_DEFAULT,
   clampZoom,
+  createWindowRenderer,
   displayWidth,
   fitWidth,
   isNeutralKind,
@@ -117,6 +118,8 @@ import {
   takeQuitRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
+import { openTerminalSession } from './terminal-session.js';
+import { createFrameOutput } from './frame-output.js';
 import {
   type PageFault,
   type PaneState,
@@ -152,6 +155,8 @@ interface WatchConfig {
   readonly page: PageId | undefined;
   /** Start with auto-follow on (the pane switches to the page last written). */
   readonly follow: boolean;
+  /** Internal launcher binding; manual watchers may leave it unset. */
+  readonly owner?: string;
 }
 
 /** Every way a command line can be refused, as data. */
@@ -191,6 +196,7 @@ export function parseArgs(argv: readonly string[], cwd: string): Result<WatchCon
   let mouse = true;
   let page: PageId | undefined;
   let follow = true;
+  let owner: string | undefined;
   // A value that looks like a flag is a missing value: `--file --ascii` is a
   // forgotten path, not a file named "--ascii".
   const valueOf = (flag: string, raw: string | undefined): Result<string, ArgsError> =>
@@ -210,6 +216,14 @@ export function parseArgs(argv: readonly string[], cwd: string): Result<WatchCon
         const parsed = makePageId(value.value);
         if (!parsed.ok) return err({ kind: 'invalid-value', flag, raw: value.value, rule: parsed.error.rule });
         page = parsed.value;
+        break;
+      }
+      case '--owner': {
+        const value = valueOf(flag, argv[++i]);
+        if (!value.ok) return value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: 'invalid-value', flag, raw: value.value, rule: parsed.error.rule });
+        owner = parsed.value;
         break;
       }
       case '--interval': {
@@ -238,7 +252,7 @@ export function parseArgs(argv: readonly string[], cwd: string): Result<WatchCon
         return err({ kind: 'unknown-flag', flag });
     }
   }
-  return ok({ file, intervalMs, unicode, color, mouse, page, follow });
+  return ok({ file, intervalMs, unicode, color, mouse, page, follow, ...(owner === undefined ? {} : { owner }) });
 }
 
 // ---------------------------------------------------------------------------
@@ -272,9 +286,12 @@ export function readPage(file: string): Result<MellosMap, PageFault> {
  * also the longest computation in this process; a fault in it must cost the
  * frame, not the pane. The caller shows the message where the map would be.
  */
-export function renderWindow(map: MellosMap, opts: RenderOptions, viewport: Viewport): Result<WindowedRender, string> {
+export function renderWindow(
+  map: MellosMap, opts: RenderOptions, viewport: Viewport,
+  render: typeof renderMapWindow = renderMapWindow,
+): Result<WindowedRender, string> {
   try {
-    return ok(renderMapWindow(map, opts, viewport));
+    return ok(render(map, opts, viewport));
   } catch (e) {
     return err(`this map could not be drawn: ${(e as Error).message}`);
   }
@@ -300,25 +317,10 @@ export function dividerRow(width: number, unicode: boolean, follow: boolean): st
   return bar;
 }
 
-const HIDE_CURSOR = '\x1b[?25l';
-const SHOW_CURSOR = '\x1b[?25h';
 const CLEAR_ALL = '\x1b[H\x1b[2J';
 const HOME = '\x1b[H';
 const ERASE_LINE_END = '\x1b[K';
-/** any-event tracking (hover) + SGR extended coordinates */
-const MOUSE_ON = '\x1b[?1003h\x1b[?1006h';
-const MOUSE_OFF = '\x1b[?1003l\x1b[?1006l';
 const RESET = '\x1b[0m';
-
-/**
- * The escape sequences that hand the terminal back exactly as it was found:
- * mouse reporting off (only if this pane turned it on), cursor visible,
- * attributes reset. Written on every exit path there is — a pane that dies
- * without them leaves the shell reporting every mouse move as garbage.
- */
-export function terminalRestoreSequence(mouseActive: boolean): string {
-  return (mouseActive ? MOUSE_OFF : '') + SHOW_CURSOR + RESET + '\n';
-}
 
 /** Default detail-panel height; the divider drag adjusts it at runtime. */
 const PANEL_CONTENT_ROWS = 6;
@@ -911,6 +913,7 @@ function main(): void {
     process.exit(1);
   }
   const cfg = parsed.value;
+  const renderScene = createWindowRenderer();
   // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
   // Announce it on stderr before the alternate screen opens, so the move is
   // not something the user only discovers from `git status`.
@@ -922,6 +925,7 @@ function main(): void {
   // does not sweep: it cannot know when the watcher it spawns will boot, and
   // the only moment a leftover is provably not for this pane is this one.
   sweepQuitRequest(cfg.file);
+  sweepQuitRequest(cfg.file, process.pid);
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const mouseActive = interactive && cfg.mouse;
 
@@ -1105,16 +1109,29 @@ function main(): void {
    * surface the user actually reads.
    */
   const publishPresence = (): void => {
-    publishViewer(cfg.file, process.pid, viewerReportOf(pane, cfg.file));
+    publishViewer(cfg.file, process.pid, {
+      ...viewerReportOf(pane, cfg.file), ...(cfg.owner === undefined ? {} : { owner: cfg.owner }),
+    });
   };
 
-  process.stdout.write(HIDE_CURSOR + CLEAR_ALL + (mouseActive ? MOUSE_ON : ''));
+  if (interactive) process.stdin.setRawMode(true);
+  const terminal = openTerminalSession({ interactive, mouse: cfg.mouse, write: (text) => process.stdout.write(text) });
+  const frameOutput = interactive ? createFrameOutput({
+    write: (text) => process.stdout.write(text),
+    onDrain: (ready) => {
+      process.stdout.once('drain', ready);
+      return () => { process.stdout.off('drain', ready); };
+    },
+  }) : undefined;
+  let paintTimer: ReturnType<typeof setTimeout> | undefined;
   // ONE cleanup, on the one event every exit path passes through: signals,
   // the q key, a timer callback that threw, a bug nobody predicted. Handlers
   // that each restored the terminal themselves covered only the exits their
   // author thought of, and the pane has more of them than that.
   process.on('exit', () => {
-    process.stdout.write(terminalRestoreSequence(mouseActive));
+    clearTimeout(paintTimer);
+    frameOutput?.close();
+    terminal.close();
     // The pane takes its report back on the way out, so a reader learns
     // NOW that nobody is watching instead of waiting out VIEWER_STALE_MS.
     retireViewer(cfg.file, process.pid);
@@ -1129,7 +1146,15 @@ function main(): void {
     process.exit(1);
   });
 
+  const sceneOptions = (): RenderOptions => ({
+    color: cfg.color, unicode: cfg.unicode, zoom, focus: hoverId ?? selectedId,
+    // A spinner on another page must not invalidate this completed picture.
+    spinnerFrame: map?.nodes.some((node) => node.status === 'in-progress') ? spinnerFrame : 0,
+  });
+
   const paint = (): void => {
+    clearTimeout(paintTimer);
+    paintTimer = undefined;
     const cols = process.stdout.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
     // a shrunken terminal may no longer afford the dragged panel height
@@ -1143,8 +1168,9 @@ function main(): void {
     if (map !== undefined) {
       const rendered = renderWindow(
         map,
-        { color: cfg.color, unicode: cfg.unicode, spinnerFrame, focus, zoom },
+        sceneOptions(),
         { x: offsetX, y: offsetY, width: viewW, height: viewH },
+        renderScene,
       );
       if (!rendered.ok) {
         // A picture this pane cannot draw is a visible line, never a dead
@@ -1264,15 +1290,26 @@ function main(): void {
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1b[90m${footerText}${RESET}` : footerText;
 
-    let frame = HOME;
-    if (tabLine !== undefined) frame += tabLine + ERASE_LINE_END + '\n';
-    for (let i = 0; i < viewH; i++) frame += (body[i] ?? '') + ERASE_LINE_END + '\n';
-    for (const row of panelRows) frame += row + ERASE_LINE_END + '\n';
-    frame += footer + ERASE_LINE_END;
-    if (frame !== lastFrame) {
-      process.stdout.write(frame);
-      lastFrame = frame;
+    const rows = [
+      ...(tabLine === undefined ? [] : [tabLine]),
+      ...Array.from({ length: viewH }, (_, i) => body[i] ?? ''),
+      ...panelRows, footer,
+    ];
+    if (frameOutput !== undefined) {
+      frameOutput.present({ columns: cols, rows });
+    } else {
+      const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join('\n');
+      if (frame !== lastFrame) {
+        process.stdout.write(frame);
+        lastFrame = frame;
+      }
     }
+  };
+
+  // Mouse motion can arrive much faster than a terminal can display frames.
+  // Keep folding every event, but render its latest position once per 16 ms.
+  const requestPaint = (): void => {
+    paintTimer ??= setTimeout(paint, 16);
   };
 
   /**
@@ -1286,6 +1323,7 @@ function main(): void {
     lastCols = process.stdout.columns ?? lastCols;
     lastRows = process.stdout.rows ?? lastRows;
     lastFrame = '';
+    frameOutput?.invalidate();
     process.stdout.write(CLEAR_ALL);
     paint();
   };
@@ -1296,7 +1334,7 @@ function main(): void {
     // and paint nothing, and a pane still waiting for its first declare has
     // to answer the toggle exactly like one showing a map. quit() is the same
     // clean shutdown the `q` key runs — the exit hook hands the terminal back.
-    if (takeQuitRequest(cfg.file)) quit();
+    if (takeQuitRequest(cfg.file, process.pid)) quit();
 
     if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
       handleResize();
@@ -1305,7 +1343,7 @@ function main(): void {
     // discover pages; a project without page files still watches the default
     const discovered = listPageFiles(cfg.file);
     const files = discovered.length > 0 ? discovered : [cfg.file];
-    const request = takeFocusRequest(cfg.file);
+    const request = takeFocusRequest(cfg.file, process.pid);
     const previous = pane.activeFile;
     const scanned = scan(pane, {
       files,
@@ -1393,7 +1431,6 @@ function main(): void {
   };
 
   if (interactive) {
-    process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk: string) => {
@@ -1442,8 +1479,9 @@ function main(): void {
             zoom = next;
             const measured = renderWindow(
               map,
-              { color: false, unicode: cfg.unicode, spinnerFrame: 0, zoom },
+              sceneOptions(),
               { x: 0, y: 0, width: 0, height: 0 },
+              renderScene,
             );
             if (!measured.ok) {
               dirty = true; // the new zoom stands; paint() reports why it is blank
@@ -1459,6 +1497,9 @@ function main(): void {
             );
             offsetX = moved.x;
             offsetY = moved.y;
+            // A wheel burst may contain several rungs before its final paint.
+            lastHits = sized.hits;
+            lastContent = { w: sized.contentWidth, h: sized.contentHeight };
             dirty = true;
             break;
           }
@@ -1596,7 +1637,11 @@ function main(): void {
             break;
         }
       }
-      if (dirty) paint();
+      if (dirty) {
+        const motionOnly = parsed.events.every((event) => event.kind === 'mouse-move' || event.kind === 'mouse-drag');
+        if (motionOnly) requestPaint();
+        else paint(); // clicks, zoom and keys keep their immediate feedback
+      }
     });
     process.stdout.on('resize', handleResize);
   }

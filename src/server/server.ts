@@ -88,9 +88,12 @@ import {
   userConfigFilePath,
 } from '../store/store.js';
 import { applyDeclare, applyRemove, applyUpdate, summarize } from './apply.js';
+import { createPreviewPublisher, previewFile } from '../preview/publisher.js';
+import { openWebPreview, webRuntimeFile } from '../web/launcher.js';
+import { terminalHandoff } from './terminal-handoff.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.20.3';
+export const SERVER_VERSION = '0.21.0';
 
 // ---------------------------------------------------------------------------
 // the advertised schema — what a model reads BEFORE it calls
@@ -343,11 +346,11 @@ function paneLine(stateFile: string, touched: string | undefined): string {
 
 /**
  * How long the launcher may run before it is abandoned. It is the sum of what
- * the launcher itself allows — a 30s window probe plus a 15s `wt` call — so
+ * the launcher itself allows — 30s probe, 5s focus, 15s wt and 8s handshake — so
  * this timeout can only fire when the launcher has stopped answering, never
  * on a slow-but-working machine.
  */
-const LAUNCH_TIMEOUT_MS = 45_000;
+const LAUNCH_TIMEOUT_MS = 60_000;
 
 /**
  * How long to wait for the NEW pane to report itself in (the viewers channel)
@@ -439,9 +442,9 @@ function paneShows(viewers: readonly LiveViewer[], page: string | undefined): bo
 }
 
 /** Wait until a pane shows what was asked for, or until the deadline passes. */
-async function awaitPane(stateFile: string, page: string | undefined, deadlineMs: number): Promise<readonly LiveViewer[]> {
+async function awaitPane(stateFile: string, page: string | undefined, deadlineMs: number, pid?: number): Promise<readonly LiveViewer[]> {
   for (;;) {
-    const viewers = readLiveViewers(stateFile, Date.now());
+    const viewers = readLiveViewers(stateFile, Date.now()).filter((viewer) => pid === undefined || viewer.pid === pid);
     if (paneShows(viewers, page)) return viewers;
     if (Date.now() >= deadlineMs) return viewers;
     await new Promise((r) => setTimeout(r, PANE_REPORT_POLL_MS));
@@ -457,11 +460,12 @@ async function awaitPane(stateFile: string, page: string | undefined, deadlineMs
  * code, and it is the second that the user actually experiences.
  */
 export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], page: string | undefined): string {
+  const pid = launcherViewerPid(run);
+  viewers = viewers.filter((viewer) => pid === undefined || viewer.pid === pid);
   if (!run.ok) {
     return (
       `could not open the pane: ${run.output === '' ? 'the launcher failed without saying why' : run.output}\n` +
-      'Relay this to the user — on a machine without Windows Terminal the map is opened by running ' +
-      'the watcher in any second terminal or tmux split (see the plugin README).'
+      'Relay the launcher reason. A failed default split is not permission to open a separate window.'
     );
   }
   if (paneShows(viewers, page)) {
@@ -480,6 +484,12 @@ export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], pa
     'starting; the `pane:` line on your next write says whether it made it.\n' +
     run.output
   );
+}
+
+/** A placement receipt binds verification to that exact watcher. */
+function launcherViewerPid(run: LauncherRun): number | undefined {
+  const raw = /^MMAP_PANE [^\r\n]*\bpid=([1-9]\d*)(?:\s|$)/m.exec(run.output)?.[1];
+  return raw === undefined ? undefined : Number(raw);
 }
 
 interface ToolText {
@@ -522,6 +532,14 @@ function loadOrEmpty(stateFile: string): Result<MellosMap, string> {
 export function buildServer(stateFile: string, userConfigFile: string): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
   const projectConfigFile = configFilePath(stateFile);
+  const previews = createPreviewPublisher(stateFile);
+  const refreshPreview = (page: string | undefined): string => {
+    if (!previews.enabled()) return '';
+    const published = previews.refresh(page as PageId | undefined);
+    return published.ok
+      ? `\npreview: updated\nmarkdown: ${published.value.path}\nFile generated; desktop visibility is not tracked.`
+      : `\npreview: STALE — map changes were saved, but preview generation failed: ${published.error}. Retry mmap_open {surface: "markdown"}; do not repeat the map mutation.`;
+  };
 
   // The zod PAGE schema enforces the exact PageId grammar, so the cast at
   // this boundary cannot smuggle in an invalid slug.
@@ -535,7 +553,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
     const saved = saveMapFile(file, applied.value);
     if (!saved.ok) return saveFailed(saved.error);
-    return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : ''));
+    return text(summarize(applied.value) + (page !== undefined ? ` [page: ${page}]` : '') + refreshPreview(page));
   };
 
 
@@ -547,7 +565,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
    * bury the reason it did not.
    */
   const withPane = (result: ToolText, page: string | undefined): ToolText =>
-    result.isError === true ? result : text(`${result.content[0]?.text ?? ''}\n${paneLine(stateFile, page)}`);
+    result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ''}\n${existsSync(webRuntimeFile(stateFile)) ? 'web: configured — the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : paneLine(stateFile, page)}`);
   /** The named pages this project has right now, read from the store. */
   const knownPages = (): PageId[] =>
     listPageFiles(stateFile)
@@ -609,7 +627,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       if (removed.ok) deleted.push(p);
       else failed.push(`${p} (${describeStoreError(removed.error)})`);
     }
-    const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(', ') : '(none)'}`;
+    const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(', ') : '(none)'}` + (deleted.length ? refreshPreview(undefined) : '');
     if (failed.length === 0) return text(`${summary}${gone}`);
     return text(
       `${summary}${gone}; could NOT delete: ${failed.join('; ')}. ` +
@@ -963,7 +981,10 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n');
-      return text(`${picture}\n${pagesLine(stateFile, input.page)}\n${paneLine(stateFile, input.page)}`);
+      const surface = previews.enabled()
+        ? `markdown: ${previewFile(stateFile, input.page as PageId | undefined)}\nUse mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.`
+        : existsSync(webRuntimeFile(stateFile)) ? 'web: configured — use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : paneLine(stateFile, input.page);
+      return text(`${picture}\n${pagesLine(stateFile, input.page)}\n${surface}`);
     },
   );
 
@@ -972,6 +993,13 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
     {
       title: 'Open the map pane',
       description:
+        'For ChatGPT desktop in Codex mode, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. ' +
+        'For a document panel, use surface: "markdown": generate MD + SVG files, ' +
+        'enable automatic preview updates after successful map writes, then use the HOST file-opening ' +
+        'tool to display the returned absolute Markdown path on the right of the current conversation. ' +
+        'Generated does not mean visible: this server cannot open or observe the desktop side panel. ' +
+        'For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. ' +
+        'The default surface is "terminal", preserving the terminal workflow. ' +
         'Put the live map on the user\'s screen: a terminal pane beside this conversation that ' +
         'redraws on every write. Call it whenever a result says `pane: CLOSED` — and do NOT ask ' +
         'permission first, because a user who has set a mapping policy has already said they ' +
@@ -983,6 +1011,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
         'Windows Terminal is the supported route; anywhere else it says so and you relay the ' +
         'manual command from the README.',
       inputSchema: closed({
+        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web']).optional().describe('codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)'),
         page: id(
           'page to show first — the page THIS effort lives on, the same slug you pass to the ' +
             'other tools. Omit only for the default page: without it a fresh pane opens on ' +
@@ -1000,6 +1029,33 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       }),
     },
     async (input) => {
+      if (input.surface === 'codex-terminal') {
+        if (input.window === true) return text('codex-terminal uses the current conversation panel; window: true is not supported.', true);
+        if (input.page && !listPageFiles(stateFile).some(file => pageIdOfFile(stateFile, file) === input.page)) {
+          return text(`Unknown page: ${input.page}. ${pagesLine(stateFile, input.page)}`, true);
+        }
+        const handoff = terminalHandoff(process.execPath, fileURLToPath(new URL('./watch.mjs', import.meta.url)), stateFile, input.page);
+        return text('terminal: ready-to-start\n' + JSON.stringify(handoff, null, 2) + '\n' +
+          'Use open_in_codex with hostOpen in the CURRENT conversation, without a threadId. ' +
+          'If a supported host tool can run commands in that user terminal, use it. Otherwise give the user the command for their shell to paste once. ' +
+          'An exec_command session_id belongs to the agent PTY, not this terminal. queued is not visible, and opened is not running. ' +
+          'Use read_thread_terminal to confirm the map title and controls after startup. Preserve a page the user pinned.');
+      }
+      if (input.surface === 'web') {
+        if (input.window === true) return text('surface: "web" cannot be combined with window: true. Open the returned URL using the desktop host.', true);
+        try {
+          const url = await openWebPreview(stateFile, fileURLToPath(new URL('./web.mjs', import.meta.url)), input.page);
+          return text(`preview: ready\nweb: ${url}\nOpen this URL in the current conversation's right browser panel using the host tool. The viewer refreshes from project maps while open. Existing Markdown previews remain enabled. Desktop visibility is not confirmed by this tool.`);
+        } catch (error) { return text(`Could not open web preview: ${String(error)}`, true); }
+      }
+      if (input.surface === 'markdown') {
+        if (input.window === true) return text('surface: "markdown" cannot be combined with window: true. Open the returned file using the desktop host.', true);
+        const published = previews.activate(input.page as PageId | undefined);
+        if (!published.ok) return text(`Could not generate Markdown preview: ${published.error}`, true);
+        return text(`preview: ready\nmarkdown: ${published.value.path}\nindex: ${published.value.index}\n` +
+          'Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation\'s right file panel using the host tool. ' +
+          'No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.');
+      }
       const script = launcherPath(import.meta.url);
       if (!existsSync(script)) {
         return text(
@@ -1009,8 +1065,8 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
         );
       }
       const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
-      const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS) : [];
-      return text(openOutcome(run, viewers, input.page), !run.ok);
+      const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
+      return text(openOutcome(run, viewers, input.page), !run.ok || !paneShows(viewers, input.page));
     },
   );
 

@@ -89,4 +89,4 @@ if (verify.status !== 0) {
   console.error('verify failed — versions are bumped but NOT release-ready; fix before committing.');
   process.exit(1);
 }
-console.log(`\nrelease ${version} verified. Next: commit on a branch, merge to master, tag v${version}, push.`);
+console.log(`\nrelease ${version} verified. Next: commit on a branch, merge to main, tag v${version}, push.`);

@@ -18,17 +18,17 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import * as store from '../src/store/store.js';
-import { focusFilePath, publishViewer, quitFilePath, takeFocusRequest, takeQuitRequest } from '../src/store/store.js';
+import { focusFilePath, quitFilePath, takeFocusRequest, takeQuitRequest } from '../src/store/store.js';
 import {
   PANE_FLAGS,
   WATCHER_BOOLEAN_FLAGS,
   WATCHER_VALUE_FLAGS,
   paneCommand,
-  paneIsOpen,
-  powerShellQuote,
+  preparePane,
+  placePane,
+  selectPaneViewer,
+  awaitNewPane,
   takeWatcherFlag,
-  watcherProbeScript,
   writeFocusRequest,
   writeQuitRequest,
 } from './pane-core.mjs';
@@ -71,6 +71,73 @@ describe('the one-shot channels reach the running watcher', () => {
     writeFocusRequest(focusFilePath(mapFile), 'api');
     expect(existsSync(`${quitFilePath(mapFile)}.tmp`)).toBe(false);
     expect(existsSync(`${focusFilePath(mapFile)}.tmp`)).toBe(false);
+  });
+});
+
+describe('a pane belongs beside its own session', () => {
+  const cfg = { mode: 'split', projectDir: 'C:\\项目 folder', pageSlug: 'design', watcherFlags: [] };
+  const session = { owners: ['split-11-22'], owner: 'split-11-22', hwnd: '333' };
+  const viewer = { pid: 44, owner: session.owner, page: 'design', follow: true };
+  const source = (viewers) => ({ readLiveViewers: () => viewers });
+  const probe = { inspectSession: () => ({ ok: true, value: session }) };
+
+  it('ignores a separate window, legacy viewer and another session on the same project', () => {
+    const elsewhere = [{ ...viewer, owner: 'window' }, { ...viewer, owner: undefined }, { ...viewer, owner: 'split-55-66' }];
+    expect(selectPaneViewer(elsewhere, session.owners)).toBeUndefined();
+    expect(preparePane(cfg, source(elsewhere), 'map', probe).value.viewer).toBeUndefined();
+    expect(selectPaneViewer([...elsewhere, viewer], session.owners)).toEqual(viewer);
+  });
+
+  it('reuses an owned pane even while its source tab is inactive', () => {
+    const inactive = { inspectSession: () => ({ ok: true, value: { owners: session.owners } }) };
+    expect(preparePane(cfg, source([viewer]), 'map', inactive).value.viewer).toEqual(viewer);
+    expect(preparePane({ ...cfg, force: true }, source([viewer]), 'map', inactive).ok).toBe(false);
+  });
+
+  it('requires the source window to be identified before creating a split', () => {
+    const unknown = { inspectSession: () => ({ ok: true, value: { owners: [] } }) };
+    const result = preparePane(cfg, source([{ ...viewer, owner: 'window' }]), 'map', unknown);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('no separate window was opened');
+  });
+
+  it('opens a separate window only when explicitly requested', () => {
+    const context = preparePane({ ...cfg, mode: 'window' }, source([viewer]), 'map', {}).value;
+    expect(context.viewer).toBeUndefined();
+    const calls = [];
+    const result = placePane(cfg, 'watch', 'map', context.target, {
+      openWt: (args) => { calls.push(args); return { ok: true }; },
+    });
+    expect(result.ok).toBe(true);
+    expect(calls[0].slice(0, 3)).toEqual(['-w', 'mellos-mapping', 'nt']);
+  });
+
+  it('does not launch anything if Windows denies focus', () => {
+    const result = placePane(cfg, 'watch', 'map', { ...session, mode: 'split' }, {
+      focusSession: () => ({ ok: false, error: 'focus denied' }),
+      openWt: () => { throw new Error('must not open a fallback'); },
+    });
+    expect(result).toEqual({ ok: false, error: 'focus denied' });
+  });
+
+  it('preserves project, page and owner, splits vertically, then restores left input focus', () => {
+    const calls = [];
+    const result = placePane(cfg, 'C:\\插件\\watch.mjs', 'C:\\项目 folder\\map', { ...session, mode: 'split' }, {
+      focusSession: (hwnd) => { expect(hwnd).toBe('333'); return { ok: true }; },
+      openWt: (args) => { calls.push(args); return { ok: true }; },
+    });
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([[
+      '-w', '0', 'sp', '-V', '--size', '0.42', '--title', 'mellos map', '-d', cfg.projectDir,
+      'node', 'C:\\插件\\watch.mjs', '--file', 'C:\\项目 folder\\map', '--page', 'design',
+      '--owner', session.owner, ';', 'move-focus', 'previous',
+    ]]);
+  });
+
+  it('cannot use an older viewer as evidence that a new pane started', async () => {
+    const context = { target: { owner: session.owner }, previousPids: [44] };
+    expect((await awaitNewPane(source([viewer]), 'map', context, 0)).ok).toBe(false);
+    expect((await awaitNewPane(source([viewer, { ...viewer, pid: 45 }]), 'map', context, 0)).value.pid).toBe(45);
   });
 });
 
@@ -132,55 +199,6 @@ describe('the wt payload', () => {
   it('omits --page when no page is the subject', () => {
     const cfg = { projectDir: 'C:\\proj', pageSlug: undefined, watcherFlags: [] };
     expect(paneCommand(cfg, 'w.mjs', 'm.json')).not.toContain('--page');
-  });
-});
-
-describe('an open pane is one that says so', () => {
-  let dir;
-  let mapFile;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'mellos-pane-core-viewers-'));
-    mapFile = join(dir, '.mellos', 'map.json');
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  // The whole point of the viewers channel reaching the launcher: this answer
-  // used to cost a PowerShell process scan, was Windows-only, and could not
-  // say WHICH page was on screen. A report a pane refreshed a moment ago is
-  // the same fact, exactly.
-  it('a live report is an open pane, without asking the operating system', () => {
-    if (!publishViewer(mapFile, 4242, { page: undefined, follow: true }).ok) {
-      throw new Error('the spec could not publish a viewer report');
-    }
-    expect(paneIsOpen(store, mapFile)).toBe(true);
-  });
-
-  it('the launcher asks the store module it was handed, never a copy of the path', () => {
-    let askedFor;
-    const stub = {
-      readLiveViewers: (file) => {
-        askedFor = file;
-        return [{ pid: 1, page: undefined, follow: true, ageMs: 12 }];
-      },
-    };
-    expect(paneIsOpen(stub, mapFile)).toBe(true);
-    expect(askedFor).toBe(mapFile);
-  });
-});
-
-describe('finding an already-running watcher', () => {
-  it('matches a path containing wildcard characters literally', () => {
-    const script = watcherProbeScript('C:\\work\\[wip]\\a*b?\\.mellos\\map.json');
-    expect(script).toContain("'C:\\work\\[wip]\\a*b?\\.mellos\\map.json'");
-    expect(script).not.toContain('-like'); // wildcards in a path are not a pattern
-    expect(script).toContain('OrdinalIgnoreCase');
-  });
-
-  it('closes the PowerShell string a quote in the path would otherwise open', () => {
-    expect(powerShellQuote("C:\\it's\\map.json")).toBe("'C:\\it''s\\map.json'");
   });
 });
 

@@ -10,7 +10,7 @@
  * npm/library surface the package's `exports` map points at.
  */
 
-import { rm } from 'node:fs/promises';
+import { rm, mkdir, copyFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -54,6 +54,12 @@ const shared = {
 
 await build({ ...shared, entryPoints: ['src/server/server.ts'], outfile: 'dist/server.mjs' });
 await build({ ...shared, entryPoints: ['src/watch/watch.ts'], outfile: 'dist/watch.mjs' });
+await build({ ...shared, banner: {}, entryPoints: ['src/preview/cli.ts'], outfile: 'dist/preview.mjs' });
+await build({ ...shared, banner: {}, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
+await build({ absWorkingDir: root, bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
+  entryPoints: ['src/web/app.ts'], outfile: 'dist/web/app.js', legalComments: 'none' });
+await mkdir(join(root, 'dist/web'), { recursive: true });
+for (const name of ['index.html', 'app.css']) await copyFile(join(root, 'src/web', name), join(root, 'dist/web', name));
 
 /**
  * The human's `mmap` toggle, as one file.
@@ -119,5 +125,5 @@ await build({
 
 console.log(`cleaned: ${OUTPUT_DIRS.join(', ')}`);
 console.log(
-  'bundled: dist/server.mjs, dist/watch.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/store-paths.mjs',
+  'bundled: dist/server.mjs, dist/watch.mjs, dist/preview.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/store-paths.mjs',
 );

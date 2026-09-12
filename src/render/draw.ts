@@ -65,6 +65,9 @@ export function drawBox(
 ): void {
   const { node, x, y, w } = box;
   const skin = neutral ? neutralSkin(opts.unicode) : skinFor(face, opts.unicode);
+  // Hover must not switch font faces: some terminal fonts draw their bold
+  // box/line glyphs at a different offset, making a stationary box jump.
+  const borderStyle = focused ? 'focus' : skin.style;
   // Neutral pages give the glyph slot to the node kind (a bullet when kindless).
   const slotGlyph = neutral ? neutralGlyph(node, opts.unicode) : glyphFor(face, opts);
 
@@ -77,18 +80,18 @@ export function drawBox(
 
   const inner = w - 2;
   const pad = box.pad === 1 ? ' ' : '';
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
-  canvas.text(x, y + 1, skin.v, skin.style, focused);
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], borderStyle);
+  canvas.text(x, y + 1, skin.v, borderStyle);
   canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  canvas.text(x + w - 1, y + 1, skin.v, borderStyle);
   for (let i = 0; i < box.extra.length; i++) {
     const row = box.extra[i]!;
     const yy = y + 2 + i;
-    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x, yy, skin.v, borderStyle);
     canvas.text(x + 1, yy, row.text, row.style);
-    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+    canvas.text(x + w - 1, yy, skin.v, borderStyle);
   }
-  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], borderStyle);
 }
 
 /** Every wire. Those touching the focused node render bright. */

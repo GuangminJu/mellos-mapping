@@ -3,6 +3,72 @@
 Notable, user-visible changes. Releases before 0.20.2 are recorded only in
 the git history (`git log --oneline`), which is where this file starts.
 
+## 0.21.0
+
+### Added
+
+- Clone-installable Claude Code and ChatGPT desktop Codex-mode editions, each
+  with one Node.js installer, file-integrity checks and a real six-tool MCP
+  handshake before host configuration. Runtime files remain available after
+  the clone is moved or deleted. Re-running updates the existing installation.
+- A dedicated desktop skill and `mmap_open {surface: "codex-terminal"}` handoff
+  return absolute, shell-quoted startup commands for the current project.
+  The skill opens the current conversation's right terminal and distinguishes
+  prepared commands, queued panels and a running map. It explains the manual
+  paste step when the host exposes no user-terminal input tool.
+- Generated `claude` and `chatgpt-app` release branches share the `main` runtime.
+  Each includes complete prebuilt files, host-specific instructions and CI.
+
+### Fixed
+
+- Terminal mouse reporting recovers after truncated panel replay. Incremental
+  output and bounded frame buffering reduce input lag; presence writes no
+  longer block waiting for file locks.
+- Hover uses color-only highlighting, keeping border/wire font weights stable.
+- Markdown/SVG and web surfaces remain available alongside the native terminal.
+- Updated the test runner and Hono dependency to patched versions. Source
+  development uses Node.js 22.12+; prebuilt installers still require Node.js 18+.
+
+## 0.20.4
+
+### Changed
+
+- The web map now paints cards, text and connections in one SVG viewport.
+  Zoom changes SVG coordinates instead of scaling a cached CSS layer, keeping
+  the map sharp at high magnification while preserving pointer and keyboard controls.
+
+- The terminal pane reuses the current map's prepared layout and edge
+  routing across animation, hover and pan frames. Unchanged frames also
+  reuse the painted canvas. Each pane owns a bounded cache; map, zoom and
+  glyph changes invalidate it. The pure one-shot renderer remains available.
+- Codex registration validates the bundled server before changing config,
+  upserts without deleting the existing entry first, and passes arguments
+  directly to native Codex or its official npm entry on Windows.
+- The skill documents all six tools and Codex discovery/restart behavior.
+  Missing map tools no longer interrupt unrelated implementation work.
+- Updated the locked `fast-uri` and `qs` transitive dependencies to patched
+  compatible versions; the dependency audit reports no known vulnerabilities.
+
+### Added
+
+- An optional local interactive web viewer (`mmap_open {surface: "web"}` and
+  `mellos-mapping-web`) adds live refresh, pan/zoom, node inspection, dependency
+  highlighting, search/status filters, semantic groups, lanes, submaps, themes
+  and confirmed page deletion. Existing Markdown/SVG and terminal flows remain
+  available and can coexist in the same project.
+
+- Desktop Markdown previews with colored SVG maps, module details, evidence,
+  and child-page links. `mmap_open {surface: "markdown"}` enables project-local
+  regeneration after successful writes; host-side opening is reported separately.
+- A dependency-free `mellos-mapping-preview` command and pure `./preview` library
+  export. Preview failures do not misreport an already-saved map as a failed edit.
+- `npm run package:codex` produces a dedicated Codex distribution from the
+  shared runtime, with complete plugin metadata and an explicit file list.
+- `npm run verify` now checks the packaged MCP server over stdio, including
+  schema refusals and storage isolation between two independent projects.
+- A Codex installation guide covers stable runtime paths, personal
+  marketplace installation, updates and removal.
+
 ## 0.20.3
 
 ### Changed

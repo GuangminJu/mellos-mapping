@@ -3,13 +3,13 @@
 [![npm](https://img.shields.io/npm/v/mellos-mapping?logo=npm&logoColor=white&label=npm&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
 [![downloads](https://img.shields.io/npm/dm/mellos-mapping?label=downloads&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
 [![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
-[![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=master&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=main&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
 
 A live, terminal-native map of bottom-up development for
-[Claude Code](https://claude.com/claude-code) and Codex CLI.
+[Claude Code](https://claude.com/claude-code), ChatGPT desktop Codex mode and Codex CLI.
 
 <p align="center">
   <picture>
@@ -83,6 +83,21 @@ picture makes the discipline visible:
 
 ## Install
 
+Clone the branch for your host, then run one command. No build is required.
+
+| Branch | Audience | Command from the clone |
+| --- | --- | --- |
+| `main` | Shared source / either host | `node install.mjs chatgpt-app` or `node install.mjs claude` |
+| `claude` | Claude Code | `node install.mjs` |
+| `chatgpt-app` | ChatGPT desktop, Codex mode | `node install.mjs` |
+
+Requires Node.js 18+ and the corresponding host CLI on PATH. The installer checks
+release integrity and all six MCP tools, retains the runtime outside the clone,
+and configures the host. Start a new conversation after installation.
+See [release and branch instructions](docs/releasing.md).
+
+Claude Code's marketplace installation is also available:
+
 Two lines inside any Claude Code conversation:
 
 ```
@@ -96,8 +111,7 @@ Or one line in a terminal:
 claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install mellos-mapping@mellos-mapping
 ```
 
-Requires Node.js 18+ on PATH (Claude Code itself requires Node, so you
-already have it). No build step: `dist/` is committed, so a clone runs as-is —
+Requires Node.js 18+ on PATH (install Node separately when using native Claude Code). No build step: `dist/` is committed, so a clone runs as-is —
 `dist/server.mjs` (the MCP server), `dist/watch.mjs` (the pane),
 `dist/mmap.mjs` (the `mmap` toggle), `dist/hook-session-start.mjs` (the
 `SessionStart` hook that `hooks/hooks.json` registers) and
@@ -143,7 +157,7 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 
 Two steps because `plugin update` compares against the locally cached
 marketplace clone — the first command is what actually pulls this repo.
-Restart Claude Code to apply. Releases are version bumps on `master`.
+Restart Claude Code to apply. Releases are version bumps on `main`.
 (In-app, `/plugin` opens the same management UI.)
 
 ### Upgrading from 0.19
@@ -170,37 +184,63 @@ That one move is the only time either process touches `.claude/`. Afterwards
 the tools write nowhere but `.mellos/`, and never outside the project
 directory they resolved at startup.
 
-## Codex CLI
+## ChatGPT App · Codex mode
 
-The same repo doubles as a Codex plugin (codex-cli 0.147+). Three lines:
+This is Codex mode in the ChatGPT desktop app (also called Codex App).
+From the source branch run the following command; on `chatgpt-app`, omit the
+host argument. It configures the desktop skill, marketplace and six MCP tools.
 
 ```
-codex plugin marketplace add GuangminJu/mellos-mapping
-codex plugin add mellos-mapping@mellos-mapping
-node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<version>/scripts/codex-register.mjs
+node install.mjs chatgpt-app
 ```
 
-The first two install the skill (the map discipline) as a Codex plugin. The
-third registers the MCP server at user level — needed because Codex spawns
-plugin-bundled MCP servers inside the plugin cache with no way to see your
-workspace, so a bundled server would write the map into the cache. A
-user-level `codex mcp add` entry (which the script writes) inherits each
-session's working directory instead: the state file lands in your project,
-same as under Claude Code. The registered path is version-specific — re-run
-the script after updating the plugin.
+Start a new conversation. The desktop skill prefers the **right terminal**.
+`mmap_open {surface: "codex-terminal", page: "<slug>"}` prepares the correct
+startup command; the host opens the panel. If the host has no user-terminal
+input tool, paste that command once. Updates are live after startup. An agent
+PTY or queued panel does not prove the user-facing map is running.
+See [desktop installation and limitations](docs/codex.md).
 
-To watch the live pane beside a Codex session on Windows, run
+For Codex CLI inside Windows Terminal (not the desktop integrated terminal), run
 `node <plugin root>/scripts/open-pane.mjs <project dir>` — it splits the
-terminal window hosting the session (or falls back to a dedicated
-"mellos-mapping" window; `--window` picks that on purpose). Add
+terminal window hosting the session, keeping keyboard focus on the conversation.
+If that window cannot be identified or focused, it reports failure without
+opening elsewhere. `--window` explicitly chooses a separate window. Add
 `--page <slug>` to open on a particular page — and with a pane already open,
-rerunning with `--page` retargets it instead of opening another. The pane
+rerunning with `--page` retargets the pane belonging to this console. A map
+open in another session or a separate window does not count as this split. The pane
 auto-follows the page being written — the map the agent is operating on
 right now; press `f` to toggle that (a manual page switch also turns it
 off), or start with `--no-follow`. Elsewhere run
 `node <plugin root>/dist/watch.mjs` from the project directory in a second
 terminal (or any terminal split). Both take the same flags — see
 [Pane flags](#pane-flags).
+
+### Desktop Markdown map
+
+When the user chooses the document surface, the skill uses
+`mmap_open {surface: "markdown", page: "<slug>"}` and opens the returned file
+beside the current conversation. The document embeds a colored SVG dependency
+map plus module details, evidence, and child-page links. It needs no web server,
+browser rendering process, Mermaid support, or additional runtime dependencies.
+
+Successful MCP map writes regenerate enabled previews in `.mellos/previews/`;
+JSON remains the source of truth. Image nodes are static. File visibility and
+automatic viewer refresh belong to the desktop host. See the
+[desktop map guide](docs/codex.md#desktop-right-side-map) for regeneration,
+cache behavior, and limitations.
+
+### Optional interactive web viewer
+
+An additional interactive web viewer is available with
+`mmap_open {surface: "web", page: "<slug>"}` or
+`node "<plugin root>/dist/web.mjs" "<project directory>" --page <slug>`.
+Open its returned URL in the host's right browser panel. It provides live
+updates, pan/zoom, hover and pinned details, search, dependency highlighting,
+filters, group overview, submaps and themes. Stop it with
+`node "<plugin root>/dist/web.mjs" "<project directory>" --stop`.
+Markdown/SVG and terminal workflows remain available; all surfaces share the
+same map data. See [web viewer details](docs/codex.md#optional-interactive-web-viewer).
 
 ## Any MCP client
 
@@ -226,7 +266,7 @@ servers), then the server process's own working directory. Set
 somewhere other than the project you are working in.
 
 The skill/discipline layer is Claude Code + Codex specific; other clients
-get the five `mmap_*` tools and the pane, and bring their own prompting.
+get the six `mmap_*` tools and the pane, and bring their own prompting.
 
 ## Use
 
@@ -327,7 +367,7 @@ them verbatim and rejects anything it does not know rather than dropping it.
 
 | Flag | Effect |
 | --- | --- |
-| `--page <slug>` | open on this page; with a pane already running, retarget that pane instead of opening another |
+| `--page <slug>` | open on this page; with this console’s pane already running, retarget it instead of opening another |
 | `--ascii` | pure-ASCII repertoire, for fonts without box-drawing glyphs |
 | `--no-color` | no ANSI color |
 | `--no-mouse` | no mouse reporting, if your terminal multiplexer wants the mouse for itself |
@@ -339,6 +379,13 @@ of splitting the session's window, and `--force` opens another pane even
 though one is already running for this project. Watcher-only: `--file <path>`
 names the default page's state file (the launcher derives it from the project
 directory).
+
+Pane ownership is carried by the internal watcher flag `--owner <token>` and
+the optional `owner` field in viewer reports. Launchers derive the token from
+the source console process and its creation time; manual watchers can omit it.
+Focus and quit requests to a bound viewer use its PID, so another window of
+the same project cannot consume them. Bare `mmap` toggles only the pane bound
+to the current console; `mmap --window` toggles the separate project window.
 
 ### The mmap command
 

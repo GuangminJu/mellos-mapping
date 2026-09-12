@@ -3,9 +3,9 @@
  * `mmap` — the human's entrance to the map pane. A TOGGLE.
  *
  *   mmap                      open the pane for this project, or close the one
- *                             that is already open
+ *                             that belongs to this console
  *   mmap <slug>               open the pane ON that page, or retarget the pane
- *                             that is already open. Never closes anything:
+ *                             that belongs to this console. Never closes anything:
  *                             naming a page is asking to SEE it
  *   mmap [--window] [--ascii] [--no-color] [--no-mouse] [--no-follow]
  *        [--interval <ms>] [--force]
@@ -35,9 +35,10 @@ import {
   launchedAsEntry,
   loadPluginPaths,
   placePane,
+  preparePane,
+  awaitNewPane,
   pluginRootOf,
   takeWatcherFlag,
-  paneIsOpen,
   writeFocusRequest,
   writeQuitRequest,
 } from './pane-core.mjs';
@@ -179,22 +180,33 @@ async function main() {
   const project = nearestProject(candidates, candidates.map((dir) => existsSync(join(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
   const mapFile = join(project.root, store.STATE_FILE_RELATIVE_PATH);
-  const action = toggleAction(paneIsOpen(store, mapFile), cfg.pageSlug, cfg.force);
+  const prepared = preparePane(cfg, store, mapFile);
+  if (!prepared.ok) {
+    console.error(prepared.error);
+    process.exit(1);
+  }
+  const context = prepared.value;
+  const action = toggleAction(context.viewer !== undefined, cfg.pageSlug, cfg.force);
 
   if (action.kind === 'quit') {
-    writeQuitRequest(store.quitFilePath(mapFile));
+    writeQuitRequest(store.quitFilePath(mapFile, context.viewer.pid));
     console.log(`Closing the map pane for ${project.root}.`);
     return;
   }
   if (action.kind === 'focus') {
-    writeFocusRequest(store.focusFilePath(mapFile), action.page);
+    writeFocusRequest(store.focusFilePath(mapFile, context.viewer.pid), action.page);
     console.log(`The map pane for ${project.root} is already open — showing page "${action.page}".`);
     return;
   }
 
-  const placed = placePane(cfg, watchPath, mapFile);
+  const placed = placePane(cfg, watchPath, mapFile, context.target);
   if (!placed.ok) {
     console.error(placed.error);
+    process.exit(1);
+  }
+  const reported = await awaitNewPane(store, mapFile, context);
+  if (!reported.ok) {
+    console.error(reported.error);
     process.exit(1);
   }
   const where =

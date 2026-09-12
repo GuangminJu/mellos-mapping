@@ -54,9 +54,9 @@ import {
   describePageFault,
   readPage,
   renderWindow,
-  terminalRestoreSequence,
   viewerReportOf,
 } from './watch.js';
+import { terminalRestoreSequence } from './terminal-session.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -92,6 +92,14 @@ function sample(): MellosMap {
   map = must(linkNodes(map, nid('cli'), nid('core')));
   return map;
 }
+
+describe('launcher ownership', () => {
+  it('accepts a launcher owner and refuses invalid owner values', () => {
+    expect(must(parseArgs(['--owner', 'split-11-22'], '.')).owner).toBe('split-11-22');
+    expect(parseArgs(['--owner', '../other'], '.').ok).toBe(false);
+    expect(parseArgs(['--owner'], '.').ok).toBe(false);
+  });
+});
 
 describe('fitWidth / wrapWidth', () => {
   it('fits CJK text to a display width with an ellipsis', () => {

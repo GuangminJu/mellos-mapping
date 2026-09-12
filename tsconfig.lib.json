@@ -6,6 +6,6 @@
     "outDir": "lib",
     "rootDir": "src"
   },
-  "include": ["src/domain/**/*.ts", "src/store/**/*.ts", "src/semantics/**/*.ts", "src/render/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src/domain/**/*.ts", "src/store/**/*.ts", "src/semantics/**/*.ts", "src/render/**/*.ts", "src/preview/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/preview/cli.ts"]
 }

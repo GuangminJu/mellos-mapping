@@ -57,9 +57,9 @@ import type { MellosMap } from '../domain/types.js';
 import { ZOOM_DEFAULT, aggregateMap, flipForSequence, isNeutralKind } from '../semantics/semantics.js';
 import { Canvas } from './canvas.js';
 import { drawBands, drawBox, drawEdges, drawLaneHeaders, drawLegend, drawTitle } from './draw.js';
-import { layoutColumns, layoutRows } from './layout.js';
+import { type ColumnLayout, type RowLayout, layoutColumns, layoutRows } from './layout.js';
 import type { RenderOptions, Viewport } from './options.js';
-import { routeEdges } from './routing.js';
+import { type Routing, routeEdges } from './routing.js';
 import { type StatusFace, unverifiedDoneIds } from './skins.js';
 import { displayWidth } from './width.js';
 import { AGGREGATE_GEO, type ZoomGeometry, zoomGeometry } from './zoom-geometry.js';
@@ -87,7 +87,7 @@ export {
 
 /** Render the whole map as terminal lines. */
 export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
-  const built = buildCanvas(map, opts);
+  const built = paint(prepareScene(map, opts), opts);
   return built.canvas.emit(opts);
 }
 
@@ -119,7 +119,36 @@ export interface WindowedRender {
 
 /** Render only the given viewport of the map, plus the full content extent. */
 export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: Viewport): WindowedRender {
-  const built = buildCanvas(map, opts);
+  return renderSceneWindow(prepareScene(map, opts), opts, viewport);
+}
+
+/**
+ * A pane-owned renderer for immutable map snapshots. Retains only the last
+ * scene: map/zoom/glyph changes rebuild geometry; animation, focus and pan
+ * only repaint it. There is no global cache or filesystem dependency.
+ */
+export function createWindowRenderer(): typeof renderMapWindow {
+  let previous: { map: MellosMap; unicode: boolean; zoom: number; scene: Scene } | undefined;
+  let frame: { scene: Scene; spinner: number; focus: string | undefined; color: boolean; built: ReturnType<typeof paint> } | undefined;
+  return (map, opts, viewport) => {
+    const zoom = opts.zoom ?? ZOOM_DEFAULT;
+    if (previous?.map !== map || previous.unicode !== opts.unicode || previous.zoom !== zoom) {
+      // Commit the cache only after preparation succeeds, so failures retry.
+      previous = { map, unicode: opts.unicode, zoom, scene: prepareScene(map, opts) };
+    }
+    const scene = previous.scene;
+    if (frame?.scene !== scene || frame.spinner !== opts.spinnerFrame || frame.focus !== opts.focus || frame.color !== opts.color) {
+      frame = { scene, spinner: opts.spinnerFrame, focus: opts.focus, color: opts.color, built: paint(scene, opts) };
+    }
+    return emitWindow(frame.built, opts, viewport);
+  };
+}
+
+function renderSceneWindow(scene: Scene, opts: RenderOptions, viewport: Viewport): WindowedRender {
+  return emitWindow(paint(scene, opts), opts, viewport);
+}
+
+function emitWindow(built: ReturnType<typeof paint>, opts: RenderOptions, viewport: Viewport): WindowedRender {
   return {
     lines: built.canvas.emit(opts, viewport),
     contentWidth: built.canvas.width,
@@ -128,29 +157,38 @@ export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: V
   };
 }
 
-function buildCanvas(map: MellosMap, opts: RenderOptions): { canvas: Canvas; hits: BoxHit[] } {
+interface Scene {
+  readonly map: MellosMap;
+  readonly unverified: ReadonlySet<string>;
+  readonly geometry?: {
+    readonly neutral: boolean;
+    readonly columns: ColumnLayout;
+    readonly routing: Routing;
+    readonly rows: RowLayout;
+    readonly wiredWidth: number;
+    readonly totalWidth: number;
+    readonly hits: readonly BoxHit[];
+  };
+}
+
+/** Static decisions, independent of spinner frame, focus, color and viewport. */
+function prepareScene(map: MellosMap, opts: RenderOptions): Scene {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   // The far zoom does not shrink the map, it AGGREGATES it: groups become one
   // box each. Which map is drawn is decided here, once.
   const aggregated = plainGeo.mode === 'constellation' ? aggregateMap(oriented) : undefined;
   const drawn = aggregated ?? oriented;
-  return paint(drawn, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo, unverifiedDoneIds(oriented, drawn));
+  const unverified = unverifiedDoneIds(oriented, drawn);
+  if (drawn.layers.length === 0) return { map: drawn, unverified };
+  return { map: drawn, unverified, geometry: prepareGeometry(drawn, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo) };
 }
 
-function paint(
+function prepareGeometry(
   map: MellosMap,
   opts: RenderOptions,
   geo: ZoomGeometry,
-  unverified: ReadonlySet<string>,
-): { canvas: Canvas; hits: BoxHit[] } {
-  const canvas = new Canvas();
-  if (map.layers.length === 0) {
-    canvas.text(0, 0, map.title ?? 'mellos mapping', 'none', true);
-    canvas.text(0, 2, '(empty map — declare layers and nodes to begin)', 'dim');
-    return { canvas, hits: [] };
-  }
-
+): NonNullable<Scene['geometry']> {
   const neutral = isNeutralKind(map);
   const columns = layoutColumns(map, geo, opts.unicode, neutral);
   const routing = routeEdges(map, columns);
@@ -161,6 +199,23 @@ function paint(
     routing.fallbackCount > 0 ? columns.contentWidth + 2 + routing.fallbackCount * 2 : columns.contentWidth;
   /** Plus the band labels' own right margin, which nothing else may enter. */
   const totalWidth = wiredWidth + Math.max(...columns.bandLabel.map(displayWidth));
+
+  const hits: BoxHit[] = [...rows.boxOf.values()].map((b) => ({
+    id: b.node.id as string, x: b.x, y: b.y, w: b.w, h: b.h,
+  }));
+  return { neutral, columns, routing, rows, wiredWidth, totalWidth, hits };
+}
+
+/** Dynamic drawing always gets a fresh canvas; frames cannot contaminate each other. */
+function paint(scene: Scene, opts: RenderOptions): { canvas: Canvas; hits: readonly BoxHit[] } {
+  const { map, unverified, geometry } = scene;
+  const canvas = new Canvas();
+  if (geometry === undefined) {
+    canvas.text(0, 0, map.title ?? 'mellos mapping', 'none', true);
+    canvas.text(0, 2, '(empty map — declare layers and nodes to begin)', 'dim');
+    return { canvas, hits: [] };
+  }
+  const { neutral, columns, routing, rows, wiredWidth, totalWidth, hits } = geometry;
 
   if (map.title !== undefined) drawTitle(canvas, map.title);
   drawLaneHeaders(canvas, map, columns, rows);
@@ -174,12 +229,5 @@ function paint(
   drawEdges(canvas, routing.edges, rows, opts);
   drawLegend(canvas, map, opts, rows.legendY, neutral, unverified.size > 0);
 
-  const hits: BoxHit[] = [...rows.boxOf.values()].map((b) => ({
-    id: b.node.id as string,
-    x: b.x,
-    y: b.y,
-    w: b.w,
-    h: b.h,
-  }));
   return { canvas, hits };
 }

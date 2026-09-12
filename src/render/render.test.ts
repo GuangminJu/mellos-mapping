@@ -23,7 +23,7 @@ import {
   type SubmapRef,
 } from '../domain/types.js';
 import { aggregateMap } from '../semantics/semantics.js';
-import { type ZoomStep, clampZoom, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
+import { type ZoomStep, clampZoom, createWindowRenderer, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -58,6 +58,85 @@ function sampleMap(): MellosMap {
   map = must(linkNodes(map, nid('server'), nid('domain'))); // skip-level edge
   return map;
 }
+
+describe('pane-owned scene reuse', () => {
+  const viewport = { x: 0, y: 0, width: 80, height: 30 };
+
+  it('reuses hit regions while animation, focus and viewport change without stale frames', () => {
+    const map = sampleMap();
+    const render = createWindowRenderer();
+    const initial = render(map, MONO, viewport);
+    const panned = { ...viewport, x: 4, y: 3, width: 38 };
+    expect(render(map, MONO, panned)).toEqual(renderMapWindow(map, MONO, panned));
+    for (const frame of [1, 4, 0]) {
+      const opts = { ...MONO, color: true, spinnerFrame: frame, focus: frame === 4 ? 'render' : undefined };
+      const window = { ...viewport, x: frame, width: 45 };
+      const actual = render(map, opts, window);
+      expect(actual.hits).toBe(initial.hits);
+      expect(actual).toEqual(renderMapWindow(map, opts, window));
+    }
+  });
+
+  it('invalidates on map snapshots, zoom and glyph mode, including grouped and sequence maps', () => {
+    const render = createWindowRenderer();
+    const base = sampleMap();
+    const grouped = must(declareGroup(base, { id: gid('foundation'), label: '基础', layer: lid('primitives') }));
+    const aggregate = must(updateNode(grouped, { id: nid('domain'), group: gid('foundation') }));
+    for (const map of [base, must(updateNode(base, { id: nid('render'), status: 'done', evidence: 'passed' })),
+      aggregate, setKind(base, 'sequence'), EMPTY_MAP, base]) {
+      for (const unicode of [true, false]) {
+        for (const zoom of [-4, -3, 0, 1, 2] as const) {
+          const opts = { ...MONO, unicode, zoom };
+          expect(render(map, opts, viewport)).toEqual(renderMapWindow(map, opts, viewport));
+        }
+      }
+    }
+  });
+
+  it('keeps caches independent between panes and evicts the previous map', () => {
+    const map = sampleMap();
+    const first = createWindowRenderer();
+    const second = createWindowRenderer();
+    const hits = first(map, MONO, viewport).hits;
+    expect(second(map, MONO, viewport).hits).not.toBe(hits);
+    first(setTitle(map, 'Another page'), MONO, viewport);
+    expect(first(map, MONO, viewport).hits).not.toBe(hits);
+  });
+
+  it('keeps glyphs, font weight and hit regions fixed when hover enters or leaves at every zoom', () => {
+    // Read the visible characters and their font weight from emitted SGR.
+    // Colors may change on hover; switching regular/bold faces may not.
+    const glyphWeights = (lines: readonly string[]) => lines.map((line) => {
+      let bold = false;
+      const out: [string, boolean][] = [];
+      for (const token of line.matchAll(/\x1b\[([0-9;]*)m|([^\x1b]+)/g)) {
+        if (token[1] !== undefined) {
+          for (const parameter of token[1].split(';').map(Number)) {
+            if (parameter === 0 || parameter === 22) bold = false;
+            else if (parameter === 1) bold = true;
+          }
+        } else {
+          for (const glyph of token[2]!) out.push([glyph, bold]);
+        }
+      }
+      return out;
+    });
+    const map = must(updateNode(sampleMap(), { id: nid('store'), detail: '中文节点详情：悬停应保持尺寸和位置。' }));
+    const render = createWindowRenderer();
+    for (const unicode of [true, false]) for (const zoom of [-4, -3, -2, -1, 0, 1, 2] as const) {
+      const options = { ...MONO, color: true, unicode, zoom };
+      const normal = render(map, options, viewport);
+      const expected = glyphWeights(normal.lines);
+      for (const node of map.nodes) {
+        const hovered = render(map, { ...options, focus: node.id }, viewport);
+        expect(hovered.hits).toBe(normal.hits);
+        expect([hovered.contentWidth, hovered.contentHeight]).toEqual([normal.contentWidth, normal.contentHeight]);
+        expect(glyphWeights(hovered.lines)).toEqual(expected);
+      }
+      expect(render(map, options, viewport)).toEqual(normal);
+    }
+  });
+});
 
 describe('displayWidth', () => {
   it('counts CJK characters as two columns', () => {

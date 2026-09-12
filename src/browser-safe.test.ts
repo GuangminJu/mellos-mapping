@@ -68,6 +68,7 @@ describe('browser-safe library surface', () => {
     expect([...BROWSER_SAFE_ENTRIES].sort()).toEqual([
       'src/domain/ops.ts',
       'src/domain/types.ts',
+      'src/preview/index.ts',
       'src/render/render.ts',
       'src/semantics/semantics.ts',
       'src/store/format.ts',

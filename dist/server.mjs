@@ -2981,7 +2981,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3008,7 +3008,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3106,9 +3106,28 @@ var require_utils = __commonJS({
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
+    var isPort = RegExp.prototype.test.bind(/^\d*$/u);
     var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
     var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
-    var isPathCharacter = RegExp.prototype.test.bind(/^[\da-z\-._~!$&'()*+,;=:@/]$/iu);
+    var isPathCharacter = RegExp.prototype.test.bind(/^[A-Za-z0-9\-._~!$&'()*+,;=:@/]$/u);
+    var isQueryFragmentCharacter = RegExp.prototype.test.bind(/^[A-Za-z0-9\-._~!$&'()*+,;=:@/?]$/u);
+    var isUserinfoCharacter = RegExp.prototype.test.bind(/^[A-Za-z0-9\-._~!$&'()*+,;=:]$/u);
+    var BYTE_HEX = new Array(256);
+    {
+      const HEX_DIGITS = "0123456789ABCDEF";
+      for (let i = 0; i < 256; i++) {
+        BYTE_HEX[i] = "%" + HEX_DIGITS[i >> 4] + HEX_DIGITS[i & 15];
+      }
+    }
+    function percentEncodeNonAscii(cp) {
+      if (cp < 2048) {
+        return BYTE_HEX[192 | cp >> 6] + BYTE_HEX[128 | cp & 63];
+      }
+      if (cp < 65536) {
+        return BYTE_HEX[224 | cp >> 12] + BYTE_HEX[128 | cp >> 6 & 63] + BYTE_HEX[128 | cp & 63];
+      }
+      return BYTE_HEX[240 | cp >> 18] + BYTE_HEX[128 | cp >> 12 & 63] + BYTE_HEX[128 | cp >> 6 & 63] + BYTE_HEX[128 | cp & 63];
+    }
     function stringArrayToHexStripped(input) {
       let acc = "";
       let code = 0;
@@ -3133,91 +3152,105 @@ var require_utils = __commonJS({
       }
       return acc;
     }
+    var isHextet = RegExp.prototype.test.bind(/^[\dA-Fa-f]{1,4}$/);
+    var isIPvFuture = RegExp.prototype.test.bind(/^[vV][\dA-Fa-f]+\.[A-Za-z\d\-._~!$&'()*+,;=:]+$/);
+    var isZoneCharacter = RegExp.prototype.test.bind(/^[A-Za-z\d\-._~]$/);
     var nonSimpleDomain = RegExp.prototype.test.bind(/[^!"$&'()*+,\-.;=_`a-z{}~]/u);
-    function consumeIsZone(buffer) {
-      buffer.length = 0;
-      return true;
-    }
-    function consumeHextets(buffer, address, output) {
-      if (buffer.length) {
-        const hex = stringArrayToHexStripped(buffer);
-        if (hex !== "") {
-          address.push(hex);
-        } else {
-          output.error = true;
-          return false;
+    function isZoneIdentifier(zone) {
+      if (zone.length === 0) return false;
+      for (let i = 0; i < zone.length; i++) {
+        if (isZoneCharacter(zone[i])) continue;
+        if (zone[i] === "%" && i + 2 < zone.length && isHexPair(zone.slice(i + 1, i + 3))) {
+          i += 2;
+          continue;
         }
-        buffer.length = 0;
+        return false;
       }
       return true;
     }
-    function getIPV6(input) {
-      let tokenCount = 0;
-      const output = { error: false, address: "", zone: "" };
-      const address = [];
-      const buffer = [];
-      let endipv6Encountered = false;
-      let endIpv6 = false;
-      let consume = consumeHextets;
-      for (let i = 0; i < input.length; i++) {
-        const cursor = input[i];
-        if (cursor === "[" || cursor === "]") {
-          continue;
-        }
-        if (cursor === ":") {
-          if (endipv6Encountered === true) {
-            endIpv6 = true;
+    function compressIPv6ZeroRun(hextets) {
+      let bestStart = -1;
+      let bestLength = 0;
+      let runStart = -1;
+      let runLength = 0;
+      for (let i = 0; i < hextets.length; i++) {
+        if (hextets[i] === "0") {
+          if (runStart === -1) runStart = i;
+          runLength++;
+          if (runLength > bestLength) {
+            bestLength = runLength;
+            bestStart = runStart;
           }
-          if (!consume(buffer, address, output)) {
-            break;
-          }
-          if (++tokenCount > 7) {
-            output.error = true;
-            break;
-          }
-          if (i > 0 && input[i - 1] === ":") {
-            endipv6Encountered = true;
-          }
-          address.push(":");
-          continue;
-        } else if (cursor === "%") {
-          if (!consume(buffer, address, output)) {
-            break;
-          }
-          consume = consumeIsZone;
         } else {
-          buffer.push(cursor);
-          continue;
+          runStart = -1;
+          runLength = 0;
         }
       }
-      if (buffer.length) {
-        if (consume === consumeIsZone) {
-          output.zone = buffer.join("");
-        } else if (endIpv6) {
-          address.push(buffer.join(""));
-        } else {
-          address.push(stringArrayToHexStripped(buffer));
-        }
+      if (bestLength < 2) return hextets.join(":");
+      const head = hextets.slice(0, bestStart).join(":");
+      const tail = hextets.slice(bestStart + bestLength).join(":");
+      return head + "::" + tail;
+    }
+    function normalizeIPv6Address(input) {
+      const compression = input.indexOf("::");
+      if (compression !== -1 && input.indexOf("::", compression + 1) !== -1) return void 0;
+      const left = compression === -1 ? input.split(":") : input.slice(0, compression).split(":");
+      const right = compression === -1 ? [] : input.slice(compression + 2).split(":");
+      if (compression !== -1) {
+        if (left.length === 1 && left[0] === "") left.length = 0;
+        if (right.length === 1 && right[0] === "") right.length = 0;
       }
-      output.address = address.join("");
-      return output;
+      const parts = left.concat(right);
+      let hextetCount = 0;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (part === "") return void 0;
+        if (part.indexOf(".") !== -1) {
+          if (i !== parts.length - 1 || compression !== -1 && right.length === 0 || !isIPv4(part)) return void 0;
+          hextetCount += 2;
+          continue;
+        }
+        if (!isHextet(part)) return void 0;
+        parts[i] = parseInt(part, 16).toString(16);
+        hextetCount++;
+      }
+      if (compression === -1) {
+        if (hextetCount !== 8) return void 0;
+        return compressIPv6ZeroRun(parts);
+      }
+      if (hextetCount >= 8) return void 0;
+      const expanded = parts.slice(0, left.length);
+      for (let i = hextetCount; i < 8; i++) expanded.push("0");
+      for (let i = left.length; i < parts.length; i++) expanded.push(parts[i]);
+      return compressIPv6ZeroRun(expanded);
     }
     function normalizeIPv6(host) {
-      if (findToken(host, ":") < 2) {
-        return { host, isIPV6: false };
+      const bracketed = host[0] === "[" && host[host.length - 1] === "]";
+      const hasBracket = host[0] === "[" || host[host.length - 1] === "]";
+      if (hasBracket && !bracketed) return { host, isIPV6: false, error: true };
+      let input = bracketed ? host.slice(1, -1) : host;
+      if (bracketed && isIPvFuture(input)) {
+        input = input.toLowerCase();
+        return { host: `[${input}]`, escapedHost: input, isIPV6: false, isIPVFuture: true };
       }
-      const ipv62 = getIPV6(host);
-      if (!ipv62.error) {
-        let newHost = ipv62.address;
-        let escapedHost = ipv62.address;
-        if (ipv62.zone) {
-          newHost += "%" + ipv62.zone;
-          escapedHost += "%25" + ipv62.zone;
-        }
-        return { host: newHost, isIPV6: true, escapedHost };
-      } else {
-        return { host, isIPV6: false };
+      if (findToken(input, ":") < 2) {
+        return { host, isIPV6: false, error: bracketed };
       }
+      let zoneIdentifier = "";
+      const zoneSeparator = input.indexOf("%");
+      if (zoneSeparator !== -1) {
+        const separatorLength = input.slice(zoneSeparator, zoneSeparator + 3).toLowerCase() === "%25" ? 3 : 1;
+        zoneIdentifier = input.slice(zoneSeparator + separatorLength);
+        if (!isZoneIdentifier(zoneIdentifier)) return { host, isIPV6: false, error: true };
+        input = input.slice(0, zoneSeparator);
+      }
+      const address = normalizeIPv6Address(input);
+      if (address === void 0) return { host, isIPV6: false, error: true };
+      return {
+        host: address + (zoneIdentifier ? "%" + zoneIdentifier : ""),
+        escapedHost: address + (zoneIdentifier ? "%25" + zoneIdentifier : ""),
+        isIPV6: true
+      };
     }
     function findToken(str, token) {
       let ind = 0;
@@ -3336,7 +3369,8 @@ var require_utils = __commonJS({
     function normalizePathEncoding(input) {
       let output = "";
       for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
+        const ch = input[i];
+        if (ch === "%" && i + 2 < input.length) {
           const hex = input.slice(i + 1, i + 3);
           if (isHexPair(hex)) {
             const normalizedHex = hex.toUpperCase();
@@ -3350,10 +3384,152 @@ var require_utils = __commonJS({
             continue;
           }
         }
-        if (isPathCharacter(input[i])) {
-          output += input[i];
+        if (isPathCharacter(ch)) {
+          output += ch;
         } else {
-          output += escape(input[i]);
+          const code = input.charCodeAt(i);
+          if (code < 128) {
+            output += isEscapeSafe(code) ? ch : BYTE_HEX[code];
+          } else if (code < 55296 || code > 57343) {
+            output += percentEncodeNonAscii(code);
+          } else if (code <= 56319 && i + 1 < input.length) {
+            const low = input.charCodeAt(i + 1);
+            if (low >= 56320 && low <= 57343) {
+              output += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              i++;
+            } else {
+              output += percentEncodeNonAscii(65533);
+            }
+          } else {
+            output += percentEncodeNonAscii(65533);
+          }
+        }
+      }
+      return output;
+    }
+    function serializePathEncoding(input, pathNoScheme = false) {
+      let output = "";
+      let firstSegment = pathNoScheme && input[0] !== "/";
+      for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+        if (ch === "%" && i + 2 < input.length) {
+          const hex = input.slice(i + 1, i + 3);
+          if (isHexPair(hex)) {
+            output += "%" + hex.toUpperCase();
+            i += 2;
+            continue;
+          }
+        }
+        if (ch === "/") {
+          firstSegment = false;
+        }
+        if (isPathCharacter(ch) && (ch !== ":" || !firstSegment)) {
+          output += ch;
+        } else {
+          const code = input.charCodeAt(i);
+          if (code < 128) {
+            output += BYTE_HEX[code];
+          } else if (code < 55296 || code > 57343) {
+            output += percentEncodeNonAscii(code);
+          } else if (code <= 56319 && i + 1 < input.length) {
+            const low = input.charCodeAt(i + 1);
+            if (low >= 56320 && low <= 57343) {
+              output += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              i++;
+            } else {
+              output += percentEncodeNonAscii(65533);
+            }
+          } else {
+            output += percentEncodeNonAscii(65533);
+          }
+        }
+      }
+      return output;
+    }
+    function encodeComponent(input, isAllowed) {
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+        if (ch === "%" && i + 2 < input.length) {
+          const hex = input.slice(i + 1, i + 3);
+          if (isHexPair(hex)) {
+            output += "%" + hex.toUpperCase();
+            i += 2;
+            continue;
+          }
+        }
+        if (isAllowed(ch)) {
+          output += ch;
+        } else {
+          const code = input.charCodeAt(i);
+          if (code < 128) {
+            output += BYTE_HEX[code];
+          } else if (code < 55296 || code > 57343) {
+            output += percentEncodeNonAscii(code);
+          } else if (code <= 56319 && i + 1 < input.length) {
+            const low = input.charCodeAt(i + 1);
+            if (low >= 56320 && low <= 57343) {
+              output += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              i++;
+            } else {
+              output += percentEncodeNonAscii(65533);
+            }
+          } else {
+            output += percentEncodeNonAscii(65533);
+          }
+        }
+      }
+      return output;
+    }
+    function encodeUserinfo(input) {
+      return encodeComponent(input, isUserinfoCharacter);
+    }
+    function encodeQuery(input) {
+      return encodeComponent(input, isQueryFragmentCharacter);
+    }
+    function encodeFragment(input) {
+      return encodeComponent(input, isQueryFragmentCharacter);
+    }
+    function isEscapeSafe(cp) {
+      return cp >= 48 && cp <= 57 || cp >= 65 && cp <= 90 || cp >= 97 && cp <= 122 || cp === 42 || cp === 43 || cp === 45 || cp === 46 || cp === 47 || cp === 64 || cp === 95;
+    }
+    function normalizeQueryFragmentEncoding(input) {
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+        if (ch === "%" && i + 2 < input.length) {
+          const hex = input.slice(i + 1, i + 3);
+          if (isHexPair(hex)) {
+            const normalizedHex = hex.toUpperCase();
+            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
+            if (isUnreserved(decoded)) {
+              output += decoded;
+            } else {
+              output += "%" + normalizedHex;
+            }
+            i += 2;
+            continue;
+          }
+        }
+        if (isQueryFragmentCharacter(ch)) {
+          output += ch;
+        } else {
+          const code = input.charCodeAt(i);
+          if (code < 128) {
+            output += isEscapeSafe(code) ? ch : BYTE_HEX[code];
+          } else if (code < 55296 || code > 57343) {
+            output += percentEncodeNonAscii(code);
+          } else if (code <= 56319 && i + 1 < input.length) {
+            const low = input.charCodeAt(i + 1);
+            if (low >= 56320 && low <= 57343) {
+              output += percentEncodeNonAscii(65536 + (code - 55296 << 10) + (low - 56320));
+              i++;
+            } else {
+              output += percentEncodeNonAscii(65533);
+            }
+          } else {
+            output += percentEncodeNonAscii(65533);
+          }
         }
       }
       return output;
@@ -3376,14 +3552,18 @@ var require_utils = __commonJS({
     function recomposeAuthority(component) {
       const uriTokens = [];
       if (component.userinfo !== void 0) {
-        uriTokens.push(component.userinfo);
+        uriTokens.push(encodeUserinfo(component.userinfo));
         uriTokens.push("@");
       }
       if (component.host !== void 0) {
-        let host = unescape(component.host);
+        let host = component.host;
         if (!isIPv4(host)) {
-          const ipV6res = normalizeIPv6(host);
-          if (ipV6res.isIPV6 === true) {
+          let ipV6res = normalizeIPv6(host);
+          if (ipV6res.isIPV6 !== true && ipV6res.isIPVFuture !== true) {
+            host = normalizePercentEncoding(host, true);
+            ipV6res = normalizeIPv6(host);
+          }
+          if (ipV6res.isIPV6 === true || ipV6res.isIPVFuture === true) {
             host = `[${ipV6res.escapedHost}]`;
           } else {
             host = reescapeHostDelimiters(host, false);
@@ -3392,8 +3572,12 @@ var require_utils = __commonJS({
         uriTokens.push(host);
       }
       if (typeof component.port === "number" || typeof component.port === "string") {
+        const port = String(component.port);
+        if (!isPort(port)) {
+          throw new TypeError("URI port is malformed.");
+        }
         uriTokens.push(":");
-        uriTokens.push(String(component.port));
+        uriTokens.push(port);
       }
       return uriTokens.length ? uriTokens.join("") : void 0;
     }
@@ -3403,6 +3587,11 @@ var require_utils = __commonJS({
       reescapeHostDelimiters,
       normalizePercentEncoding,
       normalizePathEncoding,
+      serializePathEncoding,
+      normalizeQueryFragmentEncoding,
+      encodeUserinfo,
+      encodeQuery,
+      encodeFragment,
       escapePreservingEscapes,
       removeDotSegments,
       isIPv4,
@@ -3418,7 +3607,7 @@ var require_schemes = __commonJS({
   "node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
-    var URN_REG = /([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-.:;=@]|%[\da-f]{2})+)/iu;
+    var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
     var supportedSchemeNames = (
       /** @type {const} */
       [
@@ -3479,9 +3668,10 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path, query] = wsComponent.resourceName.split("?");
+        const queryIndex = wsComponent.resourceName.indexOf("?");
+        const path = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
         wsComponent.path = path && path !== "/" ? path : void 0;
-        wsComponent.query = query;
+        wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
       wsComponent.fragment = void 0;
@@ -3493,7 +3683,7 @@ var require_schemes = __commonJS({
         return urnComponent;
       }
       const matches = urnComponent.path.match(URN_REG);
-      if (matches) {
+      if (matches && matches[0] === urnComponent.path) {
         const scheme = options.scheme || urnComponent.scheme || "urn";
         urnComponent.nid = matches[1].toLowerCase();
         urnComponent.nss = matches[2];
@@ -3627,8 +3817,17 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
-    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
+    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
+    var VALID_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/u;
+    var MALFORMED_SCHEME_ERROR = "URI scheme is malformed.";
+    function decodeValidScheme(scheme) {
+      const decodedScheme = unescape(String(scheme));
+      if (!VALID_SCHEME.test(decodedScheme)) {
+        throw new TypeError(MALFORMED_SCHEME_ERROR);
+      }
+      return decodedScheme;
+    }
     function normalize(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
@@ -3639,14 +3838,36 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
-      const { parsed: baseParsed, malformedAuthorityOrPort: baseMalformed } = parseWithStatus(baseURI, schemelessOptions);
-      const { parsed: relativeParsed, malformedAuthorityOrPort: relativeMalformed } = parseWithStatus(relativeURI, schemelessOptions);
-      if (baseMalformed || relativeMalformed) {
+      const {
+        parsed: baseParsed,
+        malformedAuthorityOrPort: baseMalformed,
+        malformedPercentEncoding: baseMalformedPercentEncoding,
+        malformedSchemeSpecific: baseMalformedSchemeSpecific,
+        malformedHost: baseMalformedHost,
+        malformedScheme: baseMalformedScheme
+      } = parseWithStatus(baseURI, schemelessOptions);
+      const {
+        parsed: relativeParsed,
+        malformedAuthorityOrPort: relativeMalformed,
+        malformedPercentEncoding: relativeMalformedPercentEncoding,
+        malformedSchemeSpecific: relativeMalformedSchemeSpecific,
+        malformedHost: relativeMalformedHost,
+        malformedScheme: relativeMalformedScheme
+      } = parseWithStatus(relativeURI, schemelessOptions);
+      if (baseMalformed || relativeMalformed || baseMalformedPercentEncoding || relativeMalformedPercentEncoding || baseMalformedSchemeSpecific || relativeMalformedSchemeSpecific || baseMalformedHost || relativeMalformedHost || baseMalformedScheme || relativeMalformedScheme) {
         throw new Error(baseParsed.error || relativeParsed.error || "URI is malformed.");
       }
       const resolved = resolveComponent(baseParsed, relativeParsed, schemelessOptions, true);
+      const resolvedSchemeHandler = getSchemeHandler(options && options.scheme || resolved.scheme);
+      const resolvedHost = resolved.host;
+      const resolvedHostIsIP = resolvedHost !== void 0 && resolvedHost !== "" && (isIPv4(resolvedHost) || normalizeIPv6(resolvedHost).isIPV6);
+      canonicalizeHost(resolved, options || {}, resolvedSchemeHandler, resolvedHostIsIP);
+      const encodedASCIIHost = resolvedHost && resolvedHost.indexOf("%") !== -1 && !new RegExp("\\P{ASCII}", "u").test(resolvedHost);
+      if (resolved.error && !encodedASCIIHost) {
+        throw new Error(resolved.error);
+      }
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
@@ -3706,7 +3927,7 @@ var require_fast_uri = __commonJS({
     function equal(uriA, uriB, options) {
       const normalizedA = normalizeComparableURI(uriA, options);
       const normalizedB = normalizeComparableURI(uriB, options);
-      return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA.toLowerCase() === normalizedB.toLowerCase();
+      return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA === normalizedB;
     }
     function serialize(cmpts, opts) {
       const component = {
@@ -3727,19 +3948,22 @@ var require_fast_uri = __commonJS({
       };
       const options = Object.assign({}, opts);
       const uriTokens = [];
+      if (component.scheme) {
+        component.scheme = decodeValidScheme(component.scheme);
+      }
       const schemeHandler = getSchemeHandler(options.scheme || component.scheme);
       if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
+      const hasAuthority = component.userinfo !== void 0 || component.host !== void 0 || component.port !== void 0;
+      const pathNoScheme = !options.skipEscape && component.scheme === void 0 && !hasAuthority;
       if (component.path !== void 0) {
         if (!options.skipEscape) {
-          component.path = escapePreservingEscapes(component.path);
-          if (component.scheme !== void 0) {
-            component.path = component.path.split("%3A").join(":");
-          }
+          component.path = serializePathEncoding(component.path, pathNoScheme);
         } else {
           component.path = normalizePercentEncoding(component.path);
         }
       }
       if (options.reference !== "suffix" && component.scheme) {
+        component.scheme = decodeValidScheme(component.scheme);
         uriTokens.push(component.scheme, ":");
       }
       const authority = recomposeAuthority(component);
@@ -3757,16 +3981,19 @@ var require_fast_uri = __commonJS({
         if (!options.absolutePath && (!schemeHandler || !schemeHandler.absolutePath)) {
           s = removeDotSegments(s);
         }
+        if (pathNoScheme) {
+          s = serializePathEncoding(s, true);
+        }
         if (authority === void 0 && s[0] === "/" && s[1] === "/") {
           s = "/%2F" + s.slice(2);
         }
         uriTokens.push(s);
       }
       if (component.query !== void 0) {
-        uriTokens.push("?", component.query);
+        uriTokens.push("?", encodeQuery(component.query));
       }
       if (component.fragment !== void 0) {
-        uriTokens.push("#", component.fragment);
+        uriTokens.push("#", encodeFragment(component.fragment));
       }
       return uriTokens.join("");
     }
@@ -3782,6 +4009,35 @@ var require_fast_uri = __commonJS({
       }
       return void 0;
     }
+    function hasMalformedPercentEncoding(component) {
+      if (component === void 0) return false;
+      let percent = component.indexOf("%");
+      while (percent !== -1) {
+        if (percent + 2 >= component.length || !/^[\da-f]{2}$/iu.test(component.slice(percent + 1, percent + 3))) {
+          return true;
+        }
+        percent = component.indexOf("%", percent + 3);
+      }
+      return false;
+    }
+    function isIPLiteral(host) {
+      return host[0] === "[" && host[host.length - 1] === "]";
+    }
+    function hasMalformedComponentPercentEncoding(matches) {
+      const host = matches[4];
+      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
+    }
+    function canonicalizeHost(parsed, options, schemeHandler, isIP) {
+      if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && !isIPLiteral(parsed.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
+        try {
+          parsed.host = new URL("http://" + parsed.host).hostname;
+        } catch (e) {
+          parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
+          return true;
+        }
+      }
+      return false;
+    }
     function parseWithStatus(uri, opts) {
       const options = Object.assign({}, opts);
       const parsed = {
@@ -3794,6 +4050,11 @@ var require_fast_uri = __commonJS({
         fragment: void 0
       };
       let malformedAuthorityOrPort = false;
+      let malformedPercentEncoding = false;
+      let malformedSchemeSpecific = false;
+      let malformedHost = false;
+      let malformedIPLiteral = false;
+      let malformedScheme = false;
       let isIP = false;
       if (options.reference === "suffix") {
         if (options.scheme) {
@@ -3830,6 +4091,19 @@ var require_fast_uri = __commonJS({
         parsed.path = matches[6] || "";
         parsed.query = matches[7];
         parsed.fragment = matches[8];
+        if (parsed.scheme !== void 0) {
+          const decodedScheme = unescape(parsed.scheme);
+          if (VALID_SCHEME.test(decodedScheme)) {
+            parsed.scheme = decodedScheme.toLowerCase();
+          } else {
+            parsed.error = parsed.error || MALFORMED_SCHEME_ERROR;
+            malformedScheme = true;
+          }
+        }
+        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches);
+        if (malformedPercentEncoding) {
+          parsed.error = parsed.error || "URI contains malformed percent-encoding.";
+        }
         if (isNaN(parsed.port)) {
           parsed.port = matches[5];
         }
@@ -3841,9 +4115,16 @@ var require_fast_uri = __commonJS({
         if (parsed.host) {
           const ipv4result = isIPv4(parsed.host);
           if (ipv4result === false) {
+            const bracketedIPLiteral = isIPLiteral(parsed.host);
+            const hasIPLiteralBracket = parsed.host.indexOf("[") !== -1 || parsed.host.indexOf("]") !== -1;
             const ipv6result = normalizeIPv6(parsed.host);
-            parsed.host = ipv6result.host.toLowerCase();
-            isIP = ipv6result.isIPV6;
+            isIP = ipv6result.isIPV6 || ipv6result.isIPVFuture === true;
+            malformedIPLiteral = hasIPLiteralBracket && (!bracketedIPLiteral || ipv6result.error === true);
+            parsed.host = isIP ? ipv6result.host : ipv6result.host.toLowerCase();
+            if (malformedIPLiteral) {
+              parsed.error = parsed.error || "URI host is malformed.";
+              malformedAuthorityOrPort = true;
+            }
           } else {
             isIP = true;
           }
@@ -3861,42 +4142,36 @@ var require_fast_uri = __commonJS({
           parsed.error = parsed.error || "URI is not a " + options.reference + " reference.";
         }
         const schemeHandler = getSchemeHandler(options.scheme || parsed.scheme);
-        if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport)) {
-          if (parsed.host && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
-            try {
-              parsed.host = new URL("http://" + parsed.host).hostname;
-            } catch (e) {
-              parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
-            }
-          }
+        if (!malformedIPLiteral) {
+          malformedHost = canonicalizeHost(parsed, options, schemeHandler, isIP);
         }
         if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
           if (uri.indexOf("%") !== -1) {
-            if (parsed.scheme !== void 0) {
-              parsed.scheme = unescape(parsed.scheme);
-            }
-            if (parsed.host !== void 0) {
-              parsed.host = reescapeHostDelimiters(unescape(parsed.host), isIP);
+            if (parsed.host !== void 0 && !malformedIPLiteral) {
+              const host = isIP ? parsed.host : normalizePercentEncoding(parsed.host, true);
+              parsed.host = reescapeHostDelimiters(host, isIP);
             }
           }
           if (parsed.path) {
             parsed.path = normalizePathEncoding(parsed.path);
           }
+          if (parsed.query) {
+            parsed.query = normalizeQueryFragmentEncoding(parsed.query);
+          }
           if (parsed.fragment) {
-            try {
-              parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
-            } catch {
-              parsed.error = parsed.error || "URI malformed";
-            }
+            parsed.fragment = normalizeQueryFragmentEncoding(parsed.fragment);
           }
         }
         if (schemeHandler && schemeHandler.parse) {
           schemeHandler.parse(parsed, options);
+          if (schemeHandler === SCHEMES.urn && parsed.nid === void 0) {
+            malformedSchemeSpecific = true;
+          }
         }
       } else {
         parsed.error = parsed.error || "URI can not be parsed.";
       }
-      return { parsed, malformedAuthorityOrPort };
+      return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
     function parse3(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
@@ -3905,25 +4180,33 @@ var require_fast_uri = __commonJS({
       return normalizeStringWithStatus(uri, opts).normalized;
     }
     function normalizeStringWithStatus(uri, opts) {
-      const { parsed, malformedAuthorityOrPort } = parseWithStatus(uri, opts);
+      const { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme } = parseWithStatus(uri, opts);
       return {
-        normalized: malformedAuthorityOrPort ? uri : serialize(parsed, opts),
-        malformedAuthorityOrPort
+        normalized: malformedAuthorityOrPort || malformedPercentEncoding || malformedSchemeSpecific || malformedHost || malformedScheme ? uri : serialize(parsed, opts),
+        malformedAuthorityOrPort,
+        malformedPercentEncoding,
+        malformedSchemeSpecific,
+        malformedHost,
+        malformedScheme
       };
     }
     function normalizeComparableURI(uri, opts) {
-      if (typeof uri === "string") {
-        const { normalized, malformedAuthorityOrPort } = normalizeStringWithStatus(uri, opts);
-        return malformedAuthorityOrPort ? void 0 : normalized;
+      if (typeof uri !== "string" && typeof uri !== "object") {
+        return void 0;
       }
-      if (typeof uri === "object") {
-        return serialize(uri, opts);
+      let value;
+      try {
+        value = typeof uri === "string" ? uri : serialize(uri, opts);
+      } catch {
+        return void 0;
       }
+      const { normalized, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme } = normalizeStringWithStatus(value, opts);
+      return malformedAuthorityOrPort || malformedPercentEncoding || malformedSchemeSpecific || malformedHost || malformedScheme ? void 0 : normalized;
     }
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -6913,10 +7196,10 @@ var require_dist = __commonJS({
 });
 
 // src/server/server.ts
-import { spawn } from "node:child_process";
-import { existsSync as existsSync2, realpathSync } from "node:fs";
+import { spawn as spawn2 } from "node:child_process";
+import { existsSync as existsSync4, realpathSync as realpathSync2 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { dirname as dirname5, join as join4 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/external.js
@@ -19029,7 +19312,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -19046,7 +19329,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -19124,7 +19407,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -19385,12 +19668,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -20481,7 +20764,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -21145,12 +21428,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve) => {
+    return new Promise((resolve2) => {
       const json = serializeMessage(message);
       if (this._stdout.write(json)) {
-        resolve();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
@@ -21725,7 +22008,9 @@ var SGR = {
   greenDim: "32;2",
   // done, but nothing behind the claim: green, not fully lit
   red: "31",
-  faint: "90"
+  faint: "90",
+  focus: "97"
+  // bright foreground without changing font weight
 };
 var ANSI_RESET = "\x1B[0m";
 var UP = 1;
@@ -21845,7 +22130,7 @@ var Canvas = class {
         } else if (charWidth(ch.codePointAt(0)) === 2 && x + 1 >= vp.x + vp.width) {
           ch = " ";
         }
-        const params = ch === " " ? "" : isWire ? c.bright ? "1" : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
+        const params = ch === " " ? "" : isWire ? c.bright ? SGR.focus : SGR.faint : [SGR[c.style], c.bold ? "1" : ""].filter(Boolean).join(";");
         if (opts.color && params !== open) {
           line2 += (open !== "" ? ANSI_RESET : "") + (params !== "" ? `\x1B[${params}m` : "");
           open = params;
@@ -22191,6 +22476,7 @@ function drawBands(canvas, columns, rows, wiredWidth, totalWidth) {
 function drawBox(canvas, box, opts, neutral, face, focused = false) {
   const { node, x, y, w } = box;
   const skin = neutral ? neutralSkin(opts.unicode) : skinFor(face, opts.unicode);
+  const borderStyle = focused ? "focus" : skin.style;
   const slotGlyph = neutral ? neutralGlyph(node, opts.unicode) : glyphFor(face, opts);
   if (box.borderless) {
     canvas.text(x + 1, y, slotGlyph, skin.style, true);
@@ -22198,18 +22484,18 @@ function drawBox(canvas, box, opts, neutral, face, focused = false) {
   }
   const inner = w - 2;
   const pad = box.pad === 1 ? " " : "";
-  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], skin.style, focused);
-  canvas.text(x, y + 1, skin.v, skin.style, focused);
+  canvas.text(x, y, skin.corners[0] + skin.h.repeat(inner) + skin.corners[1], borderStyle);
+  canvas.text(x, y + 1, skin.v, borderStyle);
   canvas.text(x + 1, y + 1, `${pad}${slotGlyph} ${box.label}${pad}`, skin.style, true);
-  canvas.text(x + w - 1, y + 1, skin.v, skin.style, focused);
+  canvas.text(x + w - 1, y + 1, skin.v, borderStyle);
   for (let i = 0; i < box.extra.length; i++) {
     const row = box.extra[i];
     const yy = y + 2 + i;
-    canvas.text(x, yy, skin.v, skin.style, focused);
+    canvas.text(x, yy, skin.v, borderStyle);
     canvas.text(x + 1, yy, row.text, row.style);
-    canvas.text(x + w - 1, yy, skin.v, skin.style, focused);
+    canvas.text(x + w - 1, yy, skin.v, borderStyle);
   }
-  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], skin.style, focused);
+  canvas.text(x, y + box.h - 1, skin.corners[2] + skin.h.repeat(inner) + skin.corners[3], borderStyle);
 }
 function drawEdges(canvas, edges, rows, opts) {
   for (const edge of edges) {
@@ -22388,29 +22674,43 @@ function layoutRows(columns, geo, gapRowCount, hasTitle, hasLanes) {
 
 // src/render/render.ts
 function renderMap(map, opts) {
-  const built = buildCanvas(map, opts);
+  const built = paint(prepareScene(map, opts), opts);
   return built.canvas.emit(opts);
 }
-function buildCanvas(map, opts) {
+function prepareScene(map, opts) {
   const oriented = flipForSequence(map);
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
   const drawn = aggregated ?? oriented;
-  return paint(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo, unverifiedDoneIds(oriented, drawn));
+  const unverified = unverifiedDoneIds(oriented, drawn);
+  if (drawn.layers.length === 0) return { map: drawn, unverified };
+  return { map: drawn, unverified, geometry: prepareGeometry(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo) };
 }
-function paint(map, opts, geo, unverified) {
-  const canvas = new Canvas();
-  if (map.layers.length === 0) {
-    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
-    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
-    return { canvas, hits: [] };
-  }
+function prepareGeometry(map, opts, geo) {
   const neutral = isNeutralKind(map);
   const columns = layoutColumns(map, geo, opts.unicode, neutral);
   const routing = routeEdges(map, columns);
   const rows = layoutRows(columns, geo, routing.gapRowCount, map.title !== void 0, map.lanes.length > 0);
   const wiredWidth = routing.fallbackCount > 0 ? columns.contentWidth + 2 + routing.fallbackCount * 2 : columns.contentWidth;
   const totalWidth = wiredWidth + Math.max(...columns.bandLabel.map(displayWidth));
+  const hits = [...rows.boxOf.values()].map((b) => ({
+    id: b.node.id,
+    x: b.x,
+    y: b.y,
+    w: b.w,
+    h: b.h
+  }));
+  return { neutral, columns, routing, rows, wiredWidth, totalWidth, hits };
+}
+function paint(scene, opts) {
+  const { map, unverified, geometry } = scene;
+  const canvas = new Canvas();
+  if (geometry === void 0) {
+    canvas.text(0, 0, map.title ?? "mellos mapping", "none", true);
+    canvas.text(0, 2, "(empty map \u2014 declare layers and nodes to begin)", "dim");
+    return { canvas, hits: [] };
+  }
+  const { neutral, columns, routing, rows, wiredWidth, totalWidth, hits } = geometry;
   if (map.title !== void 0) drawTitle(canvas, map.title);
   drawLaneHeaders(canvas, map, columns, rows);
   drawBands(canvas, columns, rows, wiredWidth, totalWidth);
@@ -22421,13 +22721,6 @@ function paint(map, opts, geo, unverified) {
   }
   drawEdges(canvas, routing.edges, rows, opts);
   drawLegend(canvas, map, opts, rows.legendY, neutral, unverified.size > 0);
-  const hits = [...rows.boxOf.values()].map((b) => ({
-    id: b.node.id,
-    x: b.x,
-    y: b.y,
-    w: b.w,
-    h: b.h
-  }));
   return { canvas, hits };
 }
 
@@ -22678,6 +22971,9 @@ function errnoOf(e) {
   return e.code ?? e.message;
 }
 function writeFileAtomic(path, contents) {
+  return writeAtomic(path, contents, RENAME_MAX_ATTEMPTS);
+}
+function writeAtomic(path, contents, maxAttempts) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -22693,7 +22989,7 @@ function writeFileAtomic(path, contents) {
       return ok(void 0);
     } catch (e) {
       const code = errnoOf(e);
-      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= maxAttempts) {
         discardTemp(tmp);
         return err({ kind: "save-failed", path, detail: `${code} after ${attempt} attempt(s)` });
       }
@@ -22762,11 +23058,14 @@ function parseViewerReport(raw) {
   if (parsed["version"] !== VIEWER_FILE_VERSION) return void 0;
   const follow = parsed["follow"];
   if (typeof follow !== "boolean") return void 0;
+  const owner = parsed["owner"];
+  if (owner !== void 0 && (typeof owner !== "string" || !makePageId(owner).ok)) return void 0;
+  const binding = owner === void 0 ? {} : { owner };
   const page2 = parsed["page"];
-  if (page2 === null || page2 === void 0) return { page: void 0, follow };
+  if (page2 === null || page2 === void 0) return { page: void 0, follow, ...binding };
   if (typeof page2 !== "string") return void 0;
   const id2 = makePageId(page2);
-  return id2.ok ? { page: id2.value, follow } : void 0;
+  return id2.ok ? { page: id2.value, follow, ...binding } : void 0;
 }
 function readLiveViewers(defaultFile, nowMs) {
   const dir = viewersDirPath(defaultFile);
@@ -23143,9 +23442,345 @@ function summarize(map) {
   return `map now: ${map.layers.length} layer(s), ${map.nodes.length} node(s)` + (statusPart ? ` [${statusPart}]` : "") + (map.groups.length > 0 ? `, ${map.groups.length} group(s)` : "") + (map.lanes.length > 0 ? `, ${map.lanes.length} lane(s)` : "") + `, ${map.edges.length} edge(s)` + (map.kind !== void 0 && map.kind !== "dev" ? ` (${map.kind})` : "");
 }
 
+// src/preview/publisher.ts
+import { createHash } from "node:crypto";
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
+import { dirname as dirname2, join as join2, resolve } from "node:path";
+
+// src/preview/presentation.ts
+var LABELS = { planned: "\u5F85\u5F00\u53D1", "in-progress": "\u5F00\u53D1\u4E2D", done: "\u5DF2\u9A8C\u8BC1", regressed: "\u51FA\u73B0\u56DE\u5F52" };
+function isVerified(node) {
+  return node.status === "done" && node.evidence !== void 0;
+}
+function statusText(node) {
+  return node.status === "done" && !isVerified(node) ? `${unverifiedDoneGlyph(true)} \u5B8C\u6210\u4F46\u7F3A\u5C11\u8BC1\u636E` : `${statusGlyph(node.status, true)} ${LABELS[node.status]}`;
+}
+function documentName(page2) {
+  return page2 === void 0 ? "map.md" : `page-${page2}.md`;
+}
+
+// src/preview/text.ts
+function xml(text2) {
+  return text2.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function markdown(text2) {
+  return text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/([\\`*_[\]{}()#+.!|~-])/g, "\\$1").replace(/\r?\n/g, "  \n");
+}
+function cell(text2) {
+  return markdown(text2).replace(/  \n/g, "<br>");
+}
+
+// src/preview/markdown.ts
+function renderMapMarkdown(map, image, pages) {
+  const neutral = isNeutralKind(map);
+  const rows = [
+    `# ${markdown(map.title ?? "\u6885\u52D2\u65AF\u5730\u56FE")}`,
+    "",
+    "[\u6240\u6709\u5730\u56FE](index.md)",
+    "",
+    "> \u81EA\u52A8\u751F\u6210\u7684\u5730\u56FE\u9884\u89C8\uFF1B\u4FEE\u6539\u5730\u56FE\u6570\u636E\u540E\u91CD\u65B0\u751F\u6210\u3002",
+    ""
+  ];
+  if (!neutral) {
+    const active = map.nodes.filter((n) => n.status === "in-progress");
+    rows.push(
+      `**\u5F53\u524D\uFF1A** ${active.length ? active.map((n) => markdown(n.label)).join("\u3001") : "\u6682\u65E0\u8FDB\u884C\u4E2D\u7684\u6A21\u5757"}`,
+      "",
+      `\u5DF2\u9A8C\u8BC1 **${map.nodes.filter(isVerified).length} / ${map.nodes.length}**\u3000\uFF5C\u3000\u56DE\u5F52 **${map.nodes.filter((n) => n.status === "regressed").length}**`,
+      ""
+    );
+  }
+  rows.push("## \u5206\u5C42\u4F9D\u8D56", "", `![\u5206\u5C42\u4F9D\u8D56\u5730\u56FE](${image})`, "");
+  if (!neutral) rows.push("\xB7 \u5F85\u5F00\u53D1\u3000\u283F \u5F00\u53D1\u4E2D\u3000\u25A0 \u5DF2\u9A8C\u8BC1\u3000\u2717 \u51FA\u73B0\u56DE\u5F52\u3000\u25A1 \u5B8C\u6210\u4F46\u7F3A\u5C11\u8BC1\u636E", "");
+  rows.push(map.kind === "sequence" ? "\u65F6\u95F4\u4ECE\u4E0A\u5411\u4E0B\u63A8\u8FDB\uFF1B\u7BAD\u5934\u4FDD\u7559\u5730\u56FE\u4E2D\u7684\u4F9D\u8D56\u65B9\u5411\u3002" : "\u7BAD\u5934\u7531\u4F7F\u7528\u65B9\u6307\u5411\u5B83\u4F9D\u8D56\u7684\u6A21\u5757\uFF1B\u57FA\u7840\u5C42\u4F4D\u4E8E\u4E0B\u65B9\u3002", "", "## \u6A21\u5757\u8BE6\u60C5", "");
+  const nodes = new Map(map.nodes.map((n) => [n.id, n]));
+  const layers = [...map.layers].sort((a, b) => map.kind === "sequence" ? a.rank - b.rank : b.rank - a.rank);
+  for (const layer of layers) {
+    rows.push(`### ${markdown(layer.name)}`, "");
+    const members = map.nodes.filter((n) => n.layer === layer.id);
+    if (!members.length) rows.push("\u5C1A\u672A\u58F0\u660E\u6A21\u5757\u3002", "");
+    for (const node of members) {
+      rows.push(`#### ${markdown(node.label)}${neutral ? "" : `\u3000${statusText(node)}`}`, "");
+      if (node.detail !== void 0) rows.push(markdown(node.detail), "");
+      const used = map.edges.filter((e) => e.from === node.id);
+      rows.push(`**\u4F9D\u8D56\uFF1A** ${used.length ? used.map((e) => `${markdown(nodes.get(e.to).label)}${e.label !== void 0 ? `\uFF08${markdown(e.label)}\uFF09` : ""}`).join("\u3001") : "\u65E0"}`, "");
+      const meta = [
+        node.group === void 0 ? void 0 : map.groups.find((g) => g.id === node.group)?.label,
+        node.lane === void 0 ? void 0 : map.lanes.find((l) => l.id === node.lane)?.label,
+        node.kind
+      ].filter((v) => v !== void 0);
+      if (meta.length) rows.push(`**\u5F52\u5C5E / \u7C7B\u578B\uFF1A** ${meta.map(markdown).join(" \xB7 ")}`, "");
+      if (node.evidence !== void 0) rows.push(`**\u9A8C\u8BC1\u8BB0\u5F55\uFF1A** ${markdown(node.evidence)}`, "");
+      if (node.submap !== void 0) rows.push(pages.some((p) => p.page === node.submap) ? `[\u6253\u5F00\u5B50\u56FE\uFF1A${markdown(node.submap)}](${documentName(node.submap)})` : `\u5B50\u56FE\u5C1A\u672A\u521B\u5EFA\uFF1A${markdown(node.submap)}`, "");
+    }
+  }
+  if (!neutral) {
+    rows.push("## \u9A8C\u8BC1\u8BB0\u5F55", "", "| \u6A21\u5757 | \u72B6\u6001 | \u6700\u8FD1\u8BC1\u636E |", "| --- | --- | --- |");
+    for (const node of map.nodes) rows.push(`| ${cell(node.label)} | ${statusText(node)} | ${node.evidence === void 0 ? "\u5C1A\u672A\u8BB0\u5F55" : cell(node.evidence)} |`);
+    rows.push("");
+  }
+  rows.push("---", "", "\u9759\u6001\u6587\u6863\uFF1A\u66F4\u65B0\u65F6\u91CD\u65B0\u751F\u6210\u5730\u56FE\u56FE\u7247\u4E0E\u6587\u5B57\u3002\u56FE\u4E2D\u8282\u70B9\u4E0D\u652F\u6301\u62D6\u62FD\u3001\u60AC\u505C\u5C55\u5F00\u6216\u52A8\u753B\u3002", "");
+  return rows.join("\n");
+}
+function renderPreviewIndex(pages) {
+  return [
+    "# \u6885\u52D2\u65AF\u5730\u56FE \xB7 \u9875\u9762\u76EE\u5F55",
+    "",
+    ...pages.map((p) => `- [${markdown(p.map.title ?? p.page ?? "\u9ED8\u8BA4\u5730\u56FE")}](${documentName(p.page)})`),
+    "",
+    "\u5730\u56FE\u9884\u89C8\u7531\u9879\u76EE\u5185\u7684\u5730\u56FE\u6570\u636E\u751F\u6210\u3002",
+    ""
+  ].join("\n");
+}
+
+// src/preview/svg.ts
+var X = 8;
+var Y = 26;
+var TOP = 20;
+var PALETTES = {
+  planned: ["#f5f7fa", "#98a3b2", "#566477"],
+  "in-progress": ["#fff4d9", "#c48c24", "#805910"],
+  done: ["#e9f5ee", "#67a883", "#286247"],
+  regressed: ["#fdecec", "#cc7575", "#923d3d"],
+  unverified: ["#fff6e8", "#b49a77", "#785e3e"],
+  neutral: ["#f2f5f9", "#a1adbc", "#364558"]
+};
+function renderMapSvg(map) {
+  const neutral = isNeutralKind(map);
+  const originals = new Map(map.nodes.map((n) => [n.id, n]));
+  const oriented = flipForSequence(map);
+  const shaped = { ...oriented, nodes: oriented.nodes.map((n) => {
+    const label = fitWidth(n.label, 32);
+    return { ...n, label: label + " ".repeat(Math.max(0, 20 - displayWidth(label))) };
+  }) };
+  const geo = { ...zoomGeometry(0), boxGap: 6 };
+  const columns = layoutColumns(shaped, geo, true, neutral);
+  const routing = routeEdges(shaped, columns);
+  const rows = layoutRows(columns, geo, routing.gapRowCount, false, map.lanes.length > 0);
+  const width = Math.max(440, (columns.contentWidth + 4 + routing.fallbackCount * 2) * X);
+  const height = Math.max(100, TOP + rows.legendY * Y);
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="map-title map-desc">`,
+    `<title id="map-title">${xml(map.title ?? "\u6885\u52D2\u65AF\u5730\u56FE")}</title>`,
+    `<desc id="map-desc">${map.nodes.length} \u4E2A\u8282\u70B9\uFF0C${map.edges.length} \u6761\u4F9D\u8D56\u3002\u5B8C\u6574\u8BF4\u660E\u4E0E\u9A8C\u8BC1\u8BB0\u5F55\u5728\u5730\u56FE\u6587\u6863\u4E2D\u3002</desc>`,
+    '<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#8995a5"/></marker></defs>',
+    `<rect width="${width}" height="${height}" fill="#ffffff"/>`,
+    '<g font-family="Segoe UI, Microsoft YaHei, Noto Sans CJK SC, sans-serif">'
+  ];
+  if (map.nodes.length === 0) parts.push('<text x="20" y="52" font-size="14" fill="#657286">\u5C1A\u672A\u58F0\u660E\u6A21\u5757\uFF0C\u7B49\u5F85\u5730\u56FE\u66F4\u65B0\u3002</text>');
+  columns.bands.forEach((band, i) => {
+    const top = TOP + rows.barY[i] * Y;
+    const boxes = rows.bandBoxes[i];
+    const bottom = boxes.reduce((max, b) => Math.max(max, TOP + (b.y + b.h - 1) * Y), top + 60);
+    parts.push(`<rect x="8" y="${top - 10}" width="${width - 16}" height="${bottom - top + 26}" rx="5" fill="#fafbfc"/>`);
+    parts.push(`<text x="16" y="${top + 5}" font-size="12" fill="#6a7687">${xml(fitWidth(band.name, Math.floor((width - 40) / X)))}</text>`);
+  });
+  if (rows.laneHeaderY !== void 0) map.lanes.forEach((lane, i) => {
+    const region = columns.lanes[i];
+    parts.push(`<text x="${(region.x + region.w / 2) * X}" y="${TOP + rows.laneHeaderY * Y + 5}" text-anchor="middle" font-size="12" fill="#566477">${xml(fitWidth(lane.label, region.w))}</text>`);
+  });
+  for (const edge of routing.edges) {
+    const points = edgePolyline(edge, rows).map(([x, y]) => `${x * X},${TOP + y * Y}`).join(" ");
+    parts.push(`<polyline points="${points}" fill="none" stroke="#8995a5" stroke-width="1.4" marker-end="url(#arrow)"/>`);
+  }
+  for (const box of rows.boxOf.values()) {
+    const node = originals.get(box.node.id);
+    const palette = neutral ? PALETTES.neutral : node.status === "done" && !isVerified(node) ? PALETTES.unverified : PALETTES[node.status];
+    const x = box.x * X, y = TOP + box.y * Y, w = (box.w - 1) * X, h = (box.h - 1) * Y;
+    const dash = !neutral && node.status === "planned" ? ' stroke-dasharray="5 4"' : "";
+    parts.push(`<g data-node="${xml(node.id)}"><title>${xml(node.label)}${neutral ? "" : ` \xB7 ${xml(statusText(node))}`}</title>`);
+    parts.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="${palette[0]}" stroke="${palette[1]}" stroke-width="1.5"${dash}/>`);
+    parts.push(`<text x="${x + w / 2}" y="${y + 21}" text-anchor="middle" font-size="14" fill="${palette[2]}">${xml(box.label.trim())}</text>`);
+    const secondary = neutral ? node.kind ?? node.id : statusText(node);
+    parts.push(`<text x="${x + w / 2}" y="${y + 40}" text-anchor="middle" font-size="11" fill="${palette[2]}">${xml(fitWidth(secondary, box.w - 4))}</text></g>`);
+  }
+  parts.push("</g></svg>");
+  return parts.join("\n");
+}
+
+// src/preview/publisher.ts
+var PREVIEW_DIR_NAME = "previews";
+var ENABLED = ".enabled";
+var PUBLISH_LOCK = ".publish-lock";
+function previewDirectory(defaultFile) {
+  return join2(dirname2(defaultFile), PREVIEW_DIR_NAME);
+}
+function previewFile(defaultFile, page2) {
+  if (page2 !== void 0 && !ID_RULE.test(page2)) throw new Error("Invalid preview page id.");
+  return join2(previewDirectory(defaultFile), documentName(page2));
+}
+function save(path, contents) {
+  try {
+    if (readFileSync2(path, "utf8") === contents) return;
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  const result = writeFileAtomic(path, contents);
+  if (!result.ok) throw new Error(describeStoreError(result.error));
+}
+function ownedDirectory(path) {
+  mkdirSync2(path, { recursive: true });
+  const expected = join2(realpathSync(dirname2(path)), path.slice(dirname2(path).length + 1));
+  const actual = realpathSync(path);
+  if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
+    throw new Error(`Preview directory redirects outside its parent: ${path}`);
+  }
+}
+function acquireLock(directory) {
+  const path = join2(directory, PUBLISH_LOCK);
+  const deadline = Date.now() + 2e3;
+  while (true) {
+    try {
+      mkdirSync2(path);
+      return () => rmdirSync(path);
+    } catch (error2) {
+      if (error2.code !== "EEXIST") throw error2;
+      if (Date.now() >= deadline) throw new Error(`Preview export is busy or was interrupted. Retry; if no exporter is running, remove the stale lock directory: ${path}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+function createPreviewPublisher(defaultFile) {
+  const directory = previewDirectory(defaultFile);
+  const enabledFile = join2(directory, ENABLED);
+  const enabled = () => existsSync2(enabledFile);
+  const refresh = (page2) => {
+    try {
+      const path = previewFile(defaultFile, page2);
+      ownedDirectory(directory);
+      const release = acquireLock(directory);
+      try {
+        const pages = [];
+        for (const source of listPageFiles(defaultFile)) {
+          const slug = pageIdOfFile(defaultFile, source);
+          if (slug !== void 0 && !ID_RULE.test(slug)) throw new Error(`Invalid map page filename: ${source}`);
+          const loaded = loadMapFile(source);
+          if (!loaded.ok) throw new Error(describeStoreError(loaded.error));
+          pages.push({ page: slug, map: loaded.value });
+        }
+        if (page2 !== void 0 && !pages.some((p) => p.page === page2)) return err(`No map page named "${page2}".`);
+        if (page2 === void 0 && !pages.some((p) => p.page === void 0)) pages.unshift({ page: void 0, map: EMPTY_MAP });
+        const images = join2(directory, "images");
+        ownedDirectory(images);
+        const present = /* @__PURE__ */ new Set();
+        for (const item of pages) {
+          const svg = renderMapSvg(item.map);
+          const digest = createHash("sha256").update(svg).digest("hex");
+          const image = `images/${digest}.svg`;
+          save(join2(images, `${digest}.svg`), svg);
+          const filename = documentName(item.page);
+          save(join2(directory, filename), renderMapMarkdown(item.map, image, pages));
+          present.add(filename);
+        }
+        for (const filename of readdirSync2(directory)) {
+          if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
+            save(join2(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
+          }
+        }
+        const index = join2(directory, "index.md");
+        save(index, renderPreviewIndex(pages));
+        return ok({ path: resolve(path), index: resolve(index), pages: pages.length });
+      } finally {
+        release();
+      }
+    } catch (error2) {
+      return err(error2 instanceof Error ? error2.message : String(error2));
+    }
+  };
+  const activate = (page2) => {
+    const published = refresh(page2);
+    if (!published.ok) return published;
+    try {
+      save(enabledFile, "Markdown preview updates are enabled for this project.\n");
+    } catch (error2) {
+      return err(error2 instanceof Error ? error2.message : String(error2));
+    }
+    return published;
+  };
+  return { enabled, refresh, activate };
+}
+
+// src/web/launcher.ts
+import { spawn } from "node:child_process";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { dirname as dirname4, join as join3 } from "node:path";
+
+// src/web/source.ts
+import { createHash as createHash2 } from "node:crypto";
+import { statSync as statSync2 } from "node:fs";
+import { basename as basename2, dirname as dirname3 } from "node:path";
+function readWebSnapshot(defaultFile) {
+  const pages = listPageFiles(defaultFile).map((file) => {
+    const id2 = pageIdOfFile(defaultFile, file) ?? "";
+    const title = id2 || "\u9ED8\u8BA4\u5730\u56FE";
+    try {
+      if (id2 !== "" && !ID_RULE.test(id2)) throw new Error("Invalid page filename");
+      const modified = statSync2(file).mtimeMs;
+      const result = loadMapFile(file);
+      return result.ok ? { id: id2, title: result.value.title ?? title, modified, map: result.value } : { id: id2, title, modified, error: describeStoreError(result.error) };
+    } catch (error2) {
+      return { id: id2, title, modified: 0, error: String(error2) };
+    }
+  });
+  if (pages.length === 0) pages.push({ id: "", title: "\u7B49\u5F85\u7B2C\u4E00\u5F20\u5730\u56FE", modified: 0, map: EMPTY_MAP });
+  const value = { project: basename2(dirname3(dirname3(defaultFile))), pages };
+  return { revision: createHash2("sha256").update(JSON.stringify(value)).digest("hex"), value };
+}
+
+// src/web/launcher.ts
+var webRuntimeFile = (defaultFile) => join3(dirname4(defaultFile), "web", "server.json");
+async function runningWebUrl(defaultFile) {
+  try {
+    const info = JSON.parse(readFileSync3(webRuntimeFile(defaultFile), "utf8"));
+    if (!Number.isInteger(info.port) || info.port < 1 || info.port > 65535 || !/^[a-f0-9]{48}$/.test(info.token)) return void 0;
+    const url = `http://127.0.0.1:${info.port}/${info.token}/`;
+    const response = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(700) });
+    if (response.ok && (await response.json()).file === defaultFile) return url;
+  } catch {
+  }
+  return void 0;
+}
+async function openWebPreview(defaultFile, entry, page2) {
+  if (page2 !== void 0 && (!ID_RULE.test(page2) || !readWebSnapshot(defaultFile).value.pages.some((p) => p.id === page2))) throw new Error(`No map page named "${page2}".`);
+  let url = await runningWebUrl(defaultFile);
+  if (!url) {
+    if (!existsSync3(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
+    const child = spawn(process.execPath, [entry, "--serve", defaultFile], { detached: true, windowsHide: true, stdio: "ignore" });
+    let failure;
+    child.on("error", (error2) => {
+      failure = error2;
+    });
+    child.unref();
+    const deadline = Date.now() + 8e3;
+    while (!url && Date.now() < deadline) {
+      if (failure) throw failure;
+      await new Promise((resolve2) => setTimeout(resolve2, 100));
+      url = await runningWebUrl(defaultFile);
+    }
+    if (!url) throw new Error("Web preview did not start. Run the web CLI directly to inspect the error.");
+  }
+  return page2 === void 0 ? url : `${url}?page=${encodeURIComponent(page2)}`;
+}
+
+// src/server/terminal-handoff.ts
+function terminalHandoff(node, watcher, stateFile, page2) {
+  const args = [watcher, "--file", stateFile, ...page2 ? ["--page", page2] : []];
+  const tokens = [node, ...args];
+  if (tokens.some((token) => /[\r\n\0]/.test(token))) throw new Error("Terminal paths must fit on one line.");
+  const powershell = (token) => `'${token.replaceAll("'", "''")}'`;
+  const posix = (token) => `'${token.replaceAll("'", `'"'"'`)}'`;
+  return {
+    command: node,
+    args,
+    powershell: `& ${tokens.map(powershell).join(" ")}`,
+    posix: tokens.map(posix).join(" "),
+    hostOpen: { placement: "right", target: { type: "terminal" } }
+  };
+}
+
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.20.3";
+var SERVER_VERSION = "0.21.0";
 var TITLE_MAX = 120;
 var LABEL_MAX = 60;
 var DETAIL_MAX = 600;
@@ -23218,14 +23853,14 @@ function paneLine(stateFile, touched) {
   }
   return `pane: open on ${elsewhere}, auto-follow OFF \u2014 the user pinned that page, so this change is NOT on their screen. Tell them rather than switching it behind them; mmap_open {page} retargets the pane if they want it moved.`;
 }
-var LAUNCH_TIMEOUT_MS = 45e3;
+var LAUNCH_TIMEOUT_MS = 6e4;
 var PANE_REPORT_TIMEOUT_MS = 8e3;
 var PANE_REPORT_POLL_MS = 250;
 function launcherPath(moduleUrl) {
-  return join2(dirname2(dirname2(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
+  return join4(dirname5(dirname5(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
 }
 function projectDirOf(stateFile) {
-  return dirname2(dirname2(stateFile));
+  return dirname5(dirname5(stateFile));
 }
 function launcherArgs(projectDir, page2, window) {
   const args = [projectDir];
@@ -23234,8 +23869,8 @@ function launcherArgs(projectDir, page2, window) {
   return args;
 }
 function runLauncher(script, args) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [script, ...args], {
+  return new Promise((resolve2) => {
+    const child = spawn2(process.execPath, [script, ...args], {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -23248,29 +23883,31 @@ function runLauncher(script, args) {
     const abandon = setTimeout(() => child.kill(), LAUNCH_TIMEOUT_MS);
     child.on("error", (e) => {
       clearTimeout(abandon);
-      resolve({ ok: false, output: e.message });
+      resolve2({ ok: false, output: e.message });
     });
     child.on("close", (code) => {
       clearTimeout(abandon);
-      resolve({ ok: code === 0, output: output.trim() });
+      resolve2({ ok: code === 0, output: output.trim() });
     });
   });
 }
 function paneShows(viewers, page2) {
   return page2 === void 0 ? viewers.length > 0 : viewers.some((v) => v.page === page2);
 }
-async function awaitPane(stateFile, page2, deadlineMs) {
+async function awaitPane(stateFile, page2, deadlineMs, pid) {
   for (; ; ) {
-    const viewers = readLiveViewers(stateFile, Date.now());
+    const viewers = readLiveViewers(stateFile, Date.now()).filter((viewer) => pid === void 0 || viewer.pid === pid);
     if (paneShows(viewers, page2)) return viewers;
     if (Date.now() >= deadlineMs) return viewers;
     await new Promise((r) => setTimeout(r, PANE_REPORT_POLL_MS));
   }
 }
 function openOutcome(run, viewers, page2) {
+  const pid = launcherViewerPid(run);
+  viewers = viewers.filter((viewer) => pid === void 0 || viewer.pid === pid);
   if (!run.ok) {
     return `could not open the pane: ${run.output === "" ? "the launcher failed without saying why" : run.output}
-Relay this to the user \u2014 on a machine without Windows Terminal the map is opened by running the watcher in any second terminal or tmux split (see the plugin README).`;
+Relay the launcher reason. A failed default split is not permission to open a separate window.`;
   }
   if (paneShows(viewers, page2)) {
     return `pane: open and showing ${pageName(page2)} \u2014 the user can see the map now.
@@ -23283,6 +23920,10 @@ ${run.output}`;
   }
   return `the launcher succeeded but no pane has reported in within ${PANE_REPORT_TIMEOUT_MS / 1e3}s. It may still be starting; the \`pane:\` line on your next write says whether it made it.
 ` + run.output;
+}
+function launcherViewerPid(run) {
+  const raw = /^MMAP_PANE [^\r\n]*\bpid=([1-9]\d*)(?:\s|$)/m.exec(run.output)?.[1];
+  return raw === void 0 ? void 0 : Number(raw);
 }
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -23299,6 +23940,16 @@ function loadOrEmpty(stateFile) {
 function buildServer(stateFile, userConfigFile) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
   const projectConfigFile = configFilePath(stateFile);
+  const previews = createPreviewPublisher(stateFile);
+  const refreshPreview = (page2) => {
+    if (!previews.enabled()) return "";
+    const published = previews.refresh(page2);
+    return published.ok ? `
+preview: updated
+markdown: ${published.value.path}
+File generated; desktop visibility is not tracked.` : `
+preview: STALE \u2014 map changes were saved, but preview generation failed: ${published.error}. Retry mmap_open {surface: "markdown"}; do not repeat the map mutation.`;
+  };
   const fileOf = (page2) => pageFilePath(stateFile, page2);
   const mutate = (page2, apply) => {
     const file = fileOf(page2);
@@ -23308,10 +23959,10 @@ function buildServer(stateFile, userConfigFile) {
     if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
     const saved = saveMapFile(file, applied.value);
     if (!saved.ok) return saveFailed(saved.error);
-    return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : ""));
+    return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : "") + refreshPreview(page2));
   };
-  const withPane = (result, page2) => result.isError === true ? result : text(`${result.content[0]?.text ?? ""}
-${paneLine(stateFile, page2)}`);
+  const withPane = (result, page2) => result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ""}
+${existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : paneLine(stateFile, page2)}`);
   const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
   const refusePageDeletion = (pages, target) => {
     if (target !== void 0 && pages.includes(target)) {
@@ -23338,7 +23989,7 @@ ${paneLine(stateFile, page2)}`);
       if (removed.ok) deleted.push(p);
       else failed.push(`${p} (${describeStoreError(removed.error)})`);
     }
-    const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(", ") : "(none)"}`;
+    const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(", ") : "(none)"}` + (deleted.length ? refreshPreview(void 0) : "");
     if (failed.length === 0) return text(`${summary}${gone}`);
     return text(
       `${summary}${gone}; could NOT delete: ${failed.join("; ")}. Deleting files is not a transaction: what is named deleted above is gone for good, and only the failures are worth retrying.`,
@@ -23543,17 +24194,20 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
+      const surface = previews.enabled() ? `markdown: ${previewFile(stateFile, input.page)}
+Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : paneLine(stateFile, input.page);
       return text(`${picture}
 ${pagesLine(stateFile, input.page)}
-${paneLine(stateFile, input.page)}`);
+${surface}`);
     }
   );
   server.registerTool(
     "mmap_open",
     {
       title: "Open the map pane",
-      description: "Put the live map on the user's screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.",
+      description: 'For ChatGPT desktop in Codex mode, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.',
       inputSchema: closed({
+        surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web"]).optional().describe("codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)"),
         page: id(
           "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
         ).optional(),
@@ -23563,23 +24217,51 @@ ${paneLine(stateFile, input.page)}`);
       })
     },
     async (input) => {
+      if (input.surface === "codex-terminal") {
+        if (input.window === true) return text("codex-terminal uses the current conversation panel; window: true is not supported.", true);
+        if (input.page && !listPageFiles(stateFile).some((file) => pageIdOfFile(stateFile, file) === input.page)) {
+          return text(`Unknown page: ${input.page}. ${pagesLine(stateFile, input.page)}`, true);
+        }
+        const handoff = terminalHandoff(process.execPath, fileURLToPath(new URL("./watch.mjs", import.meta.url)), stateFile, input.page);
+        return text("terminal: ready-to-start\n" + JSON.stringify(handoff, null, 2) + "\nUse open_in_codex with hostOpen in the CURRENT conversation, without a threadId. If a supported host tool can run commands in that user terminal, use it. Otherwise give the user the command for their shell to paste once. An exec_command session_id belongs to the agent PTY, not this terminal. queued is not visible, and opened is not running. Use read_thread_terminal to confirm the map title and controls after startup. Preserve a page the user pinned.");
+      }
+      if (input.surface === "web") {
+        if (input.window === true) return text('surface: "web" cannot be combined with window: true. Open the returned URL using the desktop host.', true);
+        try {
+          const url = await openWebPreview(stateFile, fileURLToPath(new URL("./web.mjs", import.meta.url)), input.page);
+          return text(`preview: ready
+web: ${url}
+Open this URL in the current conversation's right browser panel using the host tool. The viewer refreshes from project maps while open. Existing Markdown previews remain enabled. Desktop visibility is not confirmed by this tool.`);
+        } catch (error2) {
+          return text(`Could not open web preview: ${String(error2)}`, true);
+        }
+      }
+      if (input.surface === "markdown") {
+        if (input.window === true) return text('surface: "markdown" cannot be combined with window: true. Open the returned file using the desktop host.', true);
+        const published = previews.activate(input.page);
+        if (!published.ok) return text(`Could not generate Markdown preview: ${published.error}`, true);
+        return text(`preview: ready
+markdown: ${published.value.path}
+index: ${published.value.index}
+Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation's right file panel using the host tool. No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.`);
+      }
       const script = launcherPath(import.meta.url);
-      if (!existsSync2(script)) {
+      if (!existsSync4(script)) {
         return text(
           `cannot open the pane: the launcher is missing at ${script}. This install is incomplete \u2014 tell the user to reinstall the plugin (a source checkout needs "npm run build").`,
           true
         );
       }
       const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
-      const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS) : [];
-      return text(openOutcome(run, viewers, input.page), !run.ok);
+      const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
+      return text(openOutcome(run, viewers, input.page), !run.ok || !paneShows(viewers, input.page));
     }
   );
   return server;
 }
 function resolveStateFile(env, cwd) {
   const projectDir = env["MELLOS_MAPPING_CWD"] ?? env["CLAUDE_PROJECT_DIR"] ?? cwd;
-  return join2(projectDir, STATE_FILE_RELATIVE_PATH);
+  return join4(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 function resolveUserConfigFile(home) {
   return userConfigFilePath(home);
@@ -23594,7 +24276,7 @@ async function main() {
 function launchedAsEntry(argv1, moduleUrl) {
   if (argv1 === void 0) return false;
   try {
-    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+    return realpathSync2(argv1) === realpathSync2(fileURLToPath(moduleUrl));
   } catch {
     return pathToFileURL(argv1).href === moduleUrl;
   }

@@ -3,12 +3,12 @@
 [![npm](https://img.shields.io/npm/v/mellos-mapping?logo=npm&logoColor=white&label=npm&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
 [![downloads](https://img.shields.io/npm/dm/mellos-mapping?label=downloads&color=cb3837)](https://www.npmjs.com/package/mellos-mapping)
 [![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
-[![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=master&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=main&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
 
 [English](README.md) | 简体中文
 
-给 [Claude Code](https://claude.com/claude-code) 与 Codex CLI 的自下而上
+给 [Claude Code](https://claude.com/claude-code) 、ChatGPT 桌面 Codex 模式与 Codex CLI 的自下而上
 开发实况地图，原生运行在终端里。
 
 <p align="center">
@@ -76,6 +76,20 @@ Claude 为你构建系统时，对话旁边的分屏实时显示这个系统的*
 
 ## 安装
 
+克隆适合自己宿主的分支，运行一个安装命令即可；无需构建。
+
+| 分支 | 使用对象 | 在克隆目录运行 |
+| --- | --- | --- |
+| `main` | 共用源码／任一宿主 | `node install.mjs chatgpt-app` 或 `node install.mjs claude` |
+| `claude` | Claude Code | `node install.mjs` |
+| `chatgpt-app` | ChatGPT 桌面 App 的 Codex 模式 | `node install.mjs` |
+
+前置要求为 Node.js 18+ 和对应宿主的 CLI，并确保命令在 PATH 中。安装器检查
+发行文件和六个 MCP 工具，将运行时保留到克隆目录之外，完成宿主配置。
+安装后开启新对话。详见[发布与分支说明](docs/releasing.md)。
+
+Claude Code 也可以通过插件市场安装：
+
 在 Claude Code 对话里输入两行：
 
 ```
@@ -129,7 +143,7 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 ```
 
 要两步是因为 `plugin update` 只对比本地缓存的 marketplace 克隆——真正
-拉取本仓库的是第一条命令。重启 Claude Code 生效。发布即 `master` 分支
+拉取本仓库的是第一条命令。重启 Claude Code 生效。发布即 `main` 分支
 上的版本号提升。（在对话里输入 `/plugin` 也能打开同一个管理界面。）
 
 ### 从 0.19 升级
@@ -153,33 +167,67 @@ the move.`）：
 这一次搬迁是两个进程唯一会碰 `.claude/` 的时刻。此后工具只往 `.mellos/`
 里写，也绝不会写到启动时解析出的项目目录之外。
 
-## Codex CLI
+## ChatGPT App · Codex 模式
 
-同一个仓库也是 Codex 插件（codex-cli 0.147+）。三行装完：
+本版用于 ChatGPT 桌面 App 的 Codex 模式（也称 Codex App）。在源码分支运行
+以下命令；在 `chatgpt-app` 分支运行时省略宿主参数。它会一次配置桌面专用技能、
+插件市场与六个 MCP 工具。
 
 ```
-codex plugin marketplace add GuangminJu/mellos-mapping
-codex plugin add mellos-mapping@mellos-mapping
-node ~/.codex/plugins/cache/mellos-mapping/mellos-mapping/<版本>/scripts/codex-register.mjs
+node install.mjs chatgpt-app
 ```
 
-前两行把技能（地图纪律）装成 Codex 插件。第三行在用户级注册 MCP
-服务器——必须这么做，因为 Codex 把插件自带的 MCP 服务器拉起在插件缓存里，
-且不给它任何感知工作区的途径，捆绑的服务器会把地图写进缓存。脚本写入的
-用户级 `codex mcp add` 条目会继承每个会话的工作目录：状态文件落在你的
-项目里，与 Claude Code 下行为一致。注册的是版本相关的绝对路径——插件
-更新后重跑一次脚本即可。
+安装完成后开启新对话。技能默认使用**当前对话右侧终端**。
+`mmap_open {surface: "codex-terminal", page: "<slug>"}` 会准备好正确处理路径的
+启动命令，再由宿主打开面板。宿主没有用户终端输入工具时，粘贴这行命令一次即可。
+地图启动后实时更新；后台 PTY 或面板排队打开均不能证明地图已在用户面板中运行。
+详见[桌面安装与限制](docs/codex.md)。
 
-要在 Codex 会话旁边看实况面板，Windows 上运行
+在 Windows Terminal 使用 Codex CLI 时（不指桌面 App 内置终端），运行
 `node <插件根>/scripts/open-pane.mjs <项目目录>`——它会在承载本会话的
-终端窗口里分屏（识别不到就确定性地开到专属的 "mellos-mapping" 窗口；
-`--window` 则是主动选择专属窗口）。加 `--page <slug>` 指定打开哪一页；
-面板已经开着时，带 `--page` 重跑一次不会再开新面板，而是让现有面板
-切到那一页。面板默认**自动跟随**正在被写入的页——AI 此刻操作哪张图，
+终端窗口右侧分屏，并保留左侧对话的键盘焦点。识别或聚焦失败时会明确报错，
+不会改开其他窗口；`--window` 用于明确选择独立窗口。加 `--page <slug>` 指定打开哪一页；
+当前会话的面板已经开着时，带 `--page` 重跑会让它切到那一页。其他会话
+或独立窗口中的面板不算当前会话已分屏。面板默认**自动跟随**正在被写入的页——AI 此刻操作哪张图，
 就看哪张图；按 `f` 开关（手动切页也会关掉），或用 `--no-follow` 启动。
 其他环境在项目目录下的第二个终端（或任意分屏）运行
 `node <插件根>/dist/watch.mjs`。两者接受同一套参数，见
 [面板参数](#面板参数)。
+
+### 桌面对话右侧：Markdown 地图
+
+用户选择文档方式时，技能会使用 `mmap_open` 的
+`surface: "markdown"`，生成地图文档后交给宿主在当前对话右侧打开。
+文档包含彩色 SVG 分层依赖图、模块状态、设计说明、验证记录和子图链接。
+不需要网页服务或 Mermaid 支持，图像放大仍保持清晰。
+
+首次打开后，本项目中成功的地图工具写入会自动重新生成预览。JSON 仍是
+唯一数据源，`.mellos/previews/` 是可重新生成的输出。图片里的节点没有
+拖拽、悬停、双击下潜和动画；用文档链接打开子图。侧栏是否自动刷新由
+桌面应用决定，生成成功不代表已显示。手动刷新或旧会话可以运行：
+
+```sh
+node "<插件根>/dist/preview.mjs" "<项目目录>" --page <页名>
+```
+
+完整说明见 [Codex 桌面地图](docs/codex.md#desktop-right-side-map)。
+
+### 可选：交互网页版
+
+现有 Markdown/SVG 用法继续保留。需要缩放拖动、悬停/固定节点详情、依赖
+高亮、搜索、状态筛选、分组概览、页面和子地图切换时，使用新增的
+`mmap_open {surface: "web", page: "<页名>"}`，将返回的网址交给宿主在右侧
+浏览器打开。网页直接读取项目地图并自动更新，也支持明暗主题和确认后删页。
+
+```sh
+node "<插件根>/dist/web.mjs" "<项目目录>" --page <页名>
+# 关闭该项目的网页服务：
+node "<插件根>/dist/web.mjs" "<项目目录>" --stop
+```
+
+服务仅在本机运行，不需要部署或下载网页依赖。Markdown 和网页共用原来的
+JSON 数据，能够同时使用；手动切页会固定当前页面。详见
+[网页版功能与运行方式](docs/codex.md#optional-interactive-web-viewer)。
 
 ## 任意 MCP 客户端
 
@@ -202,7 +250,7 @@ npx -y -p mellos-mapping mellos-mapping-watch
 插件 MCP 服务器设置的约定），最后才是服务器进程自己的工作目录。如果你的
 客户端会在你实际工作的项目之外启动服务器，就设 `MELLOS_MAPPING_CWD`。
 
-技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得五个 `mmap_*`
+技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得六个 `mmap_*`
 工具和面板，提示词自备。
 
 ## 使用
@@ -305,14 +353,19 @@ used by ← …`，每个邻居各带自己的状态字形），以及自动折�
 watcher 的：`--file <path>` 指定默认页的状态文件（启动脚本会从项目目录
 自己推导出来）。
 
+内部 watcher 参数 `--owner <token>` 和面板报告的可选 `owner` 字段承载会话绑定。
+启动器用源控制台进程及创建时间生成身份；手动运行 watcher 可省略。切页和关闭
+请求按面板 PID 定向投递，同项目其他窗口不会抢走请求。普通 `mmap` 只切换当前
+会话的面板；`mmap --window` 切换本项目的独立窗口。
+
 ### mmap 命令
 
-在任何终端里敲 `mmap`，它是一个**开关**：本项目还没有面板就开一个，已经
-有面板就把它关掉。
+在终端里敲 `mmap`，它是当前会话地图的**开关**：本会话还没有面板就开一个，
+已经有面板就把它关掉。
 
 | 你敲的 | 发生什么 |
 | --- | --- |
-| `mmap` | 本项目没有面板在跑 → 开一个；有 → 关掉它 |
+| `mmap` | 当前会话没有面板在跑 → 开一个；有 → 关掉它 |
 | `mmap <页 slug>` | 打开时定位到这一页，或者让已开的面板切过去——永远不关 |
 | `mmap --window` | 开到专属的 "mellos-mapping" 窗口，而不是把当前窗口分屏 |
 | `mmap --force` | 即使已经有面板在跑也再开一个 |

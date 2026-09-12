@@ -27,12 +27,17 @@ var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 var FOCUS_FILE_NAME = "focus";
-function focusFilePath(defaultFile) {
-  return join(dirname(defaultFile), FOCUS_FILE_NAME);
+function focusFilePath(defaultFile, pid) {
+  return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
+}
+function paneChannelPath(defaultFile, channel, pid) {
+  if (pid === void 0) return join(dirname(defaultFile), channel);
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid pane process id");
+  return join(viewersDirPath(defaultFile), `${pid}.${channel}`);
 }
 var QUIT_FILE_NAME = "quit";
-function quitFilePath(defaultFile) {
-  return join(dirname(defaultFile), QUIT_FILE_NAME);
+function quitFilePath(defaultFile, pid) {
+  return paneChannelPath(defaultFile, QUIT_FILE_NAME, pid);
 }
 var VIEWERS_DIR_NAME = "viewers";
 var VIEWER_FILE_VERSION = 1;
@@ -56,11 +61,14 @@ function parseViewerReport(raw) {
   if (parsed["version"] !== VIEWER_FILE_VERSION) return void 0;
   const follow = parsed["follow"];
   if (typeof follow !== "boolean") return void 0;
+  const owner = parsed["owner"];
+  if (owner !== void 0 && (typeof owner !== "string" || !makePageId(owner).ok)) return void 0;
+  const binding = owner === void 0 ? {} : { owner };
   const page = parsed["page"];
-  if (page === null || page === void 0) return { page: void 0, follow };
+  if (page === null || page === void 0) return { page: void 0, follow, ...binding };
   if (typeof page !== "string") return void 0;
   const id = makePageId(page);
-  return id.ok ? { page: id.value, follow } : void 0;
+  return id.ok ? { page: id.value, follow, ...binding } : void 0;
 }
 function readLiveViewers(defaultFile, nowMs) {
   const dir = viewersDirPath(defaultFile);

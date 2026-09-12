@@ -439,6 +439,18 @@ describe('deleting a page file', () => {
 });
 
 describe('focus requests — one-shot "show this page" channel', () => {
+  it('routes requests to one viewer without another viewer consuming them', () => {
+    const file = join(dir, 'map.json');
+    mkdirSync(viewersDirPath(file), { recursive: true });
+    writeFileSync(focusFilePath(file, 12), '{"page":"design"}');
+    expect(takeFocusRequest(file, 13)).toBeUndefined();
+    expect(takeFocusRequest(file, 12)).toEqual({ page: 'design' });
+    writeFileSync(quitFilePath(file, 12), '{}');
+    expect(takeQuitRequest(file, 13)).toBe(false);
+    expect(takeQuitRequest(file, 12)).toBe(true);
+    expect(takeQuitRequest(file, 12)).toBe(false);
+    expect(() => focusFilePath(file, -1)).toThrow('Invalid pane');
+  });
   it('the focus file sits beside the default file', () => {
     const defaultFile = join(dir, 'map.json');
     expect(focusFilePath(defaultFile)).toBe(join(dir, 'focus'));
@@ -625,6 +637,12 @@ describe('viewers — the "somebody is looking" channel, pane to readers', () =>
     const live = readLiveViewers(defaultFile(), Date.now());
     expect(live).toHaveLength(1);
     expect(live[0]).toMatchObject({ page: 'second', follow: false });
+  });
+  it('round-trips optional console ownership and accepts legacy reports', () => {
+    must(publishViewer(defaultFile(), 100, { page: undefined, follow: true, owner: 'split-11-22' }));
+    must(publishViewer(defaultFile(), 200, { page: undefined, follow: true }));
+    expect(readLiveViewers(defaultFile(), Date.now()).find((v) => v.pid === 100)?.owner).toBe('split-11-22');
+    expect(readLiveViewers(defaultFile(), Date.now()).find((v) => v.pid === 200)?.owner).toBeUndefined();
   });
 });
 

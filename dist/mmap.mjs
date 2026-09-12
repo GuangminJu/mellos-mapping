@@ -1,11 +1,149 @@
 #!/usr/bin/env node
+var __defProp = Object.defineProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 
 // scripts/mmap.mjs
 import { existsSync as existsSync2 } from "node:fs";
 import { dirname as dirname2, join as join2, resolve } from "node:path";
 
-// scripts/pane-core.mjs
+// scripts/terminal-session.mjs
+var terminal_session_exports = {};
+__export(terminal_session_exports, {
+  focusSession: () => focusSession,
+  inspectSession: () => inspectSession,
+  openWt: () => openWt,
+  parseSessionProbe: () => parseSessionProbe,
+  sessionProbeScript: () => sessionProbeScript
+});
 import { spawnSync } from "node:child_process";
+var NATIVE = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class MmapSession {
+  public delegate bool Callback(IntPtr hwnd, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(Callback cb, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, StringBuilder text, int size);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int size);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("kernel32.dll")] public static extern bool FreeConsole();
+  [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint pid);
+  [DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] list, uint size);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool SetConsoleTitle(string title);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern uint GetConsoleTitle(StringBuilder text, uint size);
+}
+"@
+`;
+function sessionProbeScript(nonce) {
+  return NATIVE + String.raw`
+$processes = @{}
+Get-CimInstance Win32_Process | ForEach-Object { $processes[[uint32]$_.ProcessId] = $_ }
+$cursor = [uint32]$PID
+$seen = @{}
+$hwnd = [IntPtr]::Zero
+for ($depth = 0; $depth -lt 16 -and $processes.ContainsKey($cursor); $depth++) {
+  [void][MmapSession]::FreeConsole()
+  if ([MmapSession]::AttachConsole($cursor)) {
+    $members = New-Object uint32[] 4096
+    $count = [MmapSession]::GetConsoleProcessList($members, $members.Length)
+    if ($count -gt 0 -and $count -le $members.Length) {
+      $root = $members[0..($count - 1)] | ForEach-Object { $processes[$_] } |
+        Where-Object { $_ -and $_.CreationDate } | Sort-Object CreationDate | Select-Object -First 1
+      if ($root) {
+        $owner = "split-$($root.ProcessId)-$($root.CreationDate.ToUniversalTime().Ticks)"
+        if (-not $seen.ContainsKey($owner)) {
+          $seen[$owner] = $true
+          Write-Output "CONSOLE=$owner"
+          $text = New-Object System.Text.StringBuilder 1024
+          [void][MmapSession]::GetConsoleTitle($text, 1024)
+          $original = $text.ToString()
+          try {
+            for ($attempt = 0; $attempt -lt 6 -and $hwnd -eq [IntPtr]::Zero; $attempt++) {
+              [void][MmapSession]::SetConsoleTitle('__NONCE__')
+              Start-Sleep -Milliseconds 60
+              $matches = New-Object System.Collections.ArrayList
+              $callback = {
+                param($window, $unused)
+                if ([MmapSession]::IsWindowVisible($window)) {
+                  $class = New-Object System.Text.StringBuilder 256
+                  [void][MmapSession]::GetClassName($window, $class, 256)
+                  if ($class.ToString() -eq 'CASCADIA_HOSTING_WINDOW_CLASS') {
+                    $title = New-Object System.Text.StringBuilder 1024
+                    [void][MmapSession]::GetWindowText($window, $title, 1024)
+                    if ($title.ToString().Contains('__NONCE__')) { [void]$matches.Add($window) }
+                  }
+                }
+                return $true
+              }
+              [void][MmapSession]::EnumWindows($callback, [IntPtr]::Zero)
+              if ($matches.Count -eq 1) { $hwnd = $matches[0] }
+            }
+          } finally {
+            [void][MmapSession]::SetConsoleTitle($original)
+            [void][MmapSession]::FreeConsole()
+          }
+          if ($hwnd -ne [IntPtr]::Zero) {
+            Write-Output "OWNER=$owner"
+            break
+          }
+        }
+      }
+    }
+  }
+  $cursor = [uint32]$processes[$cursor].ParentProcessId
+}
+[void][MmapSession]::FreeConsole()
+Write-Output "IDENT=$($hwnd.ToInt64())"
+`.replaceAll("__NONCE__", nonce);
+}
+function powershell(script, timeout = 3e4) {
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    Buffer.from(script, "utf16le").toString("base64")
+  ], { encoding: "utf8", windowsHide: true, timeout });
+  return result.status === 0 ? { ok: true, value: result.stdout } : { ok: false, error: `Terminal session probe failed (${result.error?.message ?? `exit ${result.status}`}).` };
+}
+function parseSessionProbe(output) {
+  const owners = [...output.matchAll(/^CONSOLE=(split-\d+-\d+)\r?$/gm)].map((m) => m[1]);
+  const hwnd = /^IDENT=([1-9]\d*)\r?$/m.exec(output)?.[1];
+  const owner = /^OWNER=(split-\d+-\d+)\r?$/m.exec(output)?.[1];
+  return { owners, ...hwnd && owner && owners.includes(owner) ? { hwnd, owner } : {} };
+}
+function inspectSession() {
+  const result = powershell(sessionProbeScript(`MMAP-SESSION-${process.pid}-${Date.now()}`));
+  return result.ok ? { ok: true, value: parseSessionProbe(result.value) } : result;
+}
+function focusSession(hwnd) {
+  if (!/^[1-9]\d*$/.test(hwnd)) return { ok: false, error: "Invalid terminal window handle." };
+  const result = powershell(NATIVE + `
+$window = [IntPtr]${hwnd}
+if ([MmapSession]::GetForegroundWindow() -ne $window) {
+  [void][MmapSession]::SetForegroundWindow($window)
+  Start-Sleep -Milliseconds 150
+}
+Write-Output "FOCUS=$([MmapSession]::GetForegroundWindow() -eq $window)"
+`, 5e3);
+  if (!result.ok) return result;
+  return /^FOCUS=True\r?$/m.test(result.value) ? { ok: true, value: void 0 } : { ok: false, error: "The session window was identified, but Windows refused to focus it. Activate the PowerShell tab for this conversation and retry; no separate window was opened." };
+}
+function openWt(args, what) {
+  const result = spawnSync("wt", args, { stdio: "ignore", timeout: 15e3, windowsHide: false });
+  return result.status === 0 ? { ok: true, value: void 0 } : { ok: false, error: `wt failed to ${what} (${result.error?.message ?? `exit ${result.status}`}).` };
+}
+
+// scripts/pane-core.mjs
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -61,165 +199,56 @@ function paneCommand(cfg, watchPath, mapFile) {
   if (cfg.pageSlug !== void 0) cmd.push("--page", cfg.pageSlug);
   return cmd;
 }
-function powerShellQuote(value) {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-function watcherProbeScript(mapFile) {
-  return `$ErrorActionPreference = 'SilentlyContinue'
-$needle = ${powerShellQuote(mapFile)}
-$w = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
-  $_.CommandLine -and
-  $_.CommandLine.IndexOf('watch.mjs', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-  $_.CommandLine.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0
-})
-Write-Output "WATCHERS=$($w.Count)"`;
-}
-var IDENTIFY_AND_FOCUS = String.raw`
-$ErrorActionPreference = 'SilentlyContinue'
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class MmapWin {
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lp);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
-  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("kernel32.dll")] public static extern bool FreeConsole();
-  [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint pid);
-  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern bool SetConsoleTitle(string title);
-  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern uint GetConsoleTitle(StringBuilder sb, uint size);
-}
-"@
-function Get-WtWindows {
-  $wins = New-Object System.Collections.ArrayList
-  $cb = {
-    param($h, $lp)
-    if ([MmapWin]::IsWindowVisible($h)) {
-      $cls = New-Object System.Text.StringBuilder 256
-      [void][MmapWin]::GetClassName($h, $cls, 256)
-      if ($cls.ToString() -eq 'CASCADIA_HOSTING_WINDOW_CLASS') {
-        $t = New-Object System.Text.StringBuilder 512
-        [void][MmapWin]::GetWindowText($h, $t, 512)
-        [void]$wins.Add(@{ hwnd = $h.ToInt64(); title = $t.ToString() })
-      }
-    }
-    return $true
-  }
-  [void][MmapWin]::EnumWindows($cb, [IntPtr]::Zero)
-  return ,$wins
-}
-
-$ancestors = @()
-$p = $PID
-for ($i = 0; $i -lt 12 -and $p; $i++) {
-  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$p"
-  if (-not $proc) { break }
-  if ($i -gt 0) { $ancestors += [uint32]$proc.ProcessId }
-  $p = $proc.ParentProcessId
-}
-
-# The agent CLI (claude/codex/...) is some ancestor holding the console that a
-# WT window renders; hidden-console ancestors just never light a window up.
-$nonce = "__NONCE__"
-$hwnd = [IntPtr]::Zero
-foreach ($apid in $ancestors) {
-  [void][MmapWin]::FreeConsole()
-  if (-not [MmapWin]::AttachConsole($apid)) { continue }
-  $sb = New-Object System.Text.StringBuilder 1024
-  [void][MmapWin]::GetConsoleTitle($sb, 1024)
-  $orig = $sb.ToString()
-  for ($i = 0; $i -lt 6 -and $hwnd -eq [IntPtr]::Zero; $i++) {
-    [void][MmapWin]::SetConsoleTitle($nonce)
-    Start-Sleep -Milliseconds 60
-    foreach ($w in (Get-WtWindows)) {
-      if ($w.title -like "*$nonce*") { $hwnd = [IntPtr]$w.hwnd; break }
-    }
-  }
-  Start-Sleep -Milliseconds 100
-  [void][MmapWin]::SetConsoleTitle($orig)
-  Start-Sleep -Milliseconds 200
-  [void][MmapWin]::FreeConsole()
-  if ($hwnd -ne [IntPtr]::Zero) { break }
-}
-
-if ($hwnd -eq [IntPtr]::Zero) { Write-Output 'IDENT=0'; exit 0 }
-Write-Output "IDENT=$($hwnd.ToInt64())"
-
-if ([MmapWin]::IsIconic($hwnd)) { [void][MmapWin]::ShowWindow($hwnd, 9) }
-$focused = $false
-[void][MmapWin]::SetForegroundWindow($hwnd)
-Start-Sleep -Milliseconds 150
-if ([MmapWin]::GetForegroundWindow() -eq $hwnd) { $focused = $true }
-if (-not $focused) {
-  [MmapWin]::keybd_event(0x12, 0, 0, [IntPtr]::Zero)
-  [void][MmapWin]::SetForegroundWindow($hwnd)
-  [MmapWin]::keybd_event(0x12, 0, 2, [IntPtr]::Zero)
-  Start-Sleep -Milliseconds 150
-  if ([MmapWin]::GetForegroundWindow() -eq $hwnd) { $focused = $true }
-}
-if (-not $focused) {
-  $fgpid = 0
-  $fgThread = [MmapWin]::GetWindowThreadProcessId([MmapWin]::GetForegroundWindow(), [ref]$fgpid)
-  $myThread = [MmapWin]::GetCurrentThreadId()
-  [void][MmapWin]::AttachThreadInput($myThread, $fgThread, $true)
-  [void][MmapWin]::BringWindowToTop($hwnd)
-  [void][MmapWin]::SetForegroundWindow($hwnd)
-  [void][MmapWin]::AttachThreadInput($myThread, $fgThread, $false)
-  Start-Sleep -Milliseconds 150
-  if ([MmapWin]::GetForegroundWindow() -eq $hwnd) { $focused = $true }
-}
-Write-Output "FOCUS=$(if ($focused) { 1 } else { 0 })"
-`;
-var PROBE_TIMEOUT_MS = 3e4;
-var WT_TIMEOUT_MS = 15e3;
-var SPLIT_SIZE = "0.42";
 var DEDICATED_WINDOW_NAME = "mellos-mapping";
-function runPowerShell(script) {
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
-  const r = spawnSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-    { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, windowsHide: true }
-  );
-  return r.stdout ?? "";
+var SPLIT_SIZE = "0.42";
+function selectPaneViewer(viewers, owners) {
+  return viewers.find((viewer) => viewer.owner !== void 0 && owners.includes(viewer.owner));
 }
-function paneIsOpen(store, mapFile) {
-  if (store.readLiveViewers(mapFile, Date.now()).length > 0) return true;
-  if (process.platform !== "win32") return false;
-  const m = runPowerShell(watcherProbeScript(mapFile)).match(/WATCHERS=(\d+)/);
-  return m !== null && Number(m[1]) > 0;
+function preparePane(cfg, store, mapFile, io = terminal_session_exports) {
+  const inspected = cfg.mode === PANE_MODE.window ? { ok: true, value: { owners: ["window"], owner: "window" } } : io.inspectSession();
+  if (!inspected.ok) return inspected;
+  const session = inspected.value;
+  const viewers = store.readLiveViewers(mapFile, Date.now());
+  const viewer = selectPaneViewer(viewers, session.owners);
+  if (cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
+    return { ok: false, error: "Could not identify this conversation\u2019s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window." };
+  }
+  return { ok: true, value: {
+    target: { mode: cfg.mode, owner: session.owner ?? viewer?.owner, hwnd: session.hwnd },
+    viewer,
+    previousPids: viewers.map((item) => item.pid)
+  } };
 }
-function openWt(args, what) {
-  const r = spawnSync("wt", args, { stdio: "ignore", timeout: WT_TIMEOUT_MS, windowsHide: true });
-  return r.status === 0 ? { ok: true, value: void 0 } : { ok: false, error: `wt failed to ${what} (exit ${r.status ?? "timeout"}) \u2014 is Windows Terminal installed?` };
+function placePane(cfg, watchPath, mapFile, target, io = terminal_session_exports) {
+  const payload = [...paneCommand(cfg, watchPath, mapFile), "--owner", target.owner];
+  if (target.mode === PANE_MODE.window) {
+    const opened2 = io.openWt(["-w", DEDICATED_WINDOW_NAME, "nt", ...payload], "open the requested window");
+    return opened2.ok ? { ok: true, value: { ...target, reason: "requested" } } : opened2;
+  }
+  const focused = io.focusSession(target.hwnd);
+  if (!focused.ok) return focused;
+  const opened = io.openWt([
+    "-w",
+    "0",
+    "sp",
+    "-V",
+    "--size",
+    SPLIT_SIZE,
+    ...payload,
+    ";",
+    "move-focus",
+    "previous"
+  ], "split the session window");
+  return opened.ok ? { ok: true, value: target } : opened;
 }
-function placePane(cfg, watchPath, mapFile) {
-  const dedicated = (reason) => {
-    const opened = openWt(["-w", DEDICATED_WINDOW_NAME, "nt", ...paneCommand(cfg, watchPath, mapFile)], "open the dedicated window");
-    return opened.ok ? { ok: true, value: { mode: PANE_MODE.window, reason } } : opened;
-  };
-  if (cfg.mode === PANE_MODE.window) return dedicated("requested");
-  const nonce = `MMAP-NONCE-${process.pid}`;
-  const out = runPowerShell(IDENTIFY_AND_FOCUS.replaceAll("__NONCE__", nonce));
-  const ident = out.match(/IDENT=(\d+)/)?.[1] ?? "0";
-  if (ident === "0") return dedicated("session-window-not-identified");
-  if (!/FOCUS=1/.test(out)) return dedicated("session-window-focus-denied");
-  const split = openWt(
-    ["-w", "0", "sp", "-V", "--size", SPLIT_SIZE, ...paneCommand(cfg, watchPath, mapFile)],
-    "split the session window"
-  );
-  return split.ok ? { ok: true, value: { mode: PANE_MODE.split, hwnd: ident } } : split;
+async function awaitNewPane(store, mapFile, context, timeoutMs = 8e3) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const viewer = store.readLiveViewers(mapFile, Date.now()).find((item) => item.owner === context.target.owner && !context.previousPids.includes(item.pid));
+    if (viewer) return { ok: true, value: viewer };
+    await new Promise((resolve2) => setTimeout(resolve2, 100));
+  } while (Date.now() < deadline);
+  return { ok: false, error: "The requested pane has not reported in. Its placement is unverified; do not assume that another open map is the requested split." };
 }
 
 // scripts/mmap.mjs
@@ -303,20 +332,31 @@ async function main() {
   const project = nearestProject(candidates, candidates.map((dir) => existsSync2(join2(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
   const mapFile = join2(project.root, store.STATE_FILE_RELATIVE_PATH);
-  const action = toggleAction(paneIsOpen(store, mapFile), cfg.pageSlug, cfg.force);
+  const prepared = preparePane(cfg, store, mapFile);
+  if (!prepared.ok) {
+    console.error(prepared.error);
+    process.exit(1);
+  }
+  const context = prepared.value;
+  const action = toggleAction(context.viewer !== void 0, cfg.pageSlug, cfg.force);
   if (action.kind === "quit") {
-    writeQuitRequest(store.quitFilePath(mapFile));
+    writeQuitRequest(store.quitFilePath(mapFile, context.viewer.pid));
     console.log(`Closing the map pane for ${project.root}.`);
     return;
   }
   if (action.kind === "focus") {
-    writeFocusRequest(store.focusFilePath(mapFile), action.page);
+    writeFocusRequest(store.focusFilePath(mapFile, context.viewer.pid), action.page);
     console.log(`The map pane for ${project.root} is already open \u2014 showing page "${action.page}".`);
     return;
   }
-  const placed = placePane(cfg, watchPath, mapFile);
+  const placed = placePane(cfg, watchPath, mapFile, context.target);
   if (!placed.ok) {
     console.error(placed.error);
+    process.exit(1);
+  }
+  const reported = await awaitNewPane(store, mapFile, context);
+  if (!reported.ok) {
+    console.error(reported.error);
     process.exit(1);
   }
   const where = placed.value.mode === PANE_MODE.window ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})` : "beside this terminal (vertical split)";

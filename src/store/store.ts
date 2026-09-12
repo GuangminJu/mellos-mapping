@@ -114,7 +114,12 @@ function errnoOf(e: unknown): string {
  * two writers racing on one page cannot install each other's partial content
  * or make each other's rename miss its file.
  */
-function writeFileAtomic(path: string, contents: string): Result<void, StoreError> {
+export function writeFileAtomic(path: string, contents: string): Result<void, StoreError> {
+  return writeAtomic(path, contents, RENAME_MAX_ATTEMPTS);
+}
+
+/** A heartbeat may yield to the next tick; an authoritative save must retry. */
+function writeAtomic(path: string, contents: string, maxAttempts: number): Result<void, StoreError> {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -131,7 +136,7 @@ function writeFileAtomic(path: string, contents: string): Result<void, StoreErro
       return ok(undefined);
     } catch (e) {
       const code = errnoOf(e);
-      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+      if (!TRANSIENT_RENAME_CODES.has(code) || attempt >= maxAttempts) {
         discardTemp(tmp);
         return err({ kind: 'save-failed', path, detail: `${code} after ${attempt} attempt(s)` });
       }
@@ -262,8 +267,15 @@ export function deletePageFile(path: string): Result<void, StoreError> {
 /** Sibling of the default file carrying a one-shot "show this page" request. */
 export const FOCUS_FILE_NAME = 'focus';
 
-export function focusFilePath(defaultFile: string): string {
-  return join(dirname(defaultFile), FOCUS_FILE_NAME);
+export function focusFilePath(defaultFile: string, pid?: number): string {
+  return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
+}
+
+/** A targeted message cannot be consumed by another pane of the same project. */
+function paneChannelPath(defaultFile: string, channel: string, pid?: number): string {
+  if (pid === undefined) return join(dirname(defaultFile), channel);
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('Invalid pane process id');
+  return join(viewersDirPath(defaultFile), `${pid}.${channel}`);
 }
 
 /** A consumed focus request: the page to show (undefined = the default page). */
@@ -276,8 +288,9 @@ export interface FocusRequest {
  * Absent file — the overwhelmingly common case — or junk content means no
  * request; the channel is best-effort and junk is swept by the same delete.
  */
-export function takeFocusRequest(defaultFile: string): FocusRequest | undefined {
-  const path = focusFilePath(defaultFile);
+export function takeFocusRequest(defaultFile: string, pid?: number): FocusRequest | undefined {
+  const targeted = pid === undefined ? undefined : focusFilePath(defaultFile, pid);
+  const path = targeted !== undefined && existsSync(targeted) ? targeted : focusFilePath(defaultFile);
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
@@ -320,8 +333,8 @@ export function takeFocusRequest(defaultFile: string): FocusRequest | undefined 
 /** Sibling of the default file carrying a one-shot "close the pane" request. */
 export const QUIT_FILE_NAME = 'quit';
 
-export function quitFilePath(defaultFile: string): string {
-  return join(dirname(defaultFile), QUIT_FILE_NAME);
+export function quitFilePath(defaultFile: string, pid?: number): string {
+  return paneChannelPath(defaultFile, QUIT_FILE_NAME, pid);
 }
 
 /**
@@ -335,15 +348,16 @@ export function quitFilePath(defaultFile: string): string {
  * cannot take a live pane down by accident; a pane closing is the one thing
  * in this channel a user cannot undo by waiting.
  */
-export function takeQuitRequest(defaultFile: string): boolean {
-  const path = quitFilePath(defaultFile);
+export function takeQuitRequest(defaultFile: string, pid?: number): boolean {
+  const targeted = pid === undefined ? undefined : quitFilePath(defaultFile, pid);
+  const path = targeted !== undefined && existsSync(targeted) ? targeted : quitFilePath(defaultFile);
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
   } catch {
     return false;
   }
-  sweepQuitRequest(defaultFile);
+  sweepQuitRequest(defaultFile, path === targeted ? pid : undefined);
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripBom(raw));
@@ -363,9 +377,9 @@ export function takeQuitRequest(defaultFile: string): boolean {
  * sweeps at STARTUP for exactly that: a request that predates the pane cannot
  * have been addressed to it. Best-effort, like every delete in this channel.
  */
-export function sweepQuitRequest(defaultFile: string): void {
+export function sweepQuitRequest(defaultFile: string, pid?: number): void {
   try {
-    rmSync(quitFilePath(defaultFile), { force: true });
+    rmSync(quitFilePath(defaultFile, pid), { force: true });
   } catch {
     // The file is unreachable for some reason the next tick will meet again;
     // re-consuming a request we cannot delete only closes a pane the user
@@ -447,6 +461,8 @@ export interface ViewerReport {
   readonly page: PageId | undefined;
   /** Auto-follow: whether the pane will switch to whatever page is written next. */
   readonly follow: boolean;
+  /** Launching console identity, or "window" for an explicitly separate pane. */
+  readonly owner?: string;
 }
 
 /** A report fresh enough to be a pane, with whose it is and how old. */
@@ -479,11 +495,14 @@ function parseViewerReport(raw: string): ViewerReport | undefined {
   if (parsed['version'] !== VIEWER_FILE_VERSION) return undefined;
   const follow = parsed['follow'];
   if (typeof follow !== 'boolean') return undefined;
+  const owner = parsed['owner'];
+  if (owner !== undefined && (typeof owner !== 'string' || !makePageId(owner).ok)) return undefined;
+  const binding = owner === undefined ? {} : { owner: owner as string };
   const page = parsed['page'];
-  if (page === null || page === undefined) return { page: undefined, follow };
+  if (page === null || page === undefined) return { page: undefined, follow, ...binding };
   if (typeof page !== 'string') return undefined;
   const id = makePageId(page);
-  return id.ok ? { page: id.value, follow } : undefined;
+  return id.ok ? { page: id.value, follow, ...binding } : undefined;
 }
 
 /**
@@ -497,8 +516,10 @@ function parseViewerReport(raw: string): ViewerReport | undefined {
  * a failed beat at most once and keeps beating.
  */
 export function publishViewer(defaultFile: string, pid: number, report: ViewerReport): Result<void, StoreError> {
-  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow };
-  return writeFileAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}\n`);
+  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow, owner: report.owner };
+  // This disposable report runs on the input thread every second. A locked
+  // target keeps its previous complete report; the next heartbeat retries.
+  return writeAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}\n`, 1);
 }
 
 /**

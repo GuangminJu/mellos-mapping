@@ -887,6 +887,12 @@ describe('mmap_open — the assistant putting the map on screen', () => {
     const viewers = [{ pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 }];
     expect(openOutcome({ ok: true, output: 'MMAP_PANE mode=split' }, viewers, 'effort')).toContain('open and showing');
   });
+  it('a separate viewer cannot stand in for the watcher in the placement receipt', () => {
+    const elsewhere = { pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 };
+    const receipt = { ok: true, output: 'MMAP_PANE mode=split pid=2 hwnd=333' };
+    expect(openOutcome(receipt, [elsewhere], 'effort')).toContain('no pane has reported in');
+    expect(openOutcome(receipt, [elsewhere, { ...elsewhere, pid: 2 }], 'effort')).toContain('open and showing');
+  });
 
   it('a pane that came up elsewhere is not reported as showing the page', () => {
     const viewers = [{ pid: 1, page: 'other' as PageId, follow: false, ageMs: 10 }];

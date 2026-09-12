@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.20.3",
+  "version": "0.21.0",
   "mcpName": "io.github.GuangminJu/mellos-mapping",
   "description": "A live layered dependency map for bottom-up development — MCP server + terminal pane. Ghost the design first, then light nodes up from the bottom as they are built and verified.",
   "type": "module",
@@ -26,6 +26,8 @@
   "bin": {
     "mellos-mapping": "dist/server.mjs",
     "mellos-mapping-watch": "dist/watch.mjs",
+    "mellos-mapping-preview": "dist/preview.mjs",
+    "mellos-mapping-web": "dist/web.mjs",
     "mmap": "dist/mmap.mjs"
   },
   "exports": {
@@ -54,6 +56,10 @@
       "default": "./lib/render/render.js"
     },
     "./server": "./dist/server.mjs",
+    "./preview": {
+      "types": "./lib/preview/index.d.ts",
+      "default": "./lib/preview/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -63,11 +69,14 @@
     "dist",
     "lib",
     "README.zh-CN.md",
+    "docs/codex.md",
     "scripts/codex-register.mjs",
+    "scripts/codex-cli.mjs",
     "scripts/install-mmap-command.mjs",
     "scripts/mmap.mjs",
     "scripts/open-pane.mjs",
-    "scripts/pane-core.mjs"
+    "scripts/pane-core.mjs",
+    "scripts/terminal-session.mjs"
   ],
   "engines": {
     "node": ">=18"
@@ -76,16 +85,21 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "node build.mjs && tsc -p tsconfig.lib.json",
+    "package:codex": "npm run build && node scripts/package-codex.mjs",
+    "package:release": "node scripts/package-release.mjs",
+    "check:release": "node scripts/check-release.mjs",
     "check:package": "node scripts/check-package-surface.mjs",
+    "check:codex": "node scripts/check-codex-package.mjs",
+    "benchmark:render": "node scripts/benchmark-render.mjs",
     "prepack": "npm run build",
-    "verify": "npm run typecheck && npm run test && npm run build && npm run check:package"
+    "verify": "npm run typecheck && npm run test && npm run build && npm run check:package && npm run check:codex && npm run check:release"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0",
+    "vitest": "^4.1.11",
     "zod": "^3.24.0"
   }
 }

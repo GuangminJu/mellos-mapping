@@ -62,7 +62,7 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-const { describeStoreError, saveMapFile, saveMappingPolicy, serializeMap, configFilePath } = await import('./store.js');
+const { describeStoreError, saveMapFile, saveMappingPolicy, serializeMap, configFilePath, publishViewer, viewerFilePath } = await import('./store.js');
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -92,6 +92,24 @@ afterEach(() => {
 });
 
 describe('atomic writes under a hostile filesystem (P2)', () => {
+  it('yields a locked viewer heartbeat without blocking input, then recovers on the next tick', () => {
+    const file = join(dir, 'map.json');
+    const report = { page: undefined, follow: true };
+    must(publishViewer(file, 123, report));
+    const previous = readFileSync(viewerFilePath(file, 123), 'utf8');
+    const wait = vi.spyOn(Atomics, 'wait');
+    try {
+      fault.renameFailures = 1;
+      expect(mustFail(publishViewer(file, 123, { ...report, follow: false })).kind).toBe('save-failed');
+      expect(wait).not.toHaveBeenCalled();
+      expect(readFileSync(viewerFilePath(file, 123), 'utf8')).toBe(previous);
+      expect(readdirSync(join(dir, 'viewers'))).toEqual(['123.json']);
+      must(publishViewer(file, 123, { ...report, follow: false }));
+      expect(JSON.parse(readFileSync(viewerFilePath(file, 123), 'utf8')).follow).toBe(false);
+    } finally {
+      wait.mockRestore();
+    }
+  });
   /**
    * The promise itself, observed rather than assumed: a reader that looks at
    * the target at ANY point during a save sees a whole map, because the new

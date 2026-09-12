@@ -20,7 +20,7 @@ import { charWidth } from './width.js';
 // ink — the palette every drawing stage paints with
 // ---------------------------------------------------------------------------
 
-export type Style = 'none' | 'dim' | 'amber' | 'green' | 'greenDim' | 'red' | 'faint';
+export type Style = 'none' | 'dim' | 'amber' | 'green' | 'greenDim' | 'red' | 'faint' | 'focus';
 
 /** SGR parameter per style; combined with bold ("1") at emit time. */
 export const SGR: Readonly<Record<Style, string>> = {
@@ -31,6 +31,7 @@ export const SGR: Readonly<Record<Style, string>> = {
   greenDim: '32;2', // done, but nothing behind the claim: green, not fully lit
   red: '31',
   faint: '90',
+  focus: '97', // bright foreground without changing font weight
 };
 export const ANSI_RESET = '\x1b[0m';
 
@@ -189,7 +190,7 @@ export class Canvas {
             ? ''
             : isWire
               ? c.bright
-                ? '1' // spotlighted wire: bold default color against the faint board
+                ? SGR.focus // change color only; bold fallback glyphs can visually shift
                 : SGR.faint
               : [SGR[c.style], c.bold ? '1' : ''].filter(Boolean).join(';');
         if (opts.color && params !== open) {

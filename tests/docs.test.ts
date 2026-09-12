@@ -89,7 +89,7 @@ describe('the tool names in the docs', () => {
   });
 });
 
-describe('the pane flags in the docs', () => {
+describe('the command flags in the docs', () => {
   /**
    * What the two parsers accept. Read out of the sources rather than listed
    * here: a flag added to one parser and not to the other is exactly the drift
@@ -129,16 +129,20 @@ describe('the pane flags in the docs', () => {
       ),
     ].map((m) => m[0]),
   );
-  const accepted = new Set([...watcherFlags, ...launcherFlags, ...installerFlags]);
+  const webFlags = new Set(
+    [...(/const usage = '([^']*)'/.exec(read('src/web/cli.ts'))?.[1] ?? '').matchAll(/--[a-z][a-z0-9-]*/g)].map(m => m[0]),
+  );
+  const accepted = new Set([...watcherFlags, ...launcherFlags, ...installerFlags, ...webFlags]);
 
-  it('all three parsers were found (the extraction still matches the sources)', () => {
+  it('all command vocabularies were found (the extraction still matches the sources)', () => {
     expect(watcherFlags.has('--no-follow')).toBe(true);
     expect(launcherFlags.has('--window')).toBe(true);
     expect(installerFlags.has('--uninstall')).toBe(true);
+    expect(webFlags.has('--stop')).toBe(true);
     expect(accepted.size).toBeGreaterThanOrEqual(10);
   });
 
-  it('mentions no flag neither parser accepts', () => {
+  it('mentions no flag absent from the command parsers', () => {
     const unknown: string[] = [];
     for (const doc of PANE_DOCS) {
       for (const m of read(doc).matchAll(/(?<![-\w])--[a-z][a-z0-9-]*/g)) {
