@@ -10,7 +10,7 @@
  * npm/library surface the package's `exports` map points at.
  */
 
-import { rm, mkdir, copyFile } from 'node:fs/promises';
+import { rm, mkdir, copyFile, chmod } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -122,6 +122,12 @@ await build({
   },
   outfile: 'dist/store-paths.mjs',
 });
+
+// Banner-supplied shebangs do not make esbuild chmod the output. Match the
+// executable entries shipped by the release packager on POSIX too.
+for (const file of ['server.mjs', 'watch.mjs', 'preview.mjs', 'web.mjs', 'mmap.mjs', 'hook-session-start.mjs']) {
+  await chmod(join(root, 'dist', file), 0o755);
+}
 
 console.log(`cleaned: ${OUTPUT_DIRS.join(', ')}`);
 console.log(
