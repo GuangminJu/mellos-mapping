@@ -1,0 +1,20 @@
+{
+  "name": "mellos-mapping-codex",
+  "interface": {
+    "displayName": "Mellos Mapping · ChatGPT App"
+  },
+  "plugins": [
+    {
+      "name": "mellos-mapping",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mellos-mapping"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
