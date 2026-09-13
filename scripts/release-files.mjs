@@ -2,8 +2,15 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, join } from 'node:path';
+import * as nativePath from 'node:path';
 const editions = ['claude', 'chatgpt-app'];
 const hash = data => createHash('sha256').update(data).digest('hex');
+
+/** Relative paths across Windows volumes are absolute, never descendants. */
+export function containsPath(root, candidate, paths = nativePath) {
+  const rel = paths.relative(root, candidate);
+  return !paths.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${paths.sep}`);
+}
 
 export function checkedPath(root, file) {
   if (isAbsolute(file) || file.includes('\\') || file.split('/').some(p => !p || p === '.' || p === '..')) {
@@ -19,7 +26,6 @@ export function checkedPath(root, file) {
   }
   return path;
 }
-
 export function validateRelease(root) {
   const manifest = JSON.parse(readFileSync(join(root, 'release.json'), 'utf8'));
   if (!editions.includes(manifest.edition) || !/^\d+\.\d+\.\d+$/.test(manifest.version) ||
@@ -33,4 +39,3 @@ export function validateRelease(root) {
   }
   return manifest;
 }
-

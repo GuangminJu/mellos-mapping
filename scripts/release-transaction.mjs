@@ -1,11 +1,11 @@
 /** Stage a complete installation before switching the stable host-facing path. */
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { checkedPath, validateRelease } from './release-files.mjs';
+import { checkedPath, containsPath, validateRelease } from './release-files.mjs';
 
 export function stageRelease(source, target, manifest, { copy = copyFileSync } = {}) {
   source = resolve(source); target = resolve(target);
-  if (!relative(target, source).startsWith('..')) throw new Error('Release source must be outside the installation.');
+  if (containsPath(target, source)) throw new Error('Release source must be outside the installation.');
   checkedPath(dirname(target), basename(target));
   mkdirSync(dirname(target), { recursive: true });
   const lock = `${target}.install-lock`;

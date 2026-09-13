@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32, posix } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkedPath, copyRelease, installRelease, validateRelease } from './install-release.mjs';
 import { stageRelease } from './release-transaction.mjs';
 import { verifyInstalledFiles } from './host-installation.mjs';
 import { copyFileSync } from 'node:fs';
+import { containsPath } from './release-files.mjs';
 
 let temporary, source, installHome;
 beforeEach(() => {
@@ -47,6 +48,14 @@ function revise(version = '1.0.1') {
 }
 
 describe('clone installer', () => {
+  it('distinguishes nested sources from siblings and different Windows volumes', () => {
+    expect(containsPath('C:\\install', 'D:\\release', win32)).toBe(false);
+    expect(containsPath('C:\\install', 'C:\\release', win32)).toBe(false);
+    expect(containsPath('C:\\install', 'C:\\install\\source', win32)).toBe(true);
+    expect(containsPath('/install', '/release', posix)).toBe(false);
+    expect(containsPath('/install', '/install', posix)).toBe(true);
+    expect(containsPath('/install', '/install/..named', posix)).toBe(true);
+  });
   it('installs without shell interpolation and repeats without touching unrelated files', async () => {
     const run = host();
     const verify = vi.fn(async () => []);
