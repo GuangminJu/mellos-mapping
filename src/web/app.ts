@@ -8,7 +8,8 @@ import { focusInfo, mostRecentKey } from '../semantics/semantics.js';
 import type { VersionedSnapshot, WebPage, WebSnapshot } from './protocol.js';
 import { layoutWebScene, type WebScene } from './scene.js';
 import { renderInspector, renderStage, stateOf } from './view.js';
-import { fitViewport, svgViewBox, zoomViewport, type Viewport } from './viewport.js';
+import { fitViewport, svgViewBox, type Viewport } from './viewport.js';
+import { showsOverview, zoomScene } from './zoom.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const viewport = element('viewport'), stage = element('stage'), inspector = element('inspector');
@@ -80,7 +81,7 @@ function render(): void {
   const state = view();
   if (state.selected && !focusInfo(map, state.selected)) state.selected = undefined;
   if (hover && !focusInfo(map, hover)) hover = undefined;
-  renderedOverview = map.groups.length > 0 && (state.overview || state.viewport.scale < .55);
+  renderedOverview = showsOverview(state, map.groups.length > 0);
   scene = layoutWebScene(map, renderedOverview);
   stage.innerHTML = renderStage(map, scene);
   if (!state.fitted) {
@@ -156,8 +157,8 @@ function fit(): void {
   view().viewport = fitted; transform();
 }
 function zoom(factor: number, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2): void {
-  view().viewport = zoomViewport(view().viewport, view().viewport.scale * factor, x, y);
-  if ((!!current()?.map?.groups.length && (view().overview || view().viewport.scale < .55)) !== renderedOverview) render(); else transform();
+  Object.assign(view(), zoomScene(view(), factor, x, y));
+  if (showsOverview(view(), !!current()?.map?.groups.length) !== renderedOverview) render(); else transform();
 }
 pages.addEventListener('change', () => switchPage(pages.value));
 element('follow').addEventListener('click', () => setFollow(!follow));

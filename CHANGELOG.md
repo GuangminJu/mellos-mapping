@@ -3,6 +3,14 @@
 Notable, user-visible changes. Releases before 0.20.2 are recorded only in
 the git history (`git log --oneline`), which is where this file starts.
 
+## 0.21.1
+
+### Fixed
+
+- Web zoom now expands grouped modules when moving closer after using the
+  overview button or fit-to-window. Moving farther away still aggregates the
+  groups; selecting an individual group member remains available.
+
 ## 0.21.0
 
 ### Added

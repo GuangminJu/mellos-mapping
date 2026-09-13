@@ -11,6 +11,7 @@ import { readWebSnapshot } from './source.js';
 import { startWebService } from './service.js';
 import { renderInspector, renderStage } from './view.js';
 import { svgViewBox, zoomViewport } from './viewport.js';
+import { showsOverview, zoomScene } from './zoom.js';
 
 const roots: string[] = [];
 const services: Awaited<ReturnType<typeof startWebService>>[] = [];
@@ -26,6 +27,23 @@ function map(): MellosMap {
 const assets = { html: '<!doctype html><title>map</title>', javascript: 'console.log("map")', css: 'body{margin:0}' };
 
 describe('web layout and presentation', () => {
+  it('expands grouped members when moving closer after overview or fit', () => {
+    const grouped = applyDeclare(map(), { groups: [{ id: 'storage', label: '存储组', layer: 'bottom' }],
+      nodes: [{ id: 'd', label: '缓存', layer: 'bottom', group: 'storage' }, { id: 'e', label: '磁盘', layer: 'bottom', group: 'storage' }] });
+    if (!grouped.ok) throw new Error('Bad group fixture');
+    for (const scale of [.5, .75]) {
+      const overview = { viewport: { scale, x: 0, y: 0 }, overview: true };
+      const before = layoutWebScene(grouped.value, showsOverview(overview, true));
+      expect(before.nodes.map(n => n.node.id)).toContain('storage');
+      const closer = zoomScene(overview, 1.2, 300, 200);
+      const after = layoutWebScene(grouped.value, showsOverview(closer, true));
+      expect(after.nodes.map(n => n.node.id)).toEqual(expect.arrayContaining(['d', 'e']));
+      expect(after.nodes.map(n => n.node.id)).not.toContain('storage');
+      const farther = zoomScene(closer, .5, 300, 200);
+      expect(showsOverview(farther, true)).toBe(true);
+      expect(showsOverview(farther, false)).toBe(false);
+    }
+  });
   it('keeps every card separated, routes skip edges outside intermediate cards, and preserves edge labels', () => {
     const scene = layoutWebScene(map());
     expect(scene.nodes.map(n => n.node.id)).toEqual(['c', 'b', 'a']);

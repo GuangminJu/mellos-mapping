@@ -93,7 +93,7 @@ import { openWebPreview, webRuntimeFile } from '../web/launcher.js';
 import { terminalHandoff } from './terminal-handoff.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.21.0';
+export const SERVER_VERSION = '0.21.1';
 
 // ---------------------------------------------------------------------------
 // the advertised schema — what a model reads BEFORE it calls

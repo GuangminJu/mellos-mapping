@@ -23780,7 +23780,7 @@ function terminalHandoff(node, watcher, stateFile, page2) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.21.0";
+var SERVER_VERSION = "0.21.1";
 var TITLE_MAX = 120;
 var LABEL_MAX = 60;
 var DETAIL_MAX = 600;
