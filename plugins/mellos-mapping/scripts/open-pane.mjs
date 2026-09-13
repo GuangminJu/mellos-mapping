@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Open the live map pane in the RIGHT Windows Terminal window — the AGENT's
+ * Open the live map pane in the owning Windows Terminal or tmux session — the AGENT's
  * launcher, addressed by `/mmap` and by the skill.
  *
  *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--force]
@@ -31,6 +31,7 @@
  */
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { paneFailureMessage } from './watcher-command.mjs';
 
 import {
   DEDICATED_WINDOW_NAME,
@@ -39,6 +40,7 @@ import {
   loadPluginPaths,
   placePane,
   preparePane,
+  revealPane,
   awaitNewPane,
   pluginRootOf,
   takeWatcherFlag,
@@ -109,26 +111,27 @@ async function main() {
     console.error(`project directory does not exist: ${cfg.projectDir}`);
     process.exit(1);
   }
-  if (process.platform !== 'win32') {
-    console.error('open-pane.mjs is Windows Terminal-only — use the tmux/manual route from the command doc.');
-    process.exit(1);
-  }
-
   const mapFile = join(cfg.projectDir, store.STATE_FILE_RELATIVE_PATH);
+
+  const fail = (error) => {
+    console.error(paneFailureMessage(error, cfg, watchPath, mapFile));
+    process.exit(1);
+  };
 
   const prepared = preparePane(cfg, store, mapFile);
   if (!prepared.ok) {
-    console.error(prepared.error);
-    process.exit(1);
+    fail(prepared.error);
   }
   const context = prepared.value;
   if (!cfg.force && context.viewer) {
+    const visible = revealPane(context.target, context.viewer);
+    if (!visible.ok) fail(visible.error);
     if (cfg.pageSlug !== undefined) {
       writeFocusRequest(store.focusFilePath(mapFile, context.viewer.pid), cfg.pageSlug);
-      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} refocused=${cfg.pageSlug}`);
+      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} visibility=${visible.value} refocused=${cfg.pageSlug}`);
       console.log(`A watcher for ${mapFile} is already running — asked it to show page "${cfg.pageSlug}".`);
     } else {
-      console.log(`MMAP_PANE already-open pid=${context.viewer.pid}`);
+      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} visibility=${visible.value}`);
       console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
     }
     process.exit(0);
@@ -136,15 +139,19 @@ async function main() {
 
   const placed = placePane(cfg, watchPath, mapFile, context.target);
   if (!placed.ok) {
-    console.error(placed.error);
-    process.exit(1);
+    fail(placed.error);
   }
   const reported = await awaitNewPane(store, mapFile, context);
   if (!reported.ok) {
-    console.error(reported.error);
-    process.exit(1);
+    fail(reported.error);
   }
-  if (placed.value.mode === PANE_MODE.window) {
+  const visible = revealPane(context.target, reported.value);
+  if (!visible.ok) fail(visible.error);
+  if (placed.value.backend === 'tmux') {
+    console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=tmux session=${placed.value.session} visibility=${visible.value}`);
+    console.log(placed.value.mode === PANE_MODE.window
+      ? 'Map opened in a new tmux window.' : 'Map opened beside this conversation (tmux split).');
+  } else if (placed.value.mode === PANE_MODE.window) {
     console.log(`MMAP_PANE mode=window pid=${reported.value.pid} name=${DEDICATED_WINDOW_NAME} reason=${placed.value.reason}`);
     console.log(`Map opened in the dedicated "${DEDICATED_WINDOW_NAME}" window.`);
   } else {

@@ -28,6 +28,7 @@
  */
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { paneFailureMessage } from './watcher-command.mjs';
 
 import {
   DEDICATED_WINDOW_NAME,
@@ -169,21 +170,18 @@ async function main() {
     console.error(parsed.error);
     process.exit(1);
   }
-  if (process.platform !== 'win32') {
-    console.error('mmap opens the pane through Windows Terminal — on other platforms run the watcher yourself:');
-    console.error(`  node "${watchPath}" --file "<project>/${store.STATE_FILE_RELATIVE_PATH}"`);
-    process.exit(1);
-  }
-
   const candidates = storeSearchPath(process.cwd());
   const marker = storeMarkerOf(store.STATE_FILE_RELATIVE_PATH);
   const project = nearestProject(candidates, candidates.map((dir) => existsSync(join(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
   const mapFile = join(project.root, store.STATE_FILE_RELATIVE_PATH);
+  const fail = (error) => {
+    console.error(paneFailureMessage(error, cfg, watchPath, mapFile));
+    process.exit(1);
+  };
   const prepared = preparePane(cfg, store, mapFile);
   if (!prepared.ok) {
-    console.error(prepared.error);
-    process.exit(1);
+    fail(prepared.error);
   }
   const context = prepared.value;
   const action = toggleAction(context.viewer !== undefined, cfg.pageSlug, cfg.force);
@@ -201,16 +199,16 @@ async function main() {
 
   const placed = placePane(cfg, watchPath, mapFile, context.target);
   if (!placed.ok) {
-    console.error(placed.error);
-    process.exit(1);
+    fail(placed.error);
   }
   const reported = await awaitNewPane(store, mapFile, context);
   if (!reported.ok) {
-    console.error(reported.error);
-    process.exit(1);
+    fail(reported.error);
   }
   const where =
-    placed.value.mode === PANE_MODE.window
+    placed.value.backend === 'tmux'
+      ? (placed.value.mode === PANE_MODE.window ? 'in a new tmux window' : 'beside this terminal (tmux split)')
+      : placed.value.mode === PANE_MODE.window
       ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})`
       : 'beside this terminal (vertical split)';
   console.log(`Map opened for ${project.root} ${where}.`);

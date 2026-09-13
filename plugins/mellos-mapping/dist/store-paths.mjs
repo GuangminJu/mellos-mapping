@@ -1,7 +1,3 @@
-// src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
 var err = (error) => ({ ok: false, error });
@@ -16,35 +12,32 @@ function makePageId(raw) {
   return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
 }
 
-// src/store/store.ts
+// src/store/pages.ts
+import { basename, dirname, join } from "node:path";
+var STORE_DIR_NAME = ".mellos";
+var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
+var PAGES_DIR_NAME = "pages";
+
+// src/store/channels.ts
+import { dirname as dirname3, join as join3 } from "node:path";
+
+// src/store/json-text.ts
 function isRecord(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function stripBom(text) {
   return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
 }
-var STORE_DIR_NAME = ".mellos";
-var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
-var PAGES_DIR_NAME = "pages";
-var FOCUS_FILE_NAME = "focus";
-function focusFilePath(defaultFile, pid) {
-  return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
-}
-function paneChannelPath(defaultFile, channel, pid) {
-  if (pid === void 0) return join(dirname(defaultFile), channel);
-  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid pane process id");
-  return join(viewersDirPath(defaultFile), `${pid}.${channel}`);
-}
-var QUIT_FILE_NAME = "quit";
-function quitFilePath(defaultFile, pid) {
-  return paneChannelPath(defaultFile, QUIT_FILE_NAME, pid);
-}
+
+// src/store/viewers.ts
+import { readdirSync, readFileSync, statSync, rmSync } from "node:fs";
+import { dirname as dirname2, join as join2 } from "node:path";
 var VIEWERS_DIR_NAME = "viewers";
 var VIEWER_FILE_VERSION = 1;
 var VIEWER_STALE_MS = 5e3;
 var VIEWER_SWEEP_MS = 6e4;
 function viewersDirPath(defaultFile) {
-  return join(dirname(defaultFile), VIEWERS_DIR_NAME);
+  return join2(dirname2(defaultFile), VIEWERS_DIR_NAME);
 }
 function viewerPidOf(fileName) {
   const m = /^(\d+)\.json$/.exec(fileName);
@@ -82,7 +75,7 @@ function readLiveViewers(defaultFile, nowMs) {
   for (const name of names) {
     const pid = viewerPidOf(name);
     if (pid === void 0) continue;
-    const path = join(dir, name);
+    const path = join2(dir, name);
     let raw;
     let ageMs;
     try {
@@ -101,7 +94,25 @@ function readLiveViewers(defaultFile, nowMs) {
   }
   return live.sort((a, b) => a.ageMs - b.ageMs || a.pid - b.pid);
 }
-var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+
+// src/store/channels.ts
+var FOCUS_FILE_NAME = "focus";
+function focusFilePath(defaultFile, pid) {
+  return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
+}
+function paneChannelPath(defaultFile, channel, pid) {
+  if (pid === void 0) return join3(dirname3(defaultFile), channel);
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid pane process id");
+  return join3(viewersDirPath(defaultFile), `${pid}.${channel}`);
+}
+var QUIT_FILE_NAME = "quit";
+function quitFilePath(defaultFile, pid) {
+  return paneChannelPath(defaultFile, QUIT_FILE_NAME, pid);
+}
+
+// src/store/migration.ts
+import { dirname as dirname4, join as join4 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join4(".claude", "mellos-mapping.json");
 export {
   FOCUS_FILE_NAME,
   ID_RULE,
