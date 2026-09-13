@@ -85,8 +85,6 @@ import {
   type RenderOptions,
   type Viewport,
   type WindowedRender,
-  type ZoomStep,
-  ZOOM_DEFAULT,
   clampZoom,
   createWindowRenderer,
   displayWidth,
@@ -119,6 +117,7 @@ import {
   takeQuitRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
+import { initialViewState, reduceView, clickNode, isPointerClick } from './view-state.js';
 import { nativeWatcherIO, type WatcherIO } from './io.js';
 import { openTerminalSession } from './terminal-session.js';
 import { createFrameOutput } from './frame-output.js';
@@ -938,36 +937,21 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
   // Pages — one map file each. Which page is shown and what is known about
   // the others is a value the reducer folds (./pane-state.js); this shell
   // owns only the I/O around it and the VIEW of the page on screen.
-  interface PageView {
-    offsetX: number;
-    offsetY: number;
-    zoom: ZoomStep;
-    selectedId: string | undefined;
-  }
   let pane: PaneState = initialPaneState(
     cfg.follow,
     cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page),
   );
-  const pageViews = new Map<string, PageView>();
+  let view = initialViewState();
   let lastTabSegments: readonly TabSegment[] = [];
   /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
   let tabScroll = 0;
 
   // viewport pan/zoom + interaction state (of the ACTIVE page)
-  let offsetX = 0;
-  let offsetY = 0;
-  let zoom: ZoomStep = ZOOM_DEFAULT;
-  let dragAnchor: { x: number; y: number; ox: number; oy: number } | undefined;
-  let press: { moved: boolean } | undefined;
-  let hoverId: string | undefined;
-  let selectedId: string | undefined;
   let lastHits: readonly BoxHit[] = [];
   let lastContent = { w: 0, h: 0 };
   let pendingInput = '';
   let panelContentRows = PANEL_CONTENT_ROWS;
-  let dividerDrag = false;
   // sub-map navigation: double-click dives, Backspace climbs back out
-  let lastClick: { id: string; at: number } | undefined;
   /**
    * The footer message. `confirm` marks the one kind that is a QUESTION
    * standing on live state — an armed page deletion: when the state goes,
@@ -1045,14 +1029,8 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
    */
   const adoptView = (previous: string | undefined): void => {
     const file = pane.activeFile;
+    view = reduceView(view, { kind: 'pages', previous, active: file, files: filesOf(pane) });
     if (file === undefined || file === previous) return;
-    if (previous !== undefined) pageViews.set(previous, { offsetX, offsetY, zoom, selectedId });
-    const view = pageViews.get(file);
-    offsetX = view?.offsetX ?? 0;
-    offsetY = view?.offsetY ?? 0;
-    zoom = view?.zoom ?? ZOOM_DEFAULT;
-    selectedId = view?.selectedId;
-    hoverId = undefined;
     // the strip follows the switch — the active tab must never sit off-screen
     const top = topFiles();
     const tabIndex = top.indexOf(file);
@@ -1083,8 +1061,8 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     const sy = termY - 1 - tabRows();
     if (sx < 0 || sx >= viewWidth()) return undefined; // the reserved last column shows nothing
     if (sy < 0 || sy >= viewHeight()) return undefined; // tab bar or detail panel, not the map
-    const cx = sx + offsetX;
-    const cy = sy + offsetY;
+    const cx = sx + view.offsetX;
+    const cy = sy + view.offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
 
@@ -1144,7 +1122,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
   });
 
   const sceneOptions = (): RenderOptions => ({
-    color: cfg.color, unicode: cfg.unicode, zoom, focus: hoverId ?? selectedId,
+    color: cfg.color, unicode: cfg.unicode, zoom: view.zoom, focus: view.hoverId ?? view.selectedId,
     // A spinner on another page must not invalidate this completed picture.
     spinnerFrame: map?.nodes.some((node) => node.status === 'in-progress') ? spinnerFrame : 0,
   });
@@ -1157,7 +1135,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     // a shrunken terminal may no longer afford the dragged panel height
     panelContentRows = clampPanelRows(panelContentRows, io.output.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
-    const focus = hoverId ?? selectedId;
+    const focus = view.hoverId ?? view.selectedId;
 
     let body: string[];
     let panned = '';
@@ -1166,7 +1144,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       const rendered = renderWindow(
         map,
         sceneOptions(),
-        { x: offsetX, y: offsetY, width: viewW, height: viewH },
+        { x: view.offsetX, y: view.offsetY, width: viewW, height: viewH },
         renderScene,
       );
       if (!rendered.ok) {
@@ -1179,9 +1157,9 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
         // clamp AFTER measuring so a shrinking map pulls the view back in
         const maxX = Math.max(0, windowed.contentWidth - viewW);
         const maxY = Math.max(0, windowed.contentHeight - viewH);
-        if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
-          offsetX = Math.min(Math.max(0, offsetX), maxX);
-          offsetY = Math.min(Math.max(0, offsetY), maxY);
+        if (view.offsetX > maxX || view.offsetY > maxY || view.offsetX < 0 || view.offsetY < 0) {
+          view = reduceView(view, { kind: 'position',
+            x: Math.min(Math.max(0, view.offsetX), maxX), y: Math.min(Math.max(0, view.offsetY), maxY) });
           paint();
           return;
         }
@@ -1189,7 +1167,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
         body = windowed.lines;
         lastHits = windowed.hits;
         lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
-        if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
+        if (view.offsetX !== 0 || view.offsetY !== 0) panned = `  (+${view.offsetX},+${view.offsetY})`;
       }
     } else {
       // No map yet: waiting diagnostics, with the water animation only on a
@@ -1221,7 +1199,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       panel = Array.from({ length: panelContentRows }, () => ({ text: '', sgr: '' }));
     } else if (focus !== undefined) {
       panel =
-        nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows) ??
+        nodePanel(map, focus, cfg.unicode, panelWidth, view.selectedId === focus, panelContentRows) ??
         mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     } else {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
@@ -1276,7 +1254,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       lastTabSegments = [];
     }
 
-    const zoomTag = `${cfg.unicode ? '⊕' : 'zoom'} ${zoomLabel(zoom)}`;
+    const zoomTag = `${cfg.unicode ? '⊕' : 'zoom'} ${zoomLabel(view.zoom)}`;
     const hint = !interactive
       ? cfg.file
       : (flash !== undefined ? `${flash.text} · ` : '') +
@@ -1355,12 +1333,9 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       focusRequest: request === undefined ? undefined : pageFilePath(cfg.file, request.page),
       // a drag in progress holds auto-follow off: the user is engaged with
       // THIS page, and a missed switch is re-triggered by the next save
-      engaged: dragAnchor !== undefined,
+      engaged: view.dragAnchor !== undefined,
     });
     pane = scanned.state;
-    for (const known of [...pageViews.keys()]) {
-      if (!files.includes(known)) pageViews.delete(known); // the page is gone; so is its view
-    }
     adoptView(previous);
     adoptPage();
     // the scan may have withdrawn an armed deletion (the view moved, the page
@@ -1440,9 +1415,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
             quit();
             return;
           case 'reset':
-            offsetX = 0;
-            offsetY = 0;
-            zoom = ZOOM_DEFAULT;
+            view = reduceView(view, { kind: 'reset' });
             dirty = true;
             break;
           case 'clear':
@@ -1451,13 +1424,12 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
             if (pane.pendingDelete !== undefined) {
               pane = disarmDelete(pane);
               flash = undefined;
-            } else if (selectedId !== undefined) selectedId = undefined;
+            } else if (view.selectedId !== undefined) view = reduceView(view, { kind: 'select', id: undefined });
             else climbBack();
             dirty = true;
             break;
           case 'pan':
-            offsetX += event.dx;
-            offsetY += event.dy;
+            view = reduceView(view, event);
             dirty = true;
             break;
           case 'zoom': {
@@ -1467,13 +1439,13 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
               dirty = true;
               break;
             }
-            const next = clampZoom(zoom + event.delta);
-            if (next === zoom || map === undefined) break;
+            const next = clampZoom(view.zoom + event.delta);
+            if (next === view.zoom || map === undefined) break;
             // anchor on the focused node, else whatever sits mid-view
             const anchorId =
-              hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
+              view.hoverId ?? view.selectedId ?? nearestHit(lastHits, view.offsetX + viewWidth() / 2, view.offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
-            zoom = next;
+            view = reduceView(view, { kind: 'zoom', value: next });
             const measured = renderWindow(
               map,
               sceneOptions(),
@@ -1488,12 +1460,11 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
             const after = before === undefined ? undefined : sized.hits.find((h) => h.id === before.id);
             const moved = anchorOffsets(
               before !== undefined && after !== undefined ? { before, after } : undefined,
-              { x: offsetX, y: offsetY },
+              { x: view.offsetX, y: view.offsetY },
               lastContent,
               { w: sized.contentWidth, h: sized.contentHeight },
             );
-            offsetX = moved.x;
-            offsetY = moved.y;
+            view = reduceView(view, { kind: 'position', ...moved });
             // A wheel burst may contain several rungs before its final paint.
             lastHits = sized.hits;
             lastContent = { w: sized.contentWidth, h: sized.contentHeight };
@@ -1502,22 +1473,17 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
           }
           case 'mouse-move': {
             const over = hitTest(event.x, event.y);
-            if (over !== hoverId) {
-              hoverId = over;
+            if (over !== view.hoverId) {
+              view = reduceView(view, { kind: 'hover', id: over });
               dirty = true;
             }
             break;
           }
           case 'mouse-down':
-            if (event.y === dividerY()) {
-              dividerDrag = true; // grabbing the divider, not the map
-              break;
-            }
-            dragAnchor = { x: event.x, y: event.y, ox: offsetX, oy: offsetY };
-            press = { moved: false };
+            view = reduceView(view, { kind: 'down', x: event.x, y: event.y, divider: event.y === dividerY() });
             break;
           case 'mouse-drag':
-            if (dividerDrag) {
+            if (view.dividerDrag) {
               const next = panelRowsFromDividerY(event.y, io.output.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
@@ -1525,24 +1491,18 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
               }
               break;
             }
-            if (dragAnchor) {
-              // the content follows the mouse: drag right reveals the left
-              const nx = dragAnchor.ox - (event.x - dragAnchor.x);
-              const ny = dragAnchor.oy - (event.y - dragAnchor.y);
-              if (nx !== offsetX || ny !== offsetY) {
-                offsetX = nx;
-                offsetY = ny;
-                if (press) press.moved = true;
-                dirty = true;
-              }
+            {
+              const nextView = reduceView(view, { kind: 'drag', x: event.x, y: event.y });
+              dirty ||= nextView !== view;
+              view = nextView;
             }
             break;
           case 'mouse-up':
-            if (dividerDrag) {
-              dividerDrag = false; // releasing the divider is not a click
+            if (view.dividerDrag) {
+              view = reduceView(view, { kind: 'up' }); // releasing the divider is not a click
               break;
             }
-            if (press && !press.moved) {
+            if (isPointerClick(view)) {
               const tabHit =
                 tabRows() > 0 && event.y === 1
                   ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi)
@@ -1565,7 +1525,9 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
                 // double-click — dive into its sub-map when it links one.
                 const id = hitTest(event.x, event.y);
                 const now = Date.now();
-                if (id !== undefined && lastClick?.id === id && now - lastClick.at <= DOUBLE_CLICK_MS) {
+                const clicked = clickNode(view, id, now, DOUBLE_CLICK_MS);
+                view = clicked.state;
+                if (clicked.diveId !== undefined) {
                   const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
                   if (submap !== undefined && pane.activeFile !== undefined) {
                     // VIOLATION: no-primitive-obsession - SubmapRef and PageId
@@ -1586,16 +1548,11 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
                       flash = { text: `submap "${submap as string}" has no page yet`, until: now + FLASH_ACK_MS };
                     }
                   }
-                  lastClick = undefined;
-                } else {
-                  lastClick = id !== undefined ? { id, at: now } : undefined;
                 }
-                selectedId = id;
               }
               dirty = true;
             }
-            dragAnchor = undefined;
-            press = undefined;
+            view = reduceView(view, { kind: 'up' });
             break;
           case 'next-page':
           case 'prev-page': {

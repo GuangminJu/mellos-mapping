@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/preview/cli.ts
-import { existsSync as existsSync3, statSync as statSync2 } from "node:fs";
-import { join as join3, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync3, statSync } from "node:fs";
+import { join as join4, resolve as resolve2 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // src/domain/types.ts
@@ -471,9 +471,9 @@ function parseMap(raw, path) {
   return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 
-// src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+// src/store/atomic.ts
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 var RENAME_MAX_ATTEMPTS = 10;
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
@@ -517,9 +517,10 @@ function writeAtomic(path, contents, maxAttempts) {
     }
   }
 }
-function stripBom(text) {
-  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
-}
+
+// src/store/pages.ts
+import { existsSync, readdirSync, rmSync as rmSync2 } from "node:fs";
+import { basename, dirname as dirname2, join } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
@@ -533,15 +534,26 @@ function listPageFiles(defaultFile) {
   if (existsSync(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
-    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+    entries = readdirSync(join(dirname2(defaultFile), PAGES_DIR_NAME));
   } catch {
   }
   for (const e of entries.sort()) {
-    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+    if (e.endsWith(".json")) out.push(join(dirname2(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
 }
-var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+
+// src/store/json-text.ts
+function stripBom(text) {
+  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
+}
+
+// src/store/migration.ts
+import { dirname as dirname3, join as join2 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join2(".claude", "mellos-mapping.json");
+
+// src/store/maps.ts
+import { readFileSync } from "node:fs";
 function loadMapFile(path) {
   let text;
   try {
@@ -563,7 +575,7 @@ function loadMapFile(path) {
 // src/preview/publisher.ts
 import { createHash } from "node:crypto";
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
-import { dirname as dirname2, join as join2, resolve } from "node:path";
+import { dirname as dirname4, join as join3, resolve } from "node:path";
 
 // src/semantics/vocabulary.ts
 var STATUS_GLYPHS = {
@@ -1280,11 +1292,11 @@ var PREVIEW_DIR_NAME = "previews";
 var ENABLED = ".enabled";
 var PUBLISH_LOCK = ".publish-lock";
 function previewDirectory(defaultFile) {
-  return join2(dirname2(defaultFile), PREVIEW_DIR_NAME);
+  return join3(dirname4(defaultFile), PREVIEW_DIR_NAME);
 }
 function previewFile(defaultFile, page) {
   if (page !== void 0 && !ID_RULE.test(page)) throw new Error("Invalid preview page id.");
-  return join2(previewDirectory(defaultFile), documentName(page));
+  return join3(previewDirectory(defaultFile), documentName(page));
 }
 function save(path, contents) {
   try {
@@ -1297,14 +1309,14 @@ function save(path, contents) {
 }
 function ownedDirectory(path) {
   mkdirSync2(path, { recursive: true });
-  const expected = join2(realpathSync(dirname2(path)), path.slice(dirname2(path).length + 1));
+  const expected = join3(realpathSync(dirname4(path)), path.slice(dirname4(path).length + 1));
   const actual = realpathSync(path);
   if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
     throw new Error(`Preview directory redirects outside its parent: ${path}`);
   }
 }
 function acquireLock(directory) {
-  const path = join2(directory, PUBLISH_LOCK);
+  const path = join3(directory, PUBLISH_LOCK);
   const deadline = Date.now() + 2e3;
   while (true) {
     try {
@@ -1319,7 +1331,7 @@ function acquireLock(directory) {
 }
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
-  const enabledFile = join2(directory, ENABLED);
+  const enabledFile = join3(directory, ENABLED);
   const enabled = () => existsSync2(enabledFile);
   const refresh = (page) => {
     try {
@@ -1337,24 +1349,24 @@ function createPreviewPublisher(defaultFile) {
         }
         if (page !== void 0 && !pages.some((p) => p.page === page)) return err(`No map page named "${page}".`);
         if (page === void 0 && !pages.some((p) => p.page === void 0)) pages.unshift({ page: void 0, map: EMPTY_MAP });
-        const images = join2(directory, "images");
+        const images = join3(directory, "images");
         ownedDirectory(images);
         const present = /* @__PURE__ */ new Set();
         for (const item of pages) {
           const svg = renderMapSvg(item.map);
           const digest = createHash("sha256").update(svg).digest("hex");
           const image = `images/${digest}.svg`;
-          save(join2(images, `${digest}.svg`), svg);
+          save(join3(images, `${digest}.svg`), svg);
           const filename = documentName(item.page);
-          save(join2(directory, filename), renderMapMarkdown(item.map, image, pages));
+          save(join3(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
         for (const filename of readdirSync2(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
-            save(join2(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
+            save(join3(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
         }
-        const index = join2(directory, "index.md");
+        const index = join3(directory, "index.md");
         save(index, renderPreviewIndex(pages));
         return ok({ path: resolve(path), index: resolve(index), pages: pages.length });
       } finally {
@@ -1386,10 +1398,10 @@ function runPreview(args) {
   }
   if (!(args.length === 1 || args.length === 3 && args[1] === "--page") || args[0].startsWith("--")) throw new Error(usage);
   const project = resolve2(args[0]);
-  if (!existsSync3(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
+  if (!existsSync3(project) || !statSync(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
   const parsed = args[2] === void 0 ? void 0 : makePageId(args[2]);
   if (parsed !== void 0 && !parsed.ok) throw new Error(`Invalid page slug: ${args[2]}`);
-  const result = createPreviewPublisher(join3(project, STATE_FILE_RELATIVE_PATH)).activate(parsed?.value);
+  const result = createPreviewPublisher(join4(project, STATE_FILE_RELATIVE_PATH)).activate(parsed?.value);
   if (!result.ok) throw new Error(result.error);
   console.log(JSON.stringify({ surface: "markdown", ...result.value, visibility: "unconfirmed" }));
 }

@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "allowJs": true, "checkJs": false },
+  "include": ["scripts/*.mjs", "scripts/*.d.ts"],
+  "exclude": ["scripts/*.test.mjs"]
+}

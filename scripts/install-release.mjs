@@ -1,3 +1,4 @@
+// @ts-check
 /** Install a prebuilt edition without npm dependencies or developer-local paths. */
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -14,6 +15,9 @@ const editions = ['claude', 'chatgpt-app'];
 export const USAGE = 'node install.mjs [claude|chatgpt-app] [--check]';
 
 
+/** @param {string} source @param {string[]} argv
+ * @param {{env?: NodeJS.ProcessEnv, installHome?: string, makeRunner?: typeof hostRunner,
+ * verify?: typeof verifyRuntime, log?: (message: string) => void}} [options] */
 export async function installRelease(source, argv, {
   env = process.env, installHome = join(homedir(), '.mellos', 'installations'),
   makeRunner = hostRunner, verify = verifyRuntime, log = console.log,
@@ -67,7 +71,7 @@ export async function installRelease(source, argv, {
     finally { rmSync(installedScratch, { recursive: true, force: true }); }
   } catch (error) {
     transaction.rollback();
-    if (hostChanged && previous && host.previous) {
+    if (hostChanged && previous && host?.previous) {
       try { host.install(previous); }
       catch (restoreError) { throw new AggregateError([error, restoreError], 'Upgrade failed; previous files restored, but host registration could not be verified. Rerun the previous release installer.'); }
     }
