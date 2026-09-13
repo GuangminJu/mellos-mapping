@@ -121,6 +121,10 @@ describe('release candidate branches', () => {
     mkdirSync(outside);
     writeFileSync(join(outside, 'keep.txt'), 'unrelated');
     symlinkSync(outside, join(root, 'artifacts'), process.platform === 'win32' ? 'junction' : 'dir');
+    // A directory-only ignore does not match POSIX symlinks. Keep this fixture
+    // clean so it exercises output-path validation, not the dirty-tree guard.
+    write('.git/info/exclude', '/artifacts\n');
+    expect(git('status', '--porcelain')).toBe('');
     expect(() => prepareBranches(root)).toThrow('Refusing redirected');
     expect(git('show-ref', '--heads')).toBe(original);
     expect(readFileSync(join(outside, 'keep.txt'), 'utf8')).toBe('unrelated');
