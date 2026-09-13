@@ -515,7 +515,10 @@ mean:
 - **control characters** in text fields — an ESC sequence stored in a label
   would let a map repaint the terminal of everyone who opens it. `detail` is
   the exception: newlines and tabs are how a note is written, everything else
-  (ESC, BEL, lone CR) is still refused;
+  (ESC, BEL, lone CR) is still refused. File loading and library saves apply
+  the same control-character rules, retaining multiline evidence in older
+  files. Terminal rendering also neutralizes controls in maps constructed
+  directly by library callers;
 - **an empty string** where a field is optional — `null` is how a field is
   cleared, never a blank that renders as a box nobody can tell from a real
   one;

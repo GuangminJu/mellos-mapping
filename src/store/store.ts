@@ -44,6 +44,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { basename, dirname, join } from 'node:path';
 
 import { type MellosMap, type Result, err, ok } from '../domain/types.js';
+import { mapTextError } from '../domain/text.js';
 import { type PageId, type StoreError, makePageId, parseMap, serializeMap } from './format.js';
 
 export {
@@ -824,5 +825,7 @@ export function loadMapFile(path: string): Result<MellosMap, StoreError> {
  *   in which case the previous content is intact and the call may be retried.
  */
 export function saveMapFile(path: string, map: MellosMap): Result<void, StoreError> {
+  const textError = mapTextError(map);
+  if (textError) return err({ kind: 'save-failed', path, detail: textError });
   return writeFileAtomic(path, serializeMap(map));
 }

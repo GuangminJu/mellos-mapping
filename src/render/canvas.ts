@@ -14,6 +14,7 @@
  */
 
 import type { RenderOptions, Viewport } from './options.js';
+import { terminalText } from '../domain/text.js';
 import { charWidth } from './width.js';
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ export class Canvas {
   /** Write literal text starting at (x, y). Returns the column just past it. */
   text(x: number, y: number, s: string, style: Style, bold = false): number {
     let cx = x;
-    for (const ch of s) {
+    for (const ch of terminalText(s)) {
       const w = charWidth(ch.codePointAt(0)!);
       if (w === 0) {
         // A combining mark, a variation selector or a skin tone takes no

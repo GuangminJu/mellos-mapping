@@ -21439,6 +21439,41 @@ var StdioServerTransport = class {
   }
 };
 
+// src/domain/text.ts
+var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
+var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
+function mapTextError(map) {
+  const check2 = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
+  let error2 = check2("title", map.title);
+  if (error2) return error2;
+  for (const [i, layer] of map.layers.entries()) {
+    error2 = check2(`layers[${i}].name`, layer.name);
+    if (error2) return error2;
+  }
+  for (const name of ["lanes", "groups"]) {
+    for (const [i, item] of map[name].entries()) {
+      error2 = check2(`${name}[${i}].label`, item.label);
+      if (error2) return error2;
+    }
+  }
+  for (const [i, node] of map.nodes.entries()) {
+    for (const name of ["label", "evidence", "detail"]) {
+      error2 = check2(`nodes[${i}].${name}`, node[name], name !== "label");
+      if (error2) return error2;
+    }
+  }
+  for (const [i, edge] of map.edges.entries()) {
+    error2 = check2(`edges[${i}].label`, edge.label);
+    if (error2) return error2;
+  }
+  return void 0;
+}
+function terminalText(text2, multiline = false) {
+  return text2.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
+}
+
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
 var err = (error2) => ({ ok: false, error: error2 });
@@ -21964,6 +21999,7 @@ function displayWidth(text2) {
   return w;
 }
 function fitWidth(s, width) {
+  s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
@@ -21979,7 +22015,7 @@ function wrapWidth(s, width) {
   const lines = [];
   let line2 = "";
   let w = 0;
-  for (const ch of s.replace(/\r/g, "")) {
+  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
     if (ch === "\n") {
       lines.push(line2);
       line2 = "";
@@ -22071,7 +22107,7 @@ var Canvas = class {
   /** Write literal text starting at (x, y). Returns the column just past it. */
   text(x, y, s, style, bold = false) {
     let cx = x;
-    for (const ch of s) {
+    for (const ch of terminalText(s)) {
       const w = charWidth(ch.codePointAt(0));
       if (w === 0) {
         const base = this.cell(Math.max(0, cx - 1), y);
@@ -22938,7 +22974,8 @@ function parseMap(raw, path) {
     if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
     map = linked.value;
   }
-  return ok(map);
+  const textError = mapTextError(map);
+  return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 function serializeMap(map) {
   const body = {
@@ -23193,6 +23230,8 @@ function loadMapFile(path) {
   return parseMap(raw, path);
 }
 function saveMapFile(path, map) {
+  const textError = mapTextError(map);
+  if (textError) return err({ kind: "save-failed", path, detail: textError });
   return writeFileAtomic(path, serializeMap(map));
 }
 
@@ -23832,10 +23871,6 @@ function edgeEnds() {
     to: id("the node being used (must live on a strictly lower layer)")
   };
 }
-var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
-var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
 function line(max, description) {
   return external_exports.string().min(1).max(max).regex(NO_CONTROLS, NO_CONTROLS_TEXT).describe(description);
 }
