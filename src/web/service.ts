@@ -4,9 +4,13 @@ import { ID_RULE } from '../domain/types.js';
 import { deletePageFile, describeStoreError, pageFilePath, type PageId } from '../store/store.js';
 import { createPreviewPublisher } from '../preview/publisher.js';
 import { readWebSnapshot } from './source.js';
+import { attachTerminalService } from './terminal-service.js';
 
-export interface WebAssets { readonly html: string; readonly javascript: string; readonly css: string }
-export interface WebServiceOptions { readonly token?: string; readonly idleMs?: number; readonly onClose?: () => void }
+export interface WebAssets {
+  readonly html: string; readonly javascript: string; readonly css: string;
+  readonly terminal?: { readonly html: string; readonly javascript: string; readonly css: string; readonly xtermCss: string };
+}
+export interface WebServiceOptions { readonly token?: string; readonly idleMs?: number; readonly onClose?: () => void; readonly terminalWorker?: string }
 
 /** Local transport adapter. Exact routes only; no general filesystem server. */
 export async function startWebService(defaultFile: string, assets: WebAssets, options: WebServiceOptions = {}) {
@@ -27,10 +31,18 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
     const route = path.slice(prefix.length);
     lastRequest = Date.now();
     try {
-      if (req.method === 'GET' && route === '') { send(res, 200, assets.html, 'text/html; charset=utf-8'); return; }
+      if (req.method === 'GET' && route === '') {
+        const terminal = new URL(req.url!, origin).searchParams.get('view') === 'terminal';
+        if (terminal && !terminalService) { send(res, 503, '{"error":"Web terminal unavailable. Reinstall the plugin."}'); return; }
+        send(res, 200, terminal ? assets.terminal!.html : assets.html, 'text/html; charset=utf-8'); return;
+      }
       if (req.method === 'GET' && route === 'app.js') { send(res, 200, assets.javascript, 'text/javascript; charset=utf-8'); return; }
       if (req.method === 'GET' && route === 'app.css') { send(res, 200, assets.css, 'text/css; charset=utf-8'); return; }
-      if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid })); return; }
+      if (req.method === 'GET' && assets.terminal) {
+        const asset = new Map<string, readonly [string, string]>([['terminal.js', [assets.terminal.javascript, 'text/javascript']], ['terminal.css', [assets.terminal.css, 'text/css']], ['xterm.css', [assets.terminal.xtermCss, 'text/css']]]).get(route);
+        if (asset) { send(res, 200, asset[0], `${asset[1]}; charset=utf-8`); return; }
+      }
+      if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, surfaces: terminalService ? ['web', 'web-terminal'] : ['web'] })); return; }
       if (req.method === 'GET' && route === 'api/state') {
         const snapshot = readWebSnapshot(defaultFile);
         const etag = `"${snapshot.revision}"`;
@@ -54,12 +66,16 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
       send(res, 404, '{"error":"Not found"}');
     } catch (error) { send(res, 500, JSON.stringify({ error: String(error) })); }
   });
+  const terminalService = assets.terminal && options.terminalWorker ? attachTerminalService(server, {
+    file: defaultFile, worker: options.terminalWorker, prefix, origin: () => origin, touch: () => { lastRequest = Date.now(); },
+  }) : undefined;
   const timer = setInterval(() => { if (Date.now() - lastRequest > (options.idleMs ?? 300_000)) void close(); }, 10_000);
   timer.unref();
   async function close(): Promise<void> {
     if (closed) return;
     closed = true;
     clearInterval(timer);
+    await terminalService?.close();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     options.onClose?.();

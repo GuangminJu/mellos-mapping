@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { EDITIONS, packageEdition } from './release-layout.mjs';
 import { validateRelease, copyRelease } from './install-release.mjs';
 import { verifyRuntime } from './verify-runtime.mjs';
+import { verifyWebTerminal } from './verify-web-terminal.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const temporary = mkdtempSync(join(tmpdir(), 'mellos-release-check-'));
@@ -26,6 +27,7 @@ try {
     const checkEnv = { ...process.env };
     delete checkEnv.MELLOS_MAPPING_CWD; delete checkEnv.CLAUDE_PROJECT_DIR;
     await verifyRuntime(join(runtime, 'dist/server.mjs'), temporary, checkEnv);
+    await verifyWebTerminal(join(runtime, 'dist/server.mjs'), temporary, checkEnv);
     if (edition === 'chatgpt-app') {
       assert.equal(existsSync(join(runtime, 'hooks')), false);
       assert.equal(existsSync(join(runtime, '.mcp.json')), false);

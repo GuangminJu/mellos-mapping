@@ -56,6 +56,9 @@ function goBack(): void {
 }
 function renderHeading(): void {
   const page = current(), map = page?.map;
+  const terminalUrl = new URL(base); terminalUrl.searchParams.set('view', 'terminal');
+  if (currentId && currentId !== '_default') terminalUrl.searchParams.set('page', currentId);
+  element<HTMLAnchorElement>('terminal-mode').href = terminalUrl.href;
   element('project').textContent = snapshot.project;
   element('title').textContent = page?.title ?? '地图已不存在';
   document.title = `${page?.title ?? '地图'} · Mellos`;

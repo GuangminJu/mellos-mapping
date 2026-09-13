@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { packageCodex } from './package-codex.mjs';
+import { WebSocket } from 'ws';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundle = packageCodex(root);
@@ -62,6 +63,30 @@ async function checkProject(name) {
     webRevision = (await (await request('api/state')).json()).revision;
     const reused = await client.callTool({ name: 'mmap_open', arguments: { page: 'smoke', surface: 'web' } });
     assert.equal(/^web: (.+)$/m.exec(reused.content[0].text)?.[1], webUrl);
+    const webTerminal = await client.callTool({ name: 'mmap_open', arguments: { page: 'smoke', surface: 'web-terminal' } });
+    assert.notEqual(webTerminal.isError, true, JSON.stringify(webTerminal));
+    const terminalUrl = /^web: (.+)$/m.exec(webTerminal.content[0].text)?.[1];
+    assert.ok(terminalUrl && terminalUrl.includes('view=terminal'));
+    assert.ok((await (await fetch(terminalUrl)).text()).includes('id="terminal"'));
+    const browserOpen = JSON.parse(/^hostOpen: (.+)$/m.exec(webTerminal.content[0].text)[1]);
+    assert.deepEqual(browserOpen, { placement: 'right', target: { type: 'browser', url: terminalUrl } });
+    await new Promise((resolve, reject) => {
+      const endpoint = new URL('api/terminal?page=smoke', webBase);
+      const socket = new WebSocket(endpoint.href.replace('http:', 'ws:'), { origin: endpoint.origin });
+      let output = '', quitting = false;
+      const timer = setTimeout(() => { socket.terminate(); reject(new Error('Packaged browser terminal timed out')); }, 8000);
+      socket.on('open', () => socket.send(JSON.stringify({ type: 'start', cols: 120, rows: 35 })));
+      socket.on('error', reject);
+      socket.on('message', raw => {
+        const message = JSON.parse(raw.toString());
+        if (message.type === 'error') { socket.terminate(); reject(new Error(message.message)); }
+        if (message.type !== 'data') return;
+        output += message.data;
+        socket.send('{"type":"ack"}');
+        if (!quitting && output.includes(name) && output.includes('q quit')) { quitting = true; socket.send('{"type":"input","data":"q"}'); }
+      });
+      socket.on('close', code => { clearTimeout(timer); code === 1000 && quitting ? resolve() : reject(new Error(`Packaged terminal closed unexpectedly: ${code}`)); });
+    });
     const updated = await client.callTool({ name: 'mmap_update', arguments: {
       page: 'smoke', updates: [{ id: 'runtime', status: 'done', evidence: 'stdio declare/update/view passed' }],
     } });

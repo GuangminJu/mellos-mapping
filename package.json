@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "mcpName": "io.github.GuangminJu/mellos-mapping",
   "description": "A live layered dependency map for bottom-up development — MCP server + terminal pane. Ghost the design first, then light nodes up from the bottom as they are built and verified.",
   "type": "module",
@@ -97,9 +97,13 @@
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@types/node": "^24.0.0",
+    "@types/ws": "8.18.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.11",
+    "ws": "8.21.3",
     "zod": "^3.24.0"
   }
 }

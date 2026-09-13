@@ -164,11 +164,14 @@ host argument. It configures the desktop skill, marketplace and six MCP tools.
 node install.mjs chatgpt-app
 ```
 
-Start a new conversation. The desktop skill prefers the **right terminal**.
-`mmap_open {surface: "codex-terminal", page: "<slug>"}` prepares the correct
-startup command; the host opens the panel. If the host has no user-terminal
-input tool, paste that command once. Updates are live after startup. An agent
-PTY or queued panel does not prove the user-facing map is running.
+Start a new conversation. The desktop skill defaults to **web-terminal**:
+`mmap_open {surface: "web-terminal", page: "<slug>"}` starts a local service,
+then the AI opens its URL in the current conversation's right browser panel.
+The mmap terminal starts automatically, with its own font-size selector;
+no manual paste or Computer Use is needed. Graphical SVG, native terminal and
+Markdown remain available. With an older MCP schema, run
+`node "<plugin root>/dist/web.mjs" "<project>" --terminal --page <slug>`.
+A queued panel request does not prove that the user can see it.
 See [desktop installation and limitations](docs/codex.md).
 
 For Codex CLI inside Windows Terminal (not the desktop integrated terminal), run

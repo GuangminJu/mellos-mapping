@@ -93,7 +93,7 @@ import { openWebPreview, webRuntimeFile } from '../web/launcher.js';
 import { terminalHandoff } from './terminal-handoff.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.21.1';
+export const SERVER_VERSION = '0.22.0';
 
 // ---------------------------------------------------------------------------
 // the advertised schema — what a model reads BEFORE it calls
@@ -993,7 +993,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
     {
       title: 'Open the map pane',
       description:
-        'For ChatGPT desktop in Codex mode, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. ' +
+        'For automatic display beside the current ChatGPT desktop conversation in Codex mode, use surface: "web-terminal", then call open_in_codex with the returned browser hostOpen object. No paste or Computer Use is needed. For the native host terminal, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. ' +
         'For a document panel, use surface: "markdown": generate MD + SVG files, ' +
         'enable automatic preview updates after successful map writes, then use the HOST file-opening ' +
         'tool to display the returned absolute Markdown path on the right of the current conversation. ' +
@@ -1011,7 +1011,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
         'Windows Terminal is the supported route; anywhere else it says so and you relay the ' +
         'manual command from the README.',
       inputSchema: closed({
-        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web']).optional().describe('codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)'),
+        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web', 'web-terminal']).optional().describe('web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)'),
         page: id(
           'page to show first — the page THIS effort lives on, the same slug you pass to the ' +
             'other tools. Omit only for the default page: without it a fresh pane opens on ' +
@@ -1041,11 +1041,11 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
           'An exec_command session_id belongs to the agent PTY, not this terminal. queued is not visible, and opened is not running. ' +
           'Use read_thread_terminal to confirm the map title and controls after startup. Preserve a page the user pinned.');
       }
-      if (input.surface === 'web') {
+      if (input.surface === 'web' || input.surface === 'web-terminal') {
         if (input.window === true) return text('surface: "web" cannot be combined with window: true. Open the returned URL using the desktop host.', true);
         try {
-          const url = await openWebPreview(stateFile, fileURLToPath(new URL('./web.mjs', import.meta.url)), input.page);
-          return text(`preview: ready\nweb: ${url}\nOpen this URL in the current conversation's right browser panel using the host tool. The viewer refreshes from project maps while open. Existing Markdown previews remain enabled. Desktop visibility is not confirmed by this tool.`);
+          const url = await openWebPreview(stateFile, fileURLToPath(new URL('./web.mjs', import.meta.url)), input.page, input.surface === 'web-terminal');
+          return text(`surface: ${input.surface}\nhostOpen: ${JSON.stringify({ placement: 'right', target: { type: 'browser', url } })}\npreview: ready\nweb: ${url}\nOpen this URL in the current conversation's right browser panel using the host tool. The viewer refreshes from project maps while open. Existing Markdown previews remain enabled. Desktop visibility is not confirmed by this tool.`);
         } catch (error) { return text(`Could not open web preview: ${String(error)}`, true); }
       }
       if (input.surface === 'markdown') {

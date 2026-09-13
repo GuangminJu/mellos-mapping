@@ -147,10 +147,13 @@ the move.`）：
 node install.mjs chatgpt-app
 ```
 
-安装完成后开启新对话。技能默认使用**当前对话右侧终端**。
-`mmap_open {surface: "codex-terminal", page: "<slug>"}` 会准备好正确处理路径的
-启动命令，再由宿主打开面板。宿主没有用户终端输入工具时，粘贴这行命令一次即可。
-地图启动后实时更新；后台 PTY 或面板排队打开均不能证明地图已在用户面板中运行。
+安装完成后开启新对话。技能默认使用 **web-terminal 网页终端**：
+`mmap_open {surface: "web-terminal", page: "<slug>"}` 启动本地服务后，
+AI 自动把 URL 打开到当前对话右侧浏览器，直接显示 mmap 终端地图。
+不需要粘贴命令或 Computer Use；网页有独立字号调节。
+图形 SVG 网页、原生终端和 Markdown 仍然保留。旧 MCP 对话可使用
+`node "<插件根>/dist/web.mjs" "<项目>" --terminal --page <slug>`。
+面板排队打开不等于地图已经可见。
 详见[桌面安装与限制](docs/codex.md)。
 
 在 Windows Terminal 使用 Codex CLI 时（不指桌面 App 内置终端），运行

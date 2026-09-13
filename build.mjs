@@ -10,7 +10,7 @@
  * npm/library surface the package's `exports` map points at.
  */
 
-import { rm, mkdir, copyFile, chmod } from 'node:fs/promises';
+import { rm, mkdir, copyFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -53,13 +53,18 @@ const shared = {
 };
 
 await build({ ...shared, entryPoints: ['src/server/server.ts'], outfile: 'dist/server.mjs' });
-await build({ ...shared, entryPoints: ['src/watch/watch.ts'], outfile: 'dist/watch.mjs' });
+await build({ ...shared, entryPoints: ['src/watch/cli.ts'], outfile: 'dist/watch.mjs' });
 await build({ ...shared, banner: {}, entryPoints: ['src/preview/cli.ts'], outfile: 'dist/preview.mjs' });
-await build({ ...shared, banner: {}, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
+await build({ ...shared, banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" }, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
+await build({ ...shared, banner: {}, entryPoints: ['src/web/terminal-worker.ts'], outfile: 'dist/terminal-worker.mjs' });
 await build({ absWorkingDir: root, bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
   entryPoints: ['src/web/app.ts'], outfile: 'dist/web/app.js', legalComments: 'none' });
 await mkdir(join(root, 'dist/web'), { recursive: true });
-for (const name of ['index.html', 'app.css']) await copyFile(join(root, 'src/web', name), join(root, 'dist/web', name));
+await build({ absWorkingDir: root, bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
+  entryPoints: ['src/web/terminal-app.ts'], outfile: 'dist/web/terminal.js', legalComments: 'none' });
+await copyFile(join(root, 'node_modules/@xterm/xterm/css/xterm.css'), join(root, 'dist/web/xterm.css'));
+await writeFile(join(root, 'dist/web/TERMINAL-LICENSES.txt'), (await Promise.all(['@xterm/xterm', '@xterm/addon-fit', 'ws'].map(async name => name + '\n\n' + await readFile(join(root, 'node_modules', name, 'LICENSE'), 'utf8')))).join('\n\n'));
+for (const name of ['index.html', 'app.css', 'terminal.html', 'terminal.css']) await copyFile(join(root, 'src/web', name), join(root, 'dist/web', name));
 
 /**
  * The human's `mmap` toggle, as one file.

@@ -118,6 +118,6 @@ export async function installRelease(source, argv, {
   }
   log(`Installed in ${target}. The clone can be moved or deleted; runtime files are retained here.`);
   log('Start a new host conversation to load the skill and tools. Existing conversations keep their previous tools.');
-  if (codex) log('Ask: 用梅勒斯地图制定计划，并在当前对话右侧终端展示。 If the host has no terminal-input tool, paste the supplied startup command once.');
+  if (codex) log('Ask: 用梅勒斯地图制定计划，用 web-terminal 自动在当前对话右侧展示。 The browser page starts mmap directly; no manual paste is needed.');
   return { edition, target, market };
 }

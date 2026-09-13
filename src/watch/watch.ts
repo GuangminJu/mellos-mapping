@@ -4,9 +4,10 @@
  * A deliberately tiny terminal program: poll the state file's mtime,
  * re-render on change, keep the spinner turning while any node is in
  * progress. The state file is the only channel between the MCP server and
- * this process — no sockets, no IPC, one direction of flow.
+ * this process. The IO adapter delivers terminal input/output independently;
+ * it can be a native TTY or a browser worker connection.
  *
- * Interaction (real TTY only; piped/CI runs stay pure output):
+ * Interaction (interactive IO only; piped/CI runs stay pure output):
  *   hover a node   spotlight its wires, preview it in the detail panel
  *   click a node   pin it — the panel stays after the mouse leaves
  *   click empty / Esc   unpin
@@ -118,6 +119,7 @@ import {
   takeQuitRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
+import { nativeWatcherIO, type WatcherIO } from './io.js';
 import { openTerminalSession } from './terminal-session.js';
 import { createFrameOutput } from './frame-output.js';
 import {
@@ -145,7 +147,7 @@ export { type PageFault, type PageEntry, type PaneState, describePageFault } fro
 // Width helpers live with the renderer now; re-exported for panel tests.
 export { fitWidth, wrapWidth };
 
-interface WatchConfig {
+export interface WatchConfig {
   readonly file: string;
   readonly intervalMs: number;
   readonly unicode: boolean;
@@ -906,13 +908,7 @@ export function viewerReportOf(pane: PaneState, defaultFile: string): ViewerRepo
   return { page: pageIdOfFile(defaultFile, shown), follow: pane.follow };
 }
 
-function main(): void {
-  const parsed = parseArgs(process.argv.slice(2), process.cwd());
-  if (!parsed.ok) {
-    console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}\n${USAGE}`);
-    process.exit(1);
-  }
-  const cfg = parsed.value;
+export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()): void {
   const renderScene = createWindowRenderer();
   // One-time move of a pre-0.20 `.claude` store into `.mellos` (store.ts).
   // Announce it on stderr before the alternate screen opens, so the move is
@@ -926,7 +922,7 @@ function main(): void {
   // the only moment a leftover is provably not for this pane is this one.
   sweepQuitRequest(cfg.file);
   sweepQuitRequest(cfg.file, process.pid);
-  const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+  const interactive = io.interactive;
   const mouseActive = interactive && cfg.mouse;
 
   let lastFrame = '';
@@ -936,8 +932,8 @@ function main(): void {
   const standbyNotice = 'waiting for the first mmap_declare ...';
   let map: MellosMap | undefined;
   let notice = standbyNotice;
-  let lastCols = process.stdout.columns ?? 0;
-  let lastRows = process.stdout.rows ?? 0;
+  let lastCols = io.output.columns ?? 0;
+  let lastRows = io.output.rows ?? 0;
 
   // Pages — one map file each. Which page is shown and what is known about
   // the others is a value the reducer folds (./pane-state.js); this shell
@@ -1000,9 +996,9 @@ function main(): void {
     }
     return false;
   };
-  const viewWidth = (): number => usableColumns(process.stdout.columns ?? FALLBACK_COLUMNS);
+  const viewWidth = (): number => usableColumns(io.output.columns ?? FALLBACK_COLUMNS);
   const viewHeight = (): number =>
-    Math.max(1, (process.stdout.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
+    Math.max(1, (io.output.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
   /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
   const dividerY = (): number => tabRows() + viewHeight() + 1;
 
@@ -1109,18 +1105,19 @@ function main(): void {
    * surface the user actually reads.
    */
   const publishPresence = (): void => {
+    io.report?.(viewerReportOf(pane, cfg.file));
     publishViewer(cfg.file, process.pid, {
       ...viewerReportOf(pane, cfg.file), ...(cfg.owner === undefined ? {} : { owner: cfg.owner }),
     });
   };
 
-  if (interactive) process.stdin.setRawMode(true);
-  const terminal = openTerminalSession({ interactive, mouse: cfg.mouse, write: (text) => process.stdout.write(text) });
+  if (interactive) io.input.setRawMode(true);
+  const terminal = openTerminalSession({ interactive, mouse: cfg.mouse, write: (text) => io.output.write(text) });
   const frameOutput = interactive ? createFrameOutput({
-    write: (text) => process.stdout.write(text),
+    write: (text) => io.output.write(text),
     onDrain: (ready) => {
-      process.stdout.once('drain', ready);
-      return () => { process.stdout.off('drain', ready); };
+      io.output.once('drain', ready);
+      return () => { io.output.off('drain', ready); };
     },
   }) : undefined;
   let paintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1155,10 +1152,10 @@ function main(): void {
   const paint = (): void => {
     clearTimeout(paintTimer);
     paintTimer = undefined;
-    const cols = process.stdout.columns ?? FALLBACK_COLUMNS;
+    const cols = io.output.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
     // a shrunken terminal may no longer afford the dragged panel height
-    panelContentRows = clampPanelRows(panelContentRows, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
+    panelContentRows = clampPanelRows(panelContentRows, io.output.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
     const focus = hoverId ?? selectedId;
 
@@ -1300,7 +1297,7 @@ function main(): void {
     } else {
       const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join('\n');
       if (frame !== lastFrame) {
-        process.stdout.write(frame);
+        io.output.write(frame);
         lastFrame = frame;
       }
     }
@@ -1320,11 +1317,11 @@ function main(): void {
    * event is not reliably delivered on every Windows terminal host.
    */
   const handleResize = (): void => {
-    lastCols = process.stdout.columns ?? lastCols;
-    lastRows = process.stdout.rows ?? lastRows;
+    lastCols = io.output.columns ?? lastCols;
+    lastRows = io.output.rows ?? lastRows;
     lastFrame = '';
     frameOutput?.invalidate();
-    process.stdout.write(CLEAR_ALL);
+    io.output.write(CLEAR_ALL);
     paint();
   };
 
@@ -1336,7 +1333,7 @@ function main(): void {
     // clean shutdown the `q` key runs — the exit hook hands the terminal back.
     if (takeQuitRequest(cfg.file, process.pid)) quit();
 
-    if ((process.stdout.columns ?? lastCols) !== lastCols || (process.stdout.rows ?? lastRows) !== lastRows) {
+    if ((io.output.columns ?? lastCols) !== lastCols || (io.output.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
 
@@ -1431,9 +1428,9 @@ function main(): void {
   };
 
   if (interactive) {
-    process.stdin.resume();
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk: string) => {
+    io.input.resume();
+    io.input.setEncoding('utf8');
+    io.input.on('data', (chunk: string) => {
       const parsed = parseInput(pendingInput + chunk);
       pendingInput = parsed.rest;
       let dirty = false;
@@ -1521,7 +1518,7 @@ function main(): void {
             break;
           case 'mouse-drag':
             if (dividerDrag) {
-              const next = panelRowsFromDividerY(event.y, process.stdout.rows ?? FALLBACK_ROWS, tabRows());
+              const next = panelRowsFromDividerY(event.y, io.output.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
                 dirty = true;
@@ -1643,7 +1640,7 @@ function main(): void {
         else paint(); // clicks, zoom and keys keep their immediate feedback
       }
     });
-    process.stdout.on('resize', handleResize);
+    io.output.on('resize', handleResize);
   }
 
   tick();
@@ -1679,8 +1676,4 @@ export function launchedAsEntry(argv1: string | undefined, moduleUrl: string): b
   } catch {
     return pathToFileURL(argv1).href === moduleUrl;
   }
-}
-
-if (launchedAsEntry(process.argv[1], import.meta.url)) {
-  main();
 }

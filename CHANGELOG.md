@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.0
+
+- Added `web-terminal`: the existing mmap terminal starts inside a local browser
+  page, enabling automatic right-panel display in ChatGPT desktop Codex mode.
+- Added independent terminal font size, graphic/terminal switching, reconnect
+  controls and per-connection view state. Native terminal and Markdown stay available.
+- Shared the watcher through a terminal IO port; bundled xterm.js, fit addon and
+  WebSocket transport without native PTY dependencies. Added output flow control
+  and connection cleanup checks.
+- Updated desktop prompts and clone distributions for automatic startup without
+  manual paste or Computer Use.
+
 Notable, user-visible changes. Releases before 0.20.2 are recorded only in
 the git history (`git log --oneline`), which is where this file starts.
 
