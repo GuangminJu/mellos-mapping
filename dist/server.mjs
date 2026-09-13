@@ -23857,9 +23857,10 @@ function pagesLine(stateFile, shown) {
 function pageName(page2) {
   return page2 ?? DEFAULT_PAGE_NAME;
 }
-function paneLine(stateFile, touched) {
+function paneLine(stateFile, touched, openFailure) {
   const viewers = readLiveViewers(stateFile, Date.now());
   if (viewers.length === 0) {
+    if (openFailure !== void 0) return `pane: CLOSED \u2014 automatic opening previously failed. Do not retry mmap_open until the terminal environment changes or the user asks to retry. The map is saved; mmap_view remains available inline. Last failure: ${openFailure}`;
     return `pane: CLOSED \u2014 nobody is seeing this map. Open it with mmap_open {page: ${touched === void 0 ? "(omit for the default page)" : `"${touched}"`}} and do not ask first: a user with a mapping policy has already said they want the picture.`;
   }
   if (viewers.some((v) => v.page === touched)) return "pane: open on this page \u2014 the user is seeing this.";
@@ -23907,6 +23908,14 @@ function runLauncher(script, args) {
     });
   });
 }
+function launchPane(args) {
+  const script = launcherPath(import.meta.url);
+  if (!existsSync4(script)) return Promise.resolve({
+    ok: false,
+    output: `the launcher is missing at ${script}. This install is incomplete \u2014 reinstall the plugin (a source checkout needs "npm run build").`
+  });
+  return runLauncher(script, args);
+}
 function paneShows(viewers, page2) {
   return page2 === void 0 ? viewers.length > 0 : viewers.some((v) => v.page === page2);
 }
@@ -23923,7 +23932,7 @@ function openOutcome(run, viewers, page2) {
   viewers = viewers.filter((viewer) => pid === void 0 || viewer.pid === pid);
   if (!run.ok) {
     return `could not open the pane: ${run.output === "" ? "the launcher failed without saying why" : run.output}
-Relay the launcher reason. A failed default split is not permission to open a separate window.`;
+Relay the launcher reason and any copyable fallback command. Do not retry mmap_open until the terminal environment changes or the user asks to retry. A failed default split is not permission to open a separate window.`;
   }
   if (paneShows(viewers, page2)) {
     return `pane: open and showing ${pageName(page2)} \u2014 the user can see the map now.
@@ -23953,8 +23962,10 @@ function loadOrEmpty(stateFile) {
   if (loaded.error.kind === "not-found") return { ok: true, value: EMPTY_MAP };
   return { ok: false, error: describeStoreError(loaded.error) };
 }
-function buildServer(stateFile, userConfigFile) {
+function buildServer(stateFile, userConfigFile, launch = launchPane) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  let paneOpenFailure;
+  const currentPaneLine = (page2) => paneLine(stateFile, page2, paneOpenFailure);
   const projectConfigFile = configFilePath(stateFile);
   const previews = createPreviewPublisher(stateFile);
   const refreshPreview = (page2) => {
@@ -23978,7 +23989,7 @@ preview: STALE \u2014 map changes were saved, but preview generation failed: ${p
     return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : "") + refreshPreview(page2));
   };
   const withPane = (result, page2) => result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ""}
-${existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : paneLine(stateFile, page2)}`);
+${existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page2)}`);
   const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
   const refusePageDeletion = (pages, target) => {
     if (target !== void 0 && pages.includes(target)) {
@@ -24211,7 +24222,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
       const surface = previews.enabled() ? `markdown: ${previewFile(stateFile, input.page)}
-Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : paneLine(stateFile, input.page);
+Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
       return text(`${picture}
 ${pagesLine(stateFile, input.page)}
 ${surface}`);
@@ -24221,14 +24232,14 @@ ${surface}`);
     "mmap_open",
     {
       title: "Open the map pane",
-      description: 'For automatic display beside the current ChatGPT desktop conversation in Codex mode, use surface: "web-terminal", then call open_in_codex with the returned browser hostOpen object. No paste or Computer Use is needed. For the native host terminal, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.',
+      description: 'For automatic display beside the current ChatGPT desktop conversation in Codex mode, use surface: "web-terminal", then call open_in_codex with the returned browser hostOpen object. No paste or Computer Use is needed. For the native host terminal, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Automatic terminal opening supports Windows Terminal and tmux on Linux/macOS. If opening fails, relay the reason and copyable command; retry only after the environment changes or the user asks.',
       inputSchema: closed({
-        surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web", "web-terminal"]).optional().describe("web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)"),
+        surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web", "web-terminal"]).optional().describe("web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal or tmux launcher (default)"),
         page: id(
           "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
         ).optional(),
         window: external_exports.boolean().optional().describe(
-          `open the map in its own "mellos-mapping" window instead of splitting this conversation's window. Pass it only when the user asked for the map separate (a second monitor, a small screen); the split is the default because the map is meant to sit beside what it describes.`
+          `open the map in its own "mellos-mapping" window (a new tmux window on Linux/macOS) instead of splitting this conversation's window. Pass it only when the user asked for the map separate (a second monitor, a small screen); the split is the default because the map is meant to sit beside what it describes.`
         )
       })
     },
@@ -24263,16 +24274,12 @@ markdown: ${published.value.path}
 index: ${published.value.index}
 Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation's right file panel using the host tool. No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.`);
       }
-      const script = launcherPath(import.meta.url);
-      if (!existsSync4(script)) {
-        return text(
-          `cannot open the pane: the launcher is missing at ${script}. This install is incomplete \u2014 tell the user to reinstall the plugin (a source checkout needs "npm run build").`,
-          true
-        );
-      }
-      const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
       const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
-      return text(openOutcome(run, viewers, input.page), !run.ok || !paneShows(viewers, input.page));
+      const outcome = openOutcome(run, viewers, input.page);
+      const failed = !run.ok || !paneShows(viewers, input.page);
+      paneOpenFailure = failed ? outcome : void 0;
+      return text(outcome, failed);
     }
   );
   return server;

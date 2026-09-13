@@ -160,7 +160,9 @@ confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle de
    who is actually looking. Read it and act on it:
    - `pane: CLOSED` — nobody is. Call `mmap_open {page: "<slug>"}` at once,
      without asking first: a recorded mapping policy IS the user's standing
-     consent to see the map. Then say in conversation that it is live.
+     consent to see the map. Confirm it is live only after the tool succeeds.
+     If automatic opening already failed, relay the reason and copyable command
+     once; retry only after the environment changes or the user asks.
    - `pane: open on this page` — they are watching this land. Carry on.
    - `pane: open on <other>, auto-follow on` — the pane follows the page
      last written, so your next write brings the audience along by itself.
@@ -182,8 +184,14 @@ confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle de
    CLOSES a pane: that is the user's (the `q` key, or `mmap` in any terminal
    of the project, which toggles) — so a pane that vanishes is them, not a
    fault.
-   Where the tool cannot help — a client without it, a machine without
-   Windows Terminal — run the watcher yourself:
+   On Linux/macOS, the same tool automatically opens tmux, using the inherited
+   session/pane or the single attached session when `TMUX` is missing. Multiple
+   attached sessions require `MELLOS_MAPPING_TMUX_TARGET`; custom sockets use
+   `MELLOS_MAPPING_TMUX_SOCKET` in the MCP server environment. `window: true`
+   requests a new tmux window. Do not guess between attached sessions.
+   Where the tool cannot help — a client without it, or a machine without
+   Windows Terminal or an attached tmux session — relay the launcher's complete
+   quoted watcher command for a visible terminal, or use:
    `node <plugin root>/dist/watch.mjs --file <project>/.mellos/map.json
    --page <slug>` in a second terminal or tmux split (this skill file lives
    under `<plugin root>/skills/mellos-mapping/`). `mmap_view` shows the map
