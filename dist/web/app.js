@@ -217,6 +217,11 @@ function zoomGeometry(zoom2) {
   }
 }
 
+// src/domain/text.ts
+function terminalText(text, multiline = false) {
+  return text.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
+}
+
 // src/render/width.ts
 var WIDE_RANGES = [
   [4352, 4447],
@@ -311,6 +316,7 @@ function displayWidth(text) {
   return w;
 }
 function fitWidth(s, width) {
+  s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
@@ -326,7 +332,7 @@ function wrapWidth(s, width) {
   const lines = [];
   let line = "";
   let w = 0;
-  for (const ch of s.replace(/\r/g, "")) {
+  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
     if (ch === "\n") {
       lines.push(line);
       line = "";

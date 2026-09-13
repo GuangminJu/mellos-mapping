@@ -2,6 +2,8 @@ name: Verify installable edition
 on:
   push:
     branches: [claude, chatgpt-app]
+  pull_request:
+    branches: [claude, chatgpt-app]
   workflow_dispatch:
 jobs:
   verify:

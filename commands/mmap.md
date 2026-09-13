@@ -88,17 +88,24 @@ Follow the platform-appropriate route:
    that disappears mid-session is a decision, not a crash — say so rather
    than reopening it uninvited.
 
-2. **tmux session**: run
-   `tmux split-window -h -l 42% node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
-   (same `--page` judgment as route 1; omit it when no page is the subject;
-   `-l 42%` is just a starting width — honor whatever pane size the user asks for).
+2. **Linux/macOS with tmux**: use the same `mmap_open` tool or launcher command
+   as route 1. It targets the inherited session/pane, or discovers the single
+   attached session even when the tool shell has no `TMUX`. It creates a right
+   split without moving input focus; `--window` requests a new tmux window.
+   Repeated opens reuse and retarget this session's watcher. If several sessions
+   are attached, set `MELLOS_MAPPING_TMUX_TARGET` in the MCP server environment
+   to a session or pane (for example `work:2.1`). For a custom server socket,
+   also set `MELLOS_MAPPING_TMUX_SOCKET` to its absolute path, then restart the
+   MCP server. Do not guess a session or open a detached window.
 
 3. **Neither**: print the command
    `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
    and tell the user to run it in any second terminal themselves (add
    `--ascii` if their font lacks box-drawing characters).
 
-If launching fails (e.g. no graphical session), fall back to route 3. After
+If launching fails, relay its reason and the complete quoted fallback command.
+Do not repeatedly call `mmap_open` on later writes; retry only after the terminal
+environment changes or the user asks. `mmap_view` remains available inline. After
 the pane is up, confirm briefly; only when neither the default file nor any
 page file exists does the pane sit on its standby screen ("waiting for the
 first mmap_declare ...", or "waiting for &lt;file&gt; ..." when `--page` named a

@@ -18,7 +18,8 @@ node install.mjs
 开启新 Claude Code 对话，输入 `/mellos-mapping:mmap` 或要求展示分层计划。
 首次使用时选择何时自动开图。
 
-Windows Terminal 支持在 Claude 终端旁自动分屏；其他终端中，在交互式分屏或
+Windows Terminal 和 Linux/macOS 上已连接的 tmux 会话支持在 Claude 终端旁
+自动分屏；显式打开会复用并显示已有 tmux 地图。其他终端中，在交互式分屏或
 终端运行随包提供的 `dist/watch.mjs`，传入 `--file <项目>/.mellos/map.json`
 和 `--page <页面名>`。本版包含 Claude 专用技能、斜杠命令和 SessionStart 钩子，
 不会安装 ChatGPT App 技能或修改 Codex 配置。
@@ -31,6 +32,10 @@ Windows Terminal 支持在 Claude 终端旁自动分屏；其他终端中，在�
 
 新版下载后再次运行 `node install.mjs`，然后开启新对话、重启已有地图进程。
 `node install.mjs --check` 只检查发行包与前置软件，不改宿主配置。
+
+升级会先完整复制并校验新版，再切换安装目录；升级验收失败则恢复旧文件并重新
+检查宿主注册。安装器还会核对 Claude 实际缓存的运行文件。内容发生变化必须
+提升版本号，避免版本号相同却仍在运行旧缓存。
 
 如果已有名为 `mellos-mapping` 的市场指向其他位置，安装器会停止。可继续通过
 原市场更新，或先在 Claude 插件管理中移除该市场，再切换为本克隆版。
