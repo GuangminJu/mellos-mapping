@@ -75,9 +75,27 @@ try {
   assert.equal(paneCount(), 2);
   const rendered = tmux('capture-pane', '-p', '-t', tmux('list-panes', '-t', sourceWindow, '-F', '#{pane_id}').split('\n')[1]);
   assert.match(rendered, /Core|Base/);
+  const watcherPane = tmux('list-panes', '-t', sourceWindow, '-F', '#{pane_id}').split('\n')[1];
+  tmux('select-pane', '-t', watcherPane);
+  assert.match(await call(client, 'mmap_open', { page: 'second' }), /already-open/);
+  assert.equal(paneCount(), 2, 'focusing the watcher must not create a second owner');
+  tmux('select-pane', '-t', sourcePane);
+  const sourceClient = await connect({ TMUX: inheritedTmux, TMUX_PANE: sourcePane });
+  const coveringWindow = tmux('new-window', '-P', '-F', '#{window_id}', '-t', 'source:', '-n', 'covering');
+  assert.match(await call(sourceClient, 'mmap_open', { page: 'second' }), /visibility=visible/);
+  assert.equal(tmux('display-message', '-p', '-t', 'source', '#{window_id}'), sourceWindow);
+  tmux('kill-window', '-t', coveringWindow);
+  tmux('resize-pane', '-Z', '-t', sourcePane);
+  assert.equal(tmux('display-message', '-p', '-t', sourcePane, '#{window_zoomed_flag}'), '1');
+  assert.match(await call(sourceClient, 'mmap_open', { page: 'second' }), /visibility=visible/);
+  assert.equal(tmux('display-message', '-p', '-t', sourcePane, '#{window_zoomed_flag}'), '0');
+  assert.equal(paneCount(), 2);
   assert.match(await call(client, 'mmap_open', { page: 'second', window: true }), /mode=window/);
   assert.equal(paneCount(), 3);
+  const mapWindow = tmux('display-message', '-p', '-t', 'source', '#{window_id}');
+  tmux('select-window', '-t', sourceWindow);
   assert.match(await call(client, 'mmap_open', { page: 'first', window: true }), /already-open/);
+  assert.equal(tmux('display-message', '-p', '-t', 'source', '#{window_id}'), mapWindow);
   assert.equal(paneCount(), 3);
 
   tmux('new-session', '-d', '-s', 'other', '-x', '180', '-y', '45');
@@ -87,7 +105,7 @@ try {
   assert.match(ambiguous, /Run this command in a visible terminal/);
   assert.equal(paneCount(), 4);
   // A failed new placement must not hide an existing, visibly running viewer.
-  assert.match(await call(client, 'mmap_update', { page: 'second', updates: [{ id: 'core', status: 'in-progress' }] }), /pane: open/);
+  assert.match(await call(client, 'mmap_update', { page: 'second', updates: [{ id: 'core', status: 'in-progress' }] }), /pane: running/);
 
   // An inherited exact pane wins even with several attached sessions.
   const inherited = await connect({ TMUX: inheritedTmux, TMUX_PANE: sourcePane });
@@ -127,8 +145,8 @@ try {
   assert.ok(fallback);
   tmux('new-window', '-t', 'source:', '-n', 'fallback', '-c', fallbackProject, fallback);
   await until(() => readLiveViewers(join(fallbackProject, STATE_FILE_RELATIVE_PATH), Date.now()).some(viewer => viewer.page === 'first'));
-  assert.match(await call(noTmux, 'mmap_view', { page: 'first' }), /pane: open on this page/);
-  console.log('tmux integration passed: stripped/inherited TMUX, explicit target/socket, literal paths, rendering, focus, reuse, page retarget, new window, force, ambiguous sessions, failure feedback, runnable fallback and human toggle.');
+  assert.match(await call(noTmux, 'mmap_view', { page: 'first' }), /pane: running on this page/);
+  console.log('tmux integration passed: stripped/inherited TMUX, focus on watcher without duplication, window restoration, unzoom, explicit target/socket, literal paths, rendering, reuse, page retarget, new window, force, ambiguous sessions, failure feedback, runnable fallback and human toggle.');
 } finally {
   for (const client of clients) await client.close().catch(() => {});
   spawnSync('tmux', ['kill-server'], { env, timeout: 5000 });

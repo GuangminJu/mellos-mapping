@@ -812,10 +812,12 @@ describe('the pane line — whether anybody is SEEING what the call did', () => 
     expect(declared.text).toContain('"effort"');
   });
 
-  it('a pane on the same page reports that the user is seeing it', async () => {
+  it('a heartbeat reports the page without claiming screen visibility', async () => {
     paneShowing(4242, 'effort');
     const declared = await declareSomething('effort');
-    expect(declared.text).toContain('pane: open on this page');
+    expect(declared.text).toContain('pane: running on this page');
+    expect(declared.text).toContain('not terminal visibility');
+    expect(declared.text).not.toContain('the user is seeing this');
   });
 
   it('a pane elsewhere with auto-follow on is on its way here', async () => {
@@ -852,9 +854,9 @@ describe('the pane line — whether anybody is SEEING what the call did', () => 
     await declareSomething('effort');
     paneShowing(4242, 'effort');
     const updated = await callText('mmap_update', { page: 'effort', updates: [{ id: 'core', status: 'in-progress' }] });
-    expect(updated.text).toContain('pane: open on this page');
+    expect(updated.text).toContain('pane: running on this page');
     const viewed = await callText('mmap_view', { page: 'effort' });
-    expect(viewed.text).toContain('pane: open on this page');
+    expect(viewed.text).toContain('pane: running on this page');
   });
 
   it('a REFUSED call carries no pane line — the news is the refusal', async () => {
@@ -885,7 +887,7 @@ describe('mmap_open — the assistant putting the map on screen', () => {
       return { ok: true, output: 'MMAP_PANE mode=split pid=4242 backend=tmux' };
     });
     expect((await callText('mmap_open', { page: 'effort' })).isError).toBe(false);
-    expect((await callText('mmap_view', { page: 'effort' })).text).toContain('pane: open on this page');
+    expect((await callText('mmap_view', { page: 'effort' })).text).toContain('pane: running on this page');
     rmSync(viewerFilePath(stateFile, 4242));
     expect((await callText('mmap_view', { page: 'effort' })).text).toContain('Open it with mmap_open');
   });
@@ -913,13 +915,19 @@ describe('mmap_open — the assistant putting the map on screen', () => {
 
   it('a pane that reported the requested page is the success case', () => {
     const viewers = [{ pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 }];
-    expect(openOutcome({ ok: true, output: 'MMAP_PANE mode=split' }, viewers, 'effort')).toContain('open and showing');
+    expect(openOutcome({ ok: true, output: 'MMAP_PANE mode=split' }, viewers, 'effort')).toContain('running and reporting');
   });
   it('a separate viewer cannot stand in for the watcher in the placement receipt', () => {
     const elsewhere = { pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 };
     const receipt = { ok: true, output: 'MMAP_PANE mode=split pid=2 hwnd=333' };
     expect(openOutcome(receipt, [elsewhere], 'effort')).toContain('no pane has reported in');
-    expect(openOutcome(receipt, [elsewhere, { ...elsewhere, pid: 2 }], 'effort')).toContain('open and showing');
+    expect(openOutcome(receipt, [elsewhere, { ...elsewhere, pid: 2 }], 'effort')).toContain('running and reporting');
+  });
+
+  it('requires explicit launcher visibility evidence instead of inferring it from a heartbeat', () => {
+    const viewers = [{ pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 }];
+    expect(openOutcome({ ok: true, output: 'MMAP_PANE pid=1' }, viewers, 'effort')).toContain('visibility is not confirmed');
+    expect(openOutcome({ ok: true, output: 'MMAP_PANE pid=1 visibility=visible' }, viewers, 'effort')).toContain('window is active');
   });
 
   it('a pane that came up elsewhere is not reported as showing the page', () => {
@@ -935,7 +943,7 @@ describe('mmap_open — the assistant putting the map on screen', () => {
   it('a call that named no page is answered by any live pane', () => {
     const viewers = [{ pid: 1, page: 'other' as PageId, follow: true, ageMs: 10 }];
     expect(openOutcome({ ok: true, output: 'MMAP_PANE already-open' }, viewers, undefined)).toContain(
-      'open and showing',
+      'running and reporting',
     );
   });
 

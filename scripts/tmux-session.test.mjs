@@ -4,7 +4,7 @@ import { preparePane, placePane } from './pane-core.mjs';
 import { manualWatcherCommand } from './watcher-command.mjs';
 
 const cfg = { mode: 'split', projectDir: "/work/项目 ' $(literal)", pageSlug: 'design', watcherFlags: ['--no-follow', '--interval', '500'] };
-const targetReport = '/tmp/tmux socket,1\t$3\t12345\t1\t%7';
+const targetReport = '/tmp/tmux socket,1\t$3\t12345\t1\t%7\t123';
 function harness(env = {}, replies = {}) {
   const calls = [];
   const adapter = createTmuxAdapter({ env, nodePath: '/node path/node', spawn: (command, args, options) => {
@@ -99,6 +99,34 @@ describe('tmux placement and reuse', () => {
     const source = { readLiveViewers: () => [{ pid: 9, owner: 'other' }, viewer] };
     expect(preparePane(cfg, source, 'map', adapter).value.viewer).toEqual(viewer);
     expect(preparePane({ ...cfg, force: true }, source, 'map', adapter).ok).toBe(true);
+  });
+
+  it('retains the original owner when discovery lands on the watcher itself', () => {
+    const { adapter } = harness();
+    const owner = adapter.inspectSession(cfg).value.owner;
+    const watcher = { pid: 456, owner };
+    const focused = harness({}, { 'display-message': { status: 0, stdout: targetReport.replace('%7\t123', '%8\t456') } });
+    const context = preparePane(cfg, { readLiveViewers: () => [watcher] }, 'map', focused.adapter).value;
+    expect(context.target.owner).toBe(owner);
+    expect(context.viewer).toEqual(watcher);
+  });
+
+  it('selects the watcher window and reveals a pane hidden by zoom', () => {
+    const { adapter, calls } = harness({}, {
+      'list-panes': { status: 0, stdout: '%8\t456\t@4\t0\t1\t0' },
+      'display-message': { status: 0, stdout: '1\t1\t0\t0' },
+    });
+    const target = { session: '$3', socket: '/socket' };
+    expect(adapter.revealPane(target, { pid: 456 })).toEqual({ ok: true, value: 'visible' });
+    expect(calls).toContainEqual(['-S', '/socket', 'select-window', '-t', '$3:@4']);
+    expect(calls).toContainEqual(['-S', '/socket', 'resize-pane', '-Z', '-t', '%8']);
+  });
+
+  it('refuses to claim visibility for an absent watcher, detached client or still-hidden pane', () => {
+    for (const [listed, visible] of [['', '1\t1\t0\t0'], ['%8\t456\t@4\t1\t0\t0', '0\t1\t0\t0'], ['%8\t456\t@4\t1\t1\t0', '1\t1\t1\t0']]) {
+      const { adapter } = harness({}, { 'list-panes': { status: 0, stdout: listed }, 'display-message': { status: 0, stdout: visible } });
+      expect(adapter.revealPane({ session: '$3', socket: '/socket' }, { pid: 456 }).ok).toBe(false);
+    }
   });
 
   it('propagates a split failure without opening a replacement window', () => {

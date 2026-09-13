@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { watcherArgs } from './watcher-command.mjs';
 
 const SESSION_FORMAT = '#{session_id}\t#{session_attached}';
-const TARGET_FORMAT = '#{socket_path}\t#{session_id}\t#{session_created}\t#{session_attached}\t#{pane_id}';
+const TARGET_FORMAT = '#{socket_path}\t#{session_id}\t#{session_created}\t#{session_attached}\t#{pane_id}\t#{pane_pid}';
+const PANE_FORMAT = '#{pane_id}\t#{pane_pid}\t#{window_id}\t#{window_active}\t#{window_zoomed_flag}\t#{pane_active}';
 
 export function createTmuxAdapter({ env = process.env, spawn = spawnSync, nodePath = process.execPath } = {}) {
   // Socket paths may contain commas. Only the final two fields are numeric.
@@ -20,7 +21,7 @@ export function createTmuxAdapter({ env = process.env, spawn = spawnSync, nodePa
       : { ok: false, error: `tmux ${args[0]} failed: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}` };
   }
 
-  function inspectSession(cfg) {
+  function inspectSession(cfg, viewers = []) {
     // An explicitly selected socket must not inherit a pane id from another server.
     const sameServer = !env.MELLOS_MAPPING_TMUX_SOCKET || socket === inherited?.[1];
     let selected = env.MELLOS_MAPPING_TMUX_TARGET || (sameServer && inherited
@@ -38,7 +39,7 @@ export function createTmuxAdapter({ env = process.env, spawn = spawnSync, nodePa
     }
     const inspected = run(['display-message', '-p', '-t', selected, TARGET_FORMAT]);
     if (!inspected.ok) return inspected;
-    const [socketPath, session, created, attached, pane] = inspected.value.split('\t');
+    const [socketPath, session, created, attached, pane, panePid] = inspected.value.split('\t');
     if (!socketPath || !/^\$\d+$/.test(session) || !/^\d+$/.test(created) || !/^%\d+$/.test(pane)) {
       return { ok: false, error: 'tmux returned an invalid session target; no pane was opened.' };
     }
@@ -46,8 +47,34 @@ export function createTmuxAdapter({ env = process.env, spawn = spawnSync, nodePa
     // Window ownership survives selecting the newly created window; splits
     // belong to the source pane, so conversations in one session stay separate.
     const identity = [socketPath, session, created, cfg.mode, cfg.mode === 'window' ? '' : pane];
-    const owner = `tmux-${createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 24)}`;
+    // When a stripped environment resolves to the map itself, its live process
+    // report carries the original conversation identity. Do not invent a new owner.
+    const selectedViewer = cfg.mode === 'split' ? viewers.find(viewer =>
+      viewer.pid === Number(panePid) && /^tmux-[a-f0-9]{24}$/.test(viewer.owner ?? '')) : undefined;
+    const owner = selectedViewer?.owner ?? `tmux-${createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 24)}`;
     return { ok: true, value: { backend: 'tmux', socket: socketPath, session, pane, owner, owners: [owner] } };
+  }
+
+  function revealPane(target, viewer) {
+    const listed = run(['list-panes', '-s', '-t', target.session, '-F', PANE_FORMAT], target.socket);
+    if (!listed.ok) return listed;
+    const pane = listed.value.split('\n').map(line => line.split('\t')).find(fields => Number(fields[1]) === viewer.pid);
+    if (!pane || !/^%\d+$/.test(pane[0]) || !/^@\d+$/.test(pane[2])) {
+      return { ok: false, error: 'The live watcher could not be located in this tmux session; visibility is unverified.' };
+    }
+    const selected = run(['select-window', '-t', `${target.session}:${pane[2]}`], target.socket);
+    if (!selected.ok) return selected;
+    if (pane[4] === '1' && pane[5] !== '1') {
+      const unzoomed = run(['resize-pane', '-Z', '-t', pane[0]], target.socket);
+      if (!unzoomed.ok) return unzoomed;
+    }
+    const visible = run(['display-message', '-p', '-t', `${target.session}:${pane[2]}.${pane[0]}`,
+      '#{session_attached}\t#{window_active}\t#{window_zoomed_flag}\t#{pane_active}'], target.socket);
+    if (!visible.ok) return visible;
+    const [attached, active, zoomed, focused] = visible.value.split('\t');
+    return Number(attached) > 0 && active === '1' && (zoomed !== '1' || focused === '1')
+      ? { ok: true, value: 'visible' }
+      : { ok: false, error: 'The watcher is running, but its tmux pane is not visible in the attached session.' };
   }
 
   function openPane(cfg, watchPath, mapFile, target) {
@@ -59,5 +86,5 @@ export function createTmuxAdapter({ env = process.env, spawn = spawnSync, nodePa
     return result.ok ? { ok: true, value: { ...target, reason: 'requested' } } : result;
   }
 
-  return { kind: 'tmux', inspectSession, openPane };
+  return { kind: 'tmux', inspectSession, openPane, revealPane };
 }

@@ -23898,7 +23898,7 @@ function paneLine(stateFile, touched, openFailure) {
     if (openFailure !== void 0) return `pane: CLOSED \u2014 automatic opening previously failed. Do not retry mmap_open until the terminal environment changes or the user asks to retry. The map is saved; mmap_view remains available inline. Last failure: ${openFailure}`;
     return `pane: CLOSED \u2014 nobody is seeing this map. Open it with mmap_open {page: ${touched === void 0 ? "(omit for the default page)" : `"${touched}"`}} and do not ask first: a user with a mapping policy has already said they want the picture.`;
   }
-  if (viewers.some((v) => v.page === touched)) return "pane: open on this page \u2014 the user is seeing this.";
+  if (viewers.some((v) => v.page === touched)) return "pane: running on this page \u2014 a heartbeat confirms the process, not terminal visibility.";
   const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(", ");
   if (viewers.some((v) => v.follow)) {
     return `pane: open on ${elsewhere}, auto-follow on \u2014 it lands on this page within a second.`;
@@ -23970,7 +23970,8 @@ function openOutcome(run, viewers, page2) {
 Relay the launcher reason and any copyable fallback command. Do not retry mmap_open until the terminal environment changes or the user asks to retry. A failed default split is not permission to open a separate window.`;
   }
   if (paneShows(viewers, page2)) {
-    return `pane: open and showing ${pageName(page2)} \u2014 the user can see the map now.
+    const visible = /^MMAP_PANE [^\r\n]*\bvisibility=visible(?:\s|$)/m.test(run.output);
+    return `pane: running and reporting ${pageName(page2)} \u2014 ${visible ? "the launcher verified its tmux window is active and its pane is visible in the attached session." : "terminal visibility is not confirmed by the process heartbeat."}
 ${run.output}`;
   }
   if (viewers.length > 0) {
