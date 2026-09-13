@@ -13,6 +13,9 @@ import { verifyRuntime } from './verify-runtime.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const edition = process.argv[2];
+// Optional actual previous and candidate edition directories for release acceptance.
+const previousRelease = process.argv[3];
+const nextRelease = process.argv[4];
 if (!['claude', 'chatgpt-app'].includes(edition)) throw new Error('Specify claude or chatgpt-app');
 const temporary = mkdtempSync(join(tmpdir(), 'mellos-real-host-'));
 try {
@@ -22,28 +25,30 @@ try {
   const env = { ...process.env, CODEX_HOME: hostConfig, CLAUDE_CONFIG_DIR: hostConfig,
     HOME: profile, USERPROFILE: profile };
   delete env.MELLOS_MAPPING_CWD; delete env.CLAUDE_PROJECT_DIR;
-  const original = packageEdition(root, edition);
+  const original = nextRelease ?? packageEdition(root, edition);
   const clone = join(temporary, '克隆 & source');
   copyRelease(original, clone, validateRelease(original));
   const installHome = join(profile, '.mellos/installations');
   const logs = [];
   const options = { env, installHome, log: value => logs.push(value) };
   const old = join(temporary, 'previous release');
-  const oldManifest = validateRelease(clone);
-  copyRelease(clone, old, oldManifest);
-  const version = oldManifest.version;
-  const [major, minor, patch] = version.split('.').map(Number);
-  oldManifest.version = patch > 0 ? `${major}.${minor}.${patch - 1}` : minor > 0 ? `${major}.${minor - 1}.999` : `${major - 1}.999.999`;
-  for (const file of Object.keys(oldManifest.sha256)) {
-    const path = join(old, file);
-    if (file.endsWith('.json')) {
-      const content = readFileSync(path, 'utf8').replaceAll(`"version": "${version}"`, `"version": "${oldManifest.version}"`);
-      writeFileSync(path, content);
+  const oldManifest = validateRelease(previousRelease ?? clone);
+  copyRelease(previousRelease ?? clone, old, oldManifest);
+  if (!previousRelease) {
+    const version = oldManifest.version;
+    const [major, minor, patch] = version.split('.').map(Number);
+    oldManifest.version = patch > 0 ? `${major}.${minor}.${patch - 1}` : minor > 0 ? `${major}.${minor - 1}.999` : `${major - 1}.999.999`;
+    for (const file of Object.keys(oldManifest.sha256)) {
+      const path = join(old, file);
+      if (file.endsWith('.json')) {
+        const content = readFileSync(path, 'utf8').replaceAll(`"version": "${version}"`, `"version": "${oldManifest.version}"`);
+        writeFileSync(path, content);
+      }
+      if (file.endsWith('dist/server.mjs')) writeFileSync(path, readFileSync(path, 'utf8') + '\n// Previous release fixture\n');
+      oldManifest.sha256[file] = createHash('sha256').update(readFileSync(path)).digest('hex');
     }
-    if (file.endsWith('dist/server.mjs')) writeFileSync(path, readFileSync(path, 'utf8') + '\n// Previous release fixture\n');
-    oldManifest.sha256[file] = createHash('sha256').update(readFileSync(path)).digest('hex');
+    writeFileSync(join(old, 'release.json'), JSON.stringify(oldManifest));
   }
-  writeFileSync(join(old, 'release.json'), JSON.stringify(oldManifest));
   const previous = await installRelease(old, [], options);
   let checks = 0;
   await assert.rejects(installRelease(clone, [], { ...options, verify: async (...args) => {
@@ -63,7 +68,9 @@ try {
     ? ['plugin', 'list', '--marketplace', first.market, '--json']
     : ['plugin', 'list', '--json']), 'List installed plugins');
   assert.ok(installed.includes('mellos-mapping'));
-  console.log(JSON.stringify({ edition, firstInstall: true, upgrade: true, failedUpgradeRestored: true, repeatedInstall: true,
+  console.log(JSON.stringify({ edition, previousVersion: oldManifest.version, version: validateRelease(first.target).version,
+    previousRelease: previousRelease ?? 'synthetic previous release fixture',
+    firstInstall: true, upgrade: true, failedUpgradeRestored: true, repeatedInstall: true,
     cloneRemoved: true, runtimeHandshake: true, installation: JSON.parse(installed) }, null, 2));
 } finally {
   // Solely the generated test profile and configuration, never the real profile.

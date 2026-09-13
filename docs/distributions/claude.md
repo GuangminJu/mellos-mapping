@@ -19,8 +19,9 @@ its hashes and six-tool MCP handshake, retains a copy in
 Start a new Claude Code conversation, then use `/mellos-mapping:mmap` or ask
 Claude to display a layered plan. On first use, choose when maps should open.
 
-Windows Terminal supports an automatic split beside Claude's terminal. On other
-terminals, run the bundled `dist/watch.mjs` in an interactive split/terminal with
+Windows Terminal and attached tmux sessions on Linux/macOS support an automatic
+split beside Claude's terminal. Explicit opens reuse and reveal the existing
+tmux watcher. On other terminals, run the bundled `dist/watch.mjs` in an interactive split/terminal with
 `--file <project>/.mellos/map.json` and `--page <slug>`. The Claude skill, slash
 command and SessionStart hook are included. This edition does not install a
 ChatGPT App skill or modify Codex configuration.

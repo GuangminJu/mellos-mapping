@@ -24,18 +24,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/**
- * The registry every `resolved` URL in package-lock.json must point at.
- *
- * The lock is a checked-in artifact that CI and every contributor installs
- * from, so it may never inherit the releasing developer's registry config: a
- * mirror baked into `resolved` sends every `npm ci` in the world to a third
- * party, and npm's `replace-registry-host` default (`npmjs`) only rewrites
- * npmjs-owned hosts, so nothing rewrites a mirror back. Passing it explicitly
- * makes a release reproducible from any machine; `tests/lockfile.test.ts`
- * fails the build if a `resolved` ever lands elsewhere.
- */
-const LOCKFILE_REGISTRY = 'https://registry.npmjs.org/';
+import { updateLockVersion } from './version-metadata.mjs';
 
 const version = process.argv[2];
 if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -68,20 +57,10 @@ bump('package.json', jsonVersion, `"version": "${version}"`, 1);
 bump('server.json', jsonVersion, `"version": "${version}"`, 2); // top-level + packages[0]
 bump('src/server/server.ts', /SERVER_VERSION = '\d+\.\d+\.\d+'/g, `SERVER_VERSION = '${version}'`, 1);
 
-// package-lock.json mirrors the root version in two spots that a regex can't
-// safely target among hundreds of dependency versions — let npm resync it.
-// (npm ci refuses to install when the lock disagrees with package.json.)
-// Single command strings throughout: an args array alongside shell:true is
-// deprecated (DEP0190) because the pieces would be concatenated unescaped.
-const lock = spawnSync(`npm install --package-lock-only --registry=${LOCKFILE_REGISTRY}`, {
-  cwd: root,
-  stdio: 'inherit',
-  shell: true,
-});
-if (lock.status !== 0) {
-  console.error('package-lock resync failed.');
-  process.exit(1);
-}
+// A version-only release keeps the resolved dependency graph intact on every OS.
+const lockPath = join(root, 'package-lock.json');
+writeFileSync(lockPath, updateLockVersion(readFileSync(lockPath, 'utf8'), version));
+
 console.log('bumped package-lock.json');
 
 const verify = spawnSync('npm run verify', { cwd: root, stdio: 'inherit', shell: true });

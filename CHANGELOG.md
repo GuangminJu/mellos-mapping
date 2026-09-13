@@ -1,9 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.22.1
 
 - Fixed Claude Code installation on hosts with strict manifest validation by
   omitting `displayName` and using backwards-compatible marketplace metadata (#7).
+- Added tmux opening on Linux/macOS, including exact session targeting, watcher
+  reuse, hidden-window restoration and unzooming an obscured map (#8). Heartbeat
+  reports no longer claim screen visibility without a launcher check.
+- Reject dangerous control characters when loading or saving maps; protect direct
+  terminal rendering while preserving Unicode and legacy multiline evidence.
+- Stage complete installation upgrades, restore previous files on failed upgrade
+  checks, and verify the runtime files actually loaded by Claude and Codex.
+  Refuse changed content under the same version to prevent stale-cache success.
+- Separate view-state transitions, MCP tool definitions, map services and storage
+  facets while retaining public imports. Check the seven critical installation
+  scripts with TypeScript and cover page/gesture state with event-sequence tests.
+- Prepare reviewable, versioned release candidates without replacing stable
+  branches or changing the source checkout; keep recoverable release bundles.
+- Version bumps preserve the locked dependency graph, including optional files
+  for other platforms, instead of asking the local npm installation to rewrite it.
 
 ## 0.22.0
 
