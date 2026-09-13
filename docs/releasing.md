@@ -1,6 +1,6 @@
 # 发布与分支维护
 
-本仓库提供 `main`、`claude`、`chatgpt-app` 三个分支。`chatgpt-app` 指 ChatGPT
+本仓库使用 `main` 开发源码，`claude`、`chatgpt-app` 分发宿主快照。`chatgpt-app` 指 ChatGPT
 桌面 App 的 **Codex 模式**；普通网页聊天不是这个本地运行时的安装目标。
 
 | 分支 | 内容 | 克隆后的入口 |
@@ -35,33 +35,43 @@ node scripts/check-host-install.mjs claude
 `artifacts/release/chatgpt-app/`。每份包含 `release.json` 校验清单和独立安装说明。
 Git 发行保留 LF 换行，避免 Windows 克隆改变校验值。
 
-在发布准备分支运行：
+先将升版和构建提交通过 PR 合入 `main`，工作区必须干净。同步源码与发行基线：
 
 ```sh
+git fetch --prune origin
+git switch main
+git merge --ff-only origin/main
 node scripts/prepare-branches.mjs
 ```
 
-脚本创建三个本地分支、对应 ZIP、Git bundle 与 `branches.json`，不推送远端。
-它从当前工作文件生成白名单快照，保留原 Git 历史；不切换当前分支、不动用户索引。
-项目 `.mellos` 地图、旧开发市场、临时产物、依赖和本地配置不会进入新快照。
-现有非生成分支或已检出的同名分支会被拒绝，防止覆盖其他工作。
-已有生成分支的后续发布使用新提交向前推进，不改写历史。
+脚本只创建 `release/<版本>/claude` 和 `release/<版本>/chatgpt-app` 两个本地候选分支。
+`main`、`claude`、`chatgpt-app` 和用户索引保持原样，脚本不推送远端。
+所有输入固定在当前 `HEAD` 提交，宿主内容复用打包白名单。未提交或未跟踪的工作文件
+会导致拒绝；忽略的项目地图、依赖和临时输出不会被打进宿主快照。
 
-产物在 `artifacts/release/`。主分支 ZIP 包含完整源码，两个宿主 ZIP 是直接安装包。
-Git bundle 包含三个分支，可用于另一个目录或机器恢复这些分支。
+每个候选以 `origin/<宿主>` 为父提交；离线且没有远程引用时使用对应本地宿主分支。
+必须已有发行基线，且新版本严格高于两个宿主的 `release.json` 版本，避免宿主缓存把
+同版本修复误判为已经安装。已有候选分支或同版本产物不会被覆盖，重试前需自行保存归档。
 
-## 上传 GitHub
+产物位于 `artifacts/release/candidates/<版本>/`，包含源码 ZIP、两个宿主 ZIP、
+Git bundle 与 `branches.json`。源码 ZIP 来自原始 `HEAD`；JSON 记录源码提交、
+发行基线和候选提交，可追溯包与源码的对应关系。bundle 包含源码 HEAD 和两个候选引用。
 
-先用 `git remote -v` 确认 `origin` 是你准备发布的仓库；如果不是，先设置正确远端。
-在当前仓库运行（无需切换工作区）：
+## 审核与上传 GitHub
+
+先用 `git remote -v` 确认 `origin` 正确。将下面 `0.23.0` 替换为实际版本，
+只推送两个候选，并分别对对应宿主分支打开 PR：
 
 ```sh
-git push origin main claude chatgpt-app
+git push origin release/0.23.0/claude release/0.23.0/chatgpt-app
+gh pr create --base claude --head release/0.23.0/claude
+gh pr create --base chatgpt-app --head release/0.23.0/chatgpt-app
 ```
 
-然后在 GitHub 仓库 **Settings → Default branch** 将默认分支改为 `main`。
-旧 `master` 或其他分支可以先保留；本流程不删除远端分支，也不需要强制推送。
-如果远端已有不兼容的同名分支，先比较并合并，不要用强推覆盖。
+两个候选的跨平台发行 CI 和真实安装检查通过后再合并。合并后重新核对远端发行文件
+与候选 ZIP 的内容一致，再归档清理候选分支。默认开发分支始终为 `main`。
+如果基线在准备期间改变，脚本会拒绝创建引用；重新同步并准备，不强推覆盖。
+分支清理与恢复方法见[项目维护指南](project-maintenance.md)。
 
 可将三个 ZIP 作为 GitHub Release 附件。公开安装示例：
 
@@ -75,6 +85,10 @@ Claude 用户把分支换成 `claude`。如果发布到自己的 fork，替换�
 GitHub 发布不会自动发布 npm 包、MCP Registry 或 OpenAI 公共插件目录。
 
 ## 发布证据与限制
+
+除首次安装外，必须从上一版升级，核对宿主实际使用的缓存文件确实更新，不能只看
+安装命令退出码。记录所测源码提交、候选提交、宿主版本和平台；源码修复合入后，
+发行分支和 npm 等安装渠道仍需要各自完成发布，关闭 Issue 不代表所有渠道已更新。
 
 主分支 CI 检查源码和提交的构建文件；两个宿主分支 CI 在 Windows/macOS/Linux
 检查无需 npm 依赖的发行文件与 MCP 握手。跨平台 CI 成功前，不能把本地 Windows
