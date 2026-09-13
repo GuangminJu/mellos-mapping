@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fixed Claude Code installation on hosts with strict manifest validation by
+  omitting `displayName` and using backwards-compatible marketplace metadata (#7).
+
 ## 0.22.0
 
 - Added `web-terminal`: the existing mmap terminal starts inside a local browser
