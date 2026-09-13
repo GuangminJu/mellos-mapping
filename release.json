@@ -18,7 +18,7 @@
     "dist/store-paths.mjs": "620a560f8b6effbbf3ac85262cfbeadc896c2c1a34ce9e8f929588255e6cb302",
     "dist/terminal-worker.mjs": "f83b227ecd3ec223eb9676514b0697ad6071f4e4c8a42e3ada314884c9627f0a",
     "dist/watch.mjs": "1623ba9b71f588b7043cbca396865f50c7ee1cbabbbb037afe1895bf846f2e86",
-    "dist/web.mjs": "925a792088bdb4d704a90eab218599505a610be145072f190f17e387d1e02d41",
+    "dist/web.mjs": "7a22ae2d787c4e01e733f7a64560604a640a962c7c5f6e02e87131821fe3affa",
     "dist/web/TERMINAL-LICENSES.txt": "997384b2d0828d7750ac8acffb21cb9f220271b0d66639b13d65c5c673175bac",
     "dist/web/app.css": "b1a60ad05ce389ec3c9e662ba93069a075b098a23bbe4bb9541d6c99f2f212bb",
     "dist/web/app.js": "f3324fdeb42d84c39667e71e652e7b70fd1be3220d606c875be4d5398e789d18",
