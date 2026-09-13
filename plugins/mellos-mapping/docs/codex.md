@@ -39,7 +39,42 @@ codex plugin marketplace remove mellos-mapping-codex
 Project maps and mapping preferences remain. GitHub distribution does not itself
 publish the package into OpenAI's public plugin directory.
 
-## Desktop terminal first
+## Automatic web terminal
+
+Call `mmap_open {surface: "web-terminal", page: "<slug>"}` and pass the returned
+`hostOpen` object to `open_in_codex`. It uses `placement: "right"` and a browser
+target in the current conversation. The local service starts mmap when the
+browser connects; the user does not paste a startup command. No Computer Use
+or desktop keyboard automation is involved. With an older MCP schema:
+
+```sh
+node "<plugin root>/dist/web.mjs" "<project>" --terminal --page <slug>
+```
+
+Open the printed JSON `url`. The page provides its own font-size selector,
+help, reconnection and a link to the same map in graphical SVG mode. Font
+changes remeasure terminal cells rather than stretching an image, and do not
+change the host's global terminal font. The terminal uses xterm.js cell rendering;
+the graphical mode remains native SVG and supports SVG export.
+
+Both modes use the same project maps. Terminal input/output goes over a local
+WebSocket to a dedicated mmap worker. Each connected browser owns its own
+page/zoom/selection state and renderer; there is no shared shell. Closing the
+tab or stopping the service ends its worker. `q` closes the map until Reconnect.
+Network interruptions get three retry attempts; reopen via MCP if the service
+has exited. A reconnect starts a fresh view on the current page.
+
+All assets and the worker ship prebuilt. No node-pty, native compiler, npm install,
+external terminal, remote hosting or account is required. The service accepts
+only bounded map input/resize messages from its own origin and secret URL,
+limits sessions to eight, and keeps one output chunk in flight until the browser
+renders it. Slow clients cannot accumulate unlimited rendered map frames.
+
+An already-running service from before this feature is stopped and restarted
+on a web-terminal request. That restart disconnects its existing graphical tabs;
+reopen them with the new URL. For later runtime updates, use `--stop` first.
+
+## Optional native desktop terminal
 
 Call `mmap_open {surface: "codex-terminal", page: "<slug>"}`. This prepares the
 actual Node executable and absolute watcher/map paths, with PowerShell and POSIX

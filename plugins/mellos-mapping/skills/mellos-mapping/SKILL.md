@@ -44,51 +44,53 @@ use `dev` for progress. Cyclic state machines are unsupported.
 
 ## Open the map in this conversation
 
-Preserve a surface the user has chosen. Otherwise prefer the **native right-side
-terminal** in the desktop app. Opening and updating the map are separate steps.
+Preserve a surface the user explicitly chose. For automatic display beside this
+conversation, default to **web-terminal**: the mmap terminal inside a local web
+page, opened in the app's right browser panel. It starts without a pasted command.
 
-1. Call `mmap_open {surface: "codex-terminal", page: "<effort-slug>"}`.
-   This returns the actual Node executable, absolute watcher/map paths and
-   correctly quoted PowerShell/POSIX commands. `ready-to-start` means prepared.
-2. Inspect `read_thread_terminal` if available. Reuse an existing map terminal;
-   do not interrupt another program or create duplicate viewers. A manually
-   selected page with auto-follow off belongs to the user. Ask before switching
-   it unless the current request explicitly asks to show another page.
-3. Open the current task's panel with the host `open_in_codex` tool:
-   `{"placement":"right","target":{"type":"terminal"}}`.
-   Omit `threadId`. Only pass a `sessionId` when a **host terminal tool** returned
-   it for this terminal. Numeric `exec_command` session IDs are agent PTYs and
-   cannot be attached to the user's terminal by stringifying them.
-4. If a supported host tool can execute in that user terminal, use the returned
-   executable and args there. Current hosts may expose opening and reading only.
-   In that case, give the user the returned command for the terminal's shell to
-   paste once. Explain briefly that the host has no terminal-input tool. Continue
-   the requested work and map updates; do not repeatedly open panels or ask for
-   permission. Do not launch an external Windows Terminal as a substitute.
-5. After startup, use `read_thread_terminal` to check the expected map title and
-   watcher controls. Report exactly what is known: `queued` is a pending panel
-   request; a shell prompt means the map has not started; map output confirms
-   execution but alone does not prove panel placement. A `pane:` heartbeat can
-   come from another window and is not proof of this conversation's right panel.
+1. Declare or reuse the page for this effort, then call
+   `mmap_open {surface: "web-terminal", page: "<effort-slug>"}`.
+2. Pass the returned `hostOpen` object to the host's `open_in_codex` tool:
+   `{"placement":"right","target":{"type":"browser","url":"<returned URL>"}}`.
+   Omit `threadId` so it opens beside this conversation. Do not replace the
+   browser target with a terminal target: the local service runs mmap for it.
+3. The URL opens the live terminal immediately. No Computer Use, clipboard,
+   shell profile, app-internal modification or manual paste is needed. A
+   queued host result is still queued; a running service alone does not prove
+   the panel is visible. If Browser inspection tools are available, verify
+   the page shows the expected map and connected status.
+4. Keep updating the same page with MCP tools. The viewer reads saved maps
+   automatically, including writes from older clients. Do not reopen after
+   each write. Preserve a page the user manually pinned; retarget only when
+   the user asks to see another page. After network loss the page retries;
+   if the service stopped, call mmap_open again and open its new URL.
 
-Do not call plain `mmap_open {surface: "terminal"}` for the desktop right panel:
-that is the external Windows Terminal launcher used by terminal clients.
-Do not modify shell profiles, global terminal settings, app internals or clipboard
-contents to manufacture automatic startup. If a required tool is unavailable,
-state the missing capability and provide the concrete command or selected fallback.
+For an older MCP schema without `web-terminal`, resolve the installed plugin root
+(two directories above this skill's directory), verify `dist/web.mjs` exists, run
+`node "<plugin root>/dist/web.mjs" "<project directory>" --terminal --page <slug>`,
+and open the JSON response's `url` with the same browser target. Use absolute
+paths and quote for the shell. Never copy a developer username or cache version.
 
-For an older MCP schema without `codex-terminal`, resolve the actual plugin root
-from this skill's installed location (two directories above its directory), check
-`dist/watch.mjs` exists, and construct the equivalent command with absolute paths:
-`node "<plugin root>/dist/watch.mjs" --file "<project>/.mellos/map.json" --page <slug>`.
-Quote for the user's shell; never copy a developer's username or cache version.
-
-Once running, map writes refresh the viewer. Do not restart after every update.
-Wheel / `+` / `-` changes semantic zoom, drag pans, click pins details, `0` resets,
-and `q` exits. After a runtime update the user can press `q`, then rerun the command.
+Wheel / `+` / `-` changes semantic zoom from overview to modules and details;
+drag pans, click pins details, double-click enters a submap, Backspace returns,
+Tab switches pages, `f` toggles follow, `0` resets and `q` closes the map.
+The page's font-size selector changes only this web terminal. Its Graph link
+opens the same page in SVG mode. A closed map can be restarted with Reconnect.
+After a runtime upgrade, stop the old service with the web CLI's `--stop`,
+then reopen. A service without web-terminal support is upgraded on next open.
 
 ## Other supported surfaces
 
+- **Native desktop terminal:** Only when the user asks for the app's own terminal,
+  call `mmap_open {surface: "codex-terminal", page}`. This prepares correctly
+  quoted commands and `hostOpen` with a terminal target; it does not run mmap.
+  Reuse an existing map terminal after checking `read_thread_terminal`, and
+  do not interrupt another program. If a supported host tool executes in that
+  user terminal, use it. Otherwise explain the missing terminal-input tool
+  and give the exact command to paste once. Do not claim a numeric agent
+  `exec_command` session ID can attach to this terminal. Never use Computer Use
+  or shell-profile tricks to simulate this missing capability. Font settings
+  for this native mode belong to the host. See `docs/codex.md` for manual use.
 - **Markdown/SVG:** `mmap_open {surface: "markdown", page}` returns an absolute
   Markdown path. Open it with `open_in_codex`, `placement: "right"`, file target.
   Images are vectors and child pages are document links. Image nodes do not have
