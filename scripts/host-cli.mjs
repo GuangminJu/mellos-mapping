@@ -1,8 +1,10 @@
+// @ts-check
 /** Shell-free invocation of the supported host CLIs. */
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { isFile, resolveCodexInvocation } from './codex-cli.mjs';
 
+/** @param {string} host @param {NodeJS.ProcessEnv} [env] */
 export function resolveHost(host, env = process.env) {
   if (host === 'chatgpt-app') return resolveCodexInvocation({ env });
   if (process.platform !== 'win32') return { command: 'claude', args: [] };
@@ -19,6 +21,7 @@ export function resolveHost(host, env = process.env) {
   throw new Error('Claude Code CLI not found on PATH. Install Claude Code, then rerun this command.');
 }
 
+/** @param {string} host @param {NodeJS.ProcessEnv} [env] @returns {import('./install-types.js').HostRunner} */
 export function hostRunner(host, env = process.env) {
   const cli = resolveHost(host, env);
   return args => spawnSync(cli.command, [...cli.args, ...args], {
@@ -26,6 +29,7 @@ export function hostRunner(host, env = process.env) {
   });
 }
 
+/** @param {import('./install-types.js').HostResult} result @param {string} label */
 export function requireSuccess(result, label) {
   if (result.error || result.status !== 0) {
     throw new Error(`${label}: ${result.error?.message ?? result.stderr?.toString().trim() ?? `exit ${result.status}`}`);

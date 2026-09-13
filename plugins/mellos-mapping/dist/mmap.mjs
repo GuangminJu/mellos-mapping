@@ -9,6 +9,21 @@ var __export = (target, all) => {
 import { existsSync as existsSync2 } from "node:fs";
 import { dirname as dirname2, join as join2, resolve } from "node:path";
 
+// scripts/watcher-command.mjs
+function watcherArgs(cfg, watchPath, mapFile) {
+  const args = [watchPath, "--file", mapFile, ...cfg.watcherFlags];
+  if (cfg.pageSlug !== void 0) args.push("--page", cfg.pageSlug);
+  return args;
+}
+function manualWatcherCommand(cfg, watchPath, mapFile, nodePath = process.execPath) {
+  return [nodePath, ...watcherArgs(cfg, watchPath, mapFile)].map((arg) => "'" + arg.replaceAll("'", `'"'"'`) + "'").join(" ");
+}
+function paneFailureMessage(error, cfg, watchPath, mapFile, platform = process.platform) {
+  return platform === "win32" ? error : `${error}
+Automatic opening failed. Do not retry until the terminal environment changes. Run this command in a visible terminal:
+${manualWatcherCommand(cfg, watchPath, mapFile)}`;
+}
+
 // scripts/terminal-session.mjs
 var terminal_session_exports = {};
 __export(terminal_session_exports, {
@@ -143,6 +158,87 @@ function openWt(args, what) {
   return result.status === 0 ? { ok: true, value: void 0 } : { ok: false, error: `wt failed to ${what} (${result.error?.message ?? `exit ${result.status}`}).` };
 }
 
+// scripts/tmux-session.mjs
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { createHash } from "node:crypto";
+var SESSION_FORMAT = "#{session_id}	#{session_attached}";
+var TARGET_FORMAT = "#{socket_path}	#{session_id}	#{session_created}	#{session_attached}	#{pane_id}	#{pane_pid}";
+var PANE_FORMAT = "#{pane_id}	#{pane_pid}	#{window_id}	#{window_active}	#{window_zoomed_flag}	#{pane_active}";
+function createTmuxAdapter({ env = process.env, spawn = spawnSync2, nodePath = process.execPath } = {}) {
+  const inherited = /^(.*),\d+,(\d+)$/.exec(env.TMUX ?? "");
+  const socket = env.MELLOS_MAPPING_TMUX_SOCKET || inherited?.[1];
+  function run(args, socketPath = socket) {
+    const result = spawn("tmux", [...socketPath ? ["-S", socketPath] : [], ...args], {
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5e3,
+      windowsHide: true
+    });
+    return result.status === 0 ? { ok: true, value: result.stdout.trim() } : { ok: false, error: `tmux ${args[0]} failed: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}` };
+  }
+  function inspectSession2(cfg, viewers = []) {
+    const sameServer = !env.MELLOS_MAPPING_TMUX_SOCKET || socket === inherited?.[1];
+    let selected = env.MELLOS_MAPPING_TMUX_TARGET || (sameServer && inherited ? /^%\d+$/.test(env.TMUX_PANE ?? "") ? env.TMUX_PANE : `$${inherited[2]}:` : void 0);
+    if (!selected) {
+      const listed = run(["list-sessions", "-F", SESSION_FORMAT]);
+      if (!listed.ok) return listed;
+      const attached2 = listed.value.split("\n").map((line) => line.split("	")).filter(([id, count]) => /^\$\d+$/.test(id) && Number(count) > 0).map(([id]) => id);
+      if (attached2.length !== 1) return { ok: false, error: attached2.length === 0 ? "No attached tmux session was found. Attach a session before retrying." : `Multiple attached tmux sessions (${attached2.join(", ")}). Set MELLOS_MAPPING_TMUX_TARGET to the intended session or pane in the MCP server environment before retrying.` };
+      selected = `${attached2[0]}:`;
+    }
+    const inspected = run(["display-message", "-p", "-t", selected, TARGET_FORMAT]);
+    if (!inspected.ok) return inspected;
+    const [socketPath, session, created, attached, pane, panePid] = inspected.value.split("	");
+    if (!socketPath || !/^\$\d+$/.test(session) || !/^\d+$/.test(created) || !/^%\d+$/.test(pane)) {
+      return { ok: false, error: "tmux returned an invalid session target; no pane was opened." };
+    }
+    if (!(Number(attached) > 0)) return { ok: false, error: `tmux session ${session} has no attached client. Attach it before retrying.` };
+    const identity = [socketPath, session, created, cfg.mode, cfg.mode === "window" ? "" : pane];
+    const selectedViewer = cfg.mode === "split" ? viewers.find((viewer) => viewer.pid === Number(panePid) && /^tmux-[a-f0-9]{24}$/.test(viewer.owner ?? "")) : void 0;
+    const owner = selectedViewer?.owner ?? `tmux-${createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24)}`;
+    return { ok: true, value: { backend: "tmux", socket: socketPath, session, pane, owner, owners: [owner] } };
+  }
+  function revealPane(target, viewer) {
+    const listed = run(["list-panes", "-s", "-t", target.session, "-F", PANE_FORMAT], target.socket);
+    if (!listed.ok) return listed;
+    const pane = listed.value.split("\n").map((line) => line.split("	")).find((fields) => Number(fields[1]) === viewer.pid);
+    if (!pane || !/^%\d+$/.test(pane[0]) || !/^@\d+$/.test(pane[2])) {
+      return { ok: false, error: "The live watcher could not be located in this tmux session; visibility is unverified." };
+    }
+    const selected = run(["select-window", "-t", `${target.session}:${pane[2]}`], target.socket);
+    if (!selected.ok) return selected;
+    if (pane[4] === "1" && pane[5] !== "1") {
+      const unzoomed = run(["resize-pane", "-Z", "-t", pane[0]], target.socket);
+      if (!unzoomed.ok) return unzoomed;
+    }
+    const visible = run([
+      "display-message",
+      "-p",
+      "-t",
+      `${target.session}:${pane[2]}.${pane[0]}`,
+      "#{session_attached}	#{window_active}	#{window_zoomed_flag}	#{pane_active}"
+    ], target.socket);
+    if (!visible.ok) return visible;
+    const [attached, active, zoomed, focused] = visible.value.split("	");
+    return Number(attached) > 0 && active === "1" && (zoomed !== "1" || focused === "1") ? { ok: true, value: "visible" } : { ok: false, error: "The watcher is running, but its tmux pane is not visible in the attached session." };
+  }
+  function openPane(cfg, watchPath, mapFile, target) {
+    const placement = target.mode === "window" ? ["new-window", "-n", "mellos-mapping", "-t", `${target.session}:`] : ["split-window", "-h", "-d", "-l", "42%", "-t", target.pane];
+    const result = run([
+      ...placement,
+      "-c",
+      cfg.projectDir,
+      nodePath,
+      ...watcherArgs(cfg, watchPath, mapFile),
+      "--owner",
+      target.owner
+    ], target.socket);
+    return result.ok ? { ok: true, value: { ...target, reason: "requested" } } : result;
+  }
+  return { kind: "tmux", inspectSession: inspectSession2, openPane, revealPane };
+}
+
 // scripts/pane-core.mjs
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -195,31 +291,31 @@ function writeQuitRequest(quitFile) {
   writeRequest(quitFile, {});
 }
 function paneCommand(cfg, watchPath, mapFile) {
-  const cmd = ["--title", "mellos map", "-d", cfg.projectDir, "node", watchPath, "--file", mapFile, ...cfg.watcherFlags];
-  if (cfg.pageSlug !== void 0) cmd.push("--page", cfg.pageSlug);
-  return cmd;
+  return ["--title", "mellos map", "-d", cfg.projectDir, "node", ...watcherArgs(cfg, watchPath, mapFile)];
 }
 var DEDICATED_WINDOW_NAME = "mellos-mapping";
 var SPLIT_SIZE = "0.42";
 function selectPaneViewer(viewers, owners) {
   return viewers.find((viewer) => viewer.owner !== void 0 && owners.includes(viewer.owner));
 }
-function preparePane(cfg, store, mapFile, io = terminal_session_exports) {
-  const inspected = cfg.mode === PANE_MODE.window ? { ok: true, value: { owners: ["window"], owner: "window" } } : io.inspectSession();
+var platformTerminal = () => process.platform === "win32" ? terminal_session_exports : createTmuxAdapter();
+function preparePane(cfg, store, mapFile, io = platformTerminal()) {
+  const viewers = store.readLiveViewers(mapFile, Date.now());
+  const inspected = io.kind === "tmux" ? io.inspectSession(cfg, viewers) : cfg.mode === PANE_MODE.window ? { ok: true, value: { owners: ["window"], owner: "window" } } : io.inspectSession();
   if (!inspected.ok) return inspected;
   const session = inspected.value;
-  const viewers = store.readLiveViewers(mapFile, Date.now());
   const viewer = selectPaneViewer(viewers, session.owners);
-  if (cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
+  if (io.kind !== "tmux" && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
     return { ok: false, error: "Could not identify this conversation\u2019s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window." };
   }
   return { ok: true, value: {
-    target: { mode: cfg.mode, owner: session.owner ?? viewer?.owner, hwnd: session.hwnd },
+    target: { ...session, mode: cfg.mode, owner: session.owner ?? viewer?.owner },
     viewer,
     previousPids: viewers.map((item) => item.pid)
   } };
 }
-function placePane(cfg, watchPath, mapFile, target, io = terminal_session_exports) {
+function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
+  if (io.kind === "tmux") return io.openPane(cfg, watchPath, mapFile, target);
   const payload = [...paneCommand(cfg, watchPath, mapFile), "--owner", target.owner];
   if (target.mode === PANE_MODE.window) {
     const opened2 = io.openWt(["-w", DEDICATED_WINDOW_NAME, "nt", ...payload], "open the requested window");
@@ -322,20 +418,18 @@ async function main() {
     console.error(parsed.error);
     process.exit(1);
   }
-  if (process.platform !== "win32") {
-    console.error("mmap opens the pane through Windows Terminal \u2014 on other platforms run the watcher yourself:");
-    console.error(`  node "${watchPath}" --file "<project>/${store.STATE_FILE_RELATIVE_PATH}"`);
-    process.exit(1);
-  }
   const candidates = storeSearchPath(process.cwd());
   const marker = storeMarkerOf(store.STATE_FILE_RELATIVE_PATH);
   const project = nearestProject(candidates, candidates.map((dir) => existsSync2(join2(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
   const mapFile = join2(project.root, store.STATE_FILE_RELATIVE_PATH);
+  const fail = (error) => {
+    console.error(paneFailureMessage(error, cfg, watchPath, mapFile));
+    process.exit(1);
+  };
   const prepared = preparePane(cfg, store, mapFile);
   if (!prepared.ok) {
-    console.error(prepared.error);
-    process.exit(1);
+    fail(prepared.error);
   }
   const context = prepared.value;
   const action = toggleAction(context.viewer !== void 0, cfg.pageSlug, cfg.force);
@@ -351,15 +445,13 @@ async function main() {
   }
   const placed = placePane(cfg, watchPath, mapFile, context.target);
   if (!placed.ok) {
-    console.error(placed.error);
-    process.exit(1);
+    fail(placed.error);
   }
   const reported = await awaitNewPane(store, mapFile, context);
   if (!reported.ok) {
-    console.error(reported.error);
-    process.exit(1);
+    fail(reported.error);
   }
-  const where = placed.value.mode === PANE_MODE.window ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})` : "beside this terminal (vertical split)";
+  const where = placed.value.backend === "tmux" ? placed.value.mode === PANE_MODE.window ? "in a new tmux window" : "beside this terminal (tmux split)" : placed.value.mode === PANE_MODE.window ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})` : "beside this terminal (vertical split)";
   console.log(`Map opened for ${project.root} ${where}.`);
   if (!project.found) {
     console.log(

@@ -7196,11 +7196,10 @@ var require_dist = __commonJS({
 });
 
 // src/server/server.ts
-import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync as existsSync6, realpathSync as realpathSync2 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname5, join as join4 } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join as join8 } from "node:path";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -21870,6 +21869,41 @@ function flipForSequence(map) {
   };
 }
 
+// src/domain/text.ts
+var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
+var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
+function mapTextError(map) {
+  const check2 = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
+  let error2 = check2("title", map.title);
+  if (error2) return error2;
+  for (const [i, layer] of map.layers.entries()) {
+    error2 = check2(`layers[${i}].name`, layer.name);
+    if (error2) return error2;
+  }
+  for (const name of ["lanes", "groups"]) {
+    for (const [i, item] of map[name].entries()) {
+      error2 = check2(`${name}[${i}].label`, item.label);
+      if (error2) return error2;
+    }
+  }
+  for (const [i, node] of map.nodes.entries()) {
+    for (const name of ["label", "evidence", "detail"]) {
+      error2 = check2(`nodes[${i}].${name}`, node[name], name !== "label");
+      if (error2) return error2;
+    }
+  }
+  for (const [i, edge] of map.edges.entries()) {
+    error2 = check2(`edges[${i}].label`, edge.label);
+    if (error2) return error2;
+  }
+  return void 0;
+}
+function terminalText(text2, multiline = false) {
+  return text2.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
+}
+
 // src/render/width.ts
 var WIDE_RANGES = [
   [4352, 4447],
@@ -21964,6 +21998,7 @@ function displayWidth(text2) {
   return w;
 }
 function fitWidth(s, width) {
+  s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
@@ -21979,7 +22014,7 @@ function wrapWidth(s, width) {
   const lines = [];
   let line2 = "";
   let w = 0;
-  for (const ch of s.replace(/\r/g, "")) {
+  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
     if (ch === "\n") {
       lines.push(line2);
       line2 = "";
@@ -22071,7 +22106,7 @@ var Canvas = class {
   /** Write literal text starting at (x, y). Returns the column just past it. */
   text(x, y, s, style, bold = false) {
     let cx = x;
-    for (const ch of s) {
+    for (const ch of terminalText(s)) {
       const w = charWidth(ch.codePointAt(0));
       if (w === 0) {
         const base = this.cell(Math.max(0, cx - 1), y);
@@ -22724,10 +22759,6 @@ function paint(scene, opts) {
   return { canvas, hits };
 }
 
-// src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-
 // src/store/format.ts
 var STATE_FILE_VERSION = 1;
 function makePageId(raw) {
@@ -22938,7 +22969,8 @@ function parseMap(raw, path) {
     if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
     map = linked.value;
   }
-  return ok(map);
+  const textError = mapTextError(map);
+  return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 function serializeMap(map) {
   const body = {
@@ -22954,7 +22986,9 @@ function serializeMap(map) {
   return JSON.stringify(body, null, 2) + "\n";
 }
 
-// src/store/store.ts
+// src/store/atomic.ts
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 var RENAME_MAX_ATTEMPTS = 10;
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
@@ -22998,17 +23032,15 @@ function writeAtomic(path, contents, maxAttempts) {
     }
   }
 }
-function isRecord2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function stripBom(text2) {
-  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
-}
+
+// src/store/pages.ts
+import { existsSync, readdirSync, rmSync as rmSync2 } from "node:fs";
+import { basename, dirname as dirname2, join } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page2) {
-  return page2 === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page2}.json`);
+  return page2 === void 0 ? defaultFile : join(dirname2(defaultFile), PAGES_DIR_NAME, `${page2}.json`);
 }
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
@@ -23020,28 +23052,40 @@ function listPageFiles(defaultFile) {
   if (existsSync(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
-    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+    entries = readdirSync(join(dirname2(defaultFile), PAGES_DIR_NAME));
   } catch {
   }
   for (const e of entries.sort()) {
-    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+    if (e.endsWith(".json")) out.push(join(dirname2(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
 }
 function deletePageFile(path) {
   try {
-    rmSync(path, { force: true });
+    rmSync2(path, { force: true });
     return ok(void 0);
   } catch (e) {
     return err({ kind: "delete-failed", path, detail: errnoOf(e) });
   }
 }
+
+// src/store/json-text.ts
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function stripBom(text2) {
+  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
+}
+
+// src/store/viewers.ts
+import { readdirSync as readdirSync2, readFileSync, statSync, rmSync as rmSync3 } from "node:fs";
+import { dirname as dirname3, join as join2 } from "node:path";
 var VIEWERS_DIR_NAME = "viewers";
 var VIEWER_FILE_VERSION = 1;
 var VIEWER_STALE_MS = 5e3;
 var VIEWER_SWEEP_MS = 6e4;
 function viewersDirPath(defaultFile) {
-  return join(dirname(defaultFile), VIEWERS_DIR_NAME);
+  return join2(dirname3(defaultFile), VIEWERS_DIR_NAME);
 }
 function viewerPidOf(fileName) {
   const m = /^(\d+)\.json$/.exec(fileName);
@@ -23071,7 +23115,7 @@ function readLiveViewers(defaultFile, nowMs) {
   const dir = viewersDirPath(defaultFile);
   let names;
   try {
-    names = readdirSync(dir);
+    names = readdirSync2(dir);
   } catch {
     return [];
   }
@@ -23079,13 +23123,13 @@ function readLiveViewers(defaultFile, nowMs) {
   for (const name of names) {
     const pid = viewerPidOf(name);
     if (pid === void 0) continue;
-    const path = join(dir, name);
+    const path = join2(dir, name);
     let raw;
     let ageMs;
     try {
       ageMs = Math.max(0, nowMs - statSync(path).mtimeMs);
       if (ageMs > VIEWER_SWEEP_MS) {
-        rmSync(path, { force: true });
+        rmSync3(path, { force: true });
         continue;
       }
       if (ageMs > VIEWER_STALE_MS) continue;
@@ -23098,13 +23142,17 @@ function readLiveViewers(defaultFile, nowMs) {
   }
   return live.sort((a, b) => a.ageMs - b.ageMs || a.pid - b.pid);
 }
+
+// src/store/policy.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { dirname as dirname4, join as join3 } from "node:path";
 var CONFIG_FILE_NAME = "config.json";
 var CONFIG_FILE_VERSION = 1;
 function configFilePath(defaultFile) {
-  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+  return join3(dirname4(defaultFile), CONFIG_FILE_NAME);
 }
 function userConfigFilePath(userBase) {
-  return join(userBase, STORE_DIR_NAME, CONFIG_FILE_NAME);
+  return join3(userBase, STORE_DIR_NAME, CONFIG_FILE_NAME);
 }
 var MAPPING_POLICIES = ["always", "complex", "on-request"];
 function makeMappingPolicy(raw) {
@@ -23123,7 +23171,7 @@ function describeMappingPolicy(policy) {
 function loadMappingPolicy(path) {
   let text2;
   try {
-    text2 = readFileSync(path, "utf8");
+    text2 = readFileSync2(path, "utf8");
   } catch (e) {
     if (e.code === "ENOENT") return ok(void 0);
     throw e;
@@ -23158,27 +23206,34 @@ function effectiveMappingPolicy(projectConfigFile, userConfigFile) {
   const source = project.value !== void 0 ? "project" : user.value !== void 0 ? "user" : void 0;
   return ok({ project: project.value, user: user.value, effective, source });
 }
-var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+
+// src/store/migration.ts
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, renameSync as renameSync2 } from "node:fs";
+import { dirname as dirname5, join as join4 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join4(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
 var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
 function migrateLegacyStore(defaultFile) {
-  const projectRoot = dirname(dirname(defaultFile));
-  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
-  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
-  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
-  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
-  const hasCurrent = existsSync(defaultFile) || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME)) || existsSync(configFilePath(defaultFile));
+  const projectRoot = dirname5(dirname5(defaultFile));
+  const legacyDefault = join4(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join4(dirname5(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join4(dirname5(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync2(legacyDefault) || existsSync2(legacyPages) || existsSync2(legacyConfig);
+  const hasCurrent = existsSync2(defaultFile) || existsSync2(join4(dirname5(defaultFile), PAGES_DIR_NAME)) || existsSync2(configFilePath(defaultFile));
   if (!hasLegacy || hasCurrent) return false;
-  mkdirSync(dirname(defaultFile), { recursive: true });
-  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
-  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
-  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  mkdirSync2(dirname5(defaultFile), { recursive: true });
+  if (existsSync2(legacyDefault)) renameSync2(legacyDefault, defaultFile);
+  if (existsSync2(legacyPages)) renameSync2(legacyPages, join4(dirname5(defaultFile), PAGES_DIR_NAME));
+  if (existsSync2(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
   return true;
 }
+
+// src/store/maps.ts
+import { readFileSync as readFileSync3 } from "node:fs";
 function loadMapFile(path) {
   let text2;
   try {
-    text2 = readFileSync(path, "utf8");
+    text2 = readFileSync3(path, "utf8");
   } catch (e) {
     const code = e.code;
     if (code === "ENOENT") return err({ kind: "not-found", path });
@@ -23193,6 +23248,8 @@ function loadMapFile(path) {
   return parseMap(raw, path);
 }
 function saveMapFile(path, map) {
+  const textError = mapTextError(map);
+  if (textError) return err({ kind: "save-failed", path, detail: textError });
   return writeFileAtomic(path, serializeMap(map));
 }
 
@@ -23444,8 +23501,8 @@ function summarize(map) {
 
 // src/preview/publisher.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
-import { dirname as dirname2, join as join2, resolve } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync3, realpathSync, rmdirSync } from "node:fs";
+import { dirname as dirname6, join as join5, resolve } from "node:path";
 
 // src/preview/presentation.ts
 var LABELS = { planned: "\u5F85\u5F00\u53D1", "in-progress": "\u5F00\u53D1\u4E2D", done: "\u5DF2\u9A8C\u8BC1", regressed: "\u51FA\u73B0\u56DE\u5F52" };
@@ -23603,15 +23660,15 @@ var PREVIEW_DIR_NAME = "previews";
 var ENABLED = ".enabled";
 var PUBLISH_LOCK = ".publish-lock";
 function previewDirectory(defaultFile) {
-  return join2(dirname2(defaultFile), PREVIEW_DIR_NAME);
+  return join5(dirname6(defaultFile), PREVIEW_DIR_NAME);
 }
 function previewFile(defaultFile, page2) {
   if (page2 !== void 0 && !ID_RULE.test(page2)) throw new Error("Invalid preview page id.");
-  return join2(previewDirectory(defaultFile), documentName(page2));
+  return join5(previewDirectory(defaultFile), documentName(page2));
 }
 function save(path, contents) {
   try {
-    if (readFileSync2(path, "utf8") === contents) return;
+    if (readFileSync4(path, "utf8") === contents) return;
   } catch (error2) {
     if (error2.code !== "ENOENT") throw error2;
   }
@@ -23619,19 +23676,19 @@ function save(path, contents) {
   if (!result.ok) throw new Error(describeStoreError(result.error));
 }
 function ownedDirectory(path) {
-  mkdirSync2(path, { recursive: true });
-  const expected = join2(realpathSync(dirname2(path)), path.slice(dirname2(path).length + 1));
+  mkdirSync3(path, { recursive: true });
+  const expected = join5(realpathSync(dirname6(path)), path.slice(dirname6(path).length + 1));
   const actual = realpathSync(path);
   if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
     throw new Error(`Preview directory redirects outside its parent: ${path}`);
   }
 }
 function acquireLock(directory) {
-  const path = join2(directory, PUBLISH_LOCK);
+  const path = join5(directory, PUBLISH_LOCK);
   const deadline = Date.now() + 2e3;
   while (true) {
     try {
-      mkdirSync2(path);
+      mkdirSync3(path);
       return () => rmdirSync(path);
     } catch (error2) {
       if (error2.code !== "EEXIST") throw error2;
@@ -23642,8 +23699,8 @@ function acquireLock(directory) {
 }
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
-  const enabledFile = join2(directory, ENABLED);
-  const enabled = () => existsSync2(enabledFile);
+  const enabledFile = join5(directory, ENABLED);
+  const enabled = () => existsSync3(enabledFile);
   const refresh = (page2) => {
     try {
       const path = previewFile(defaultFile, page2);
@@ -23660,24 +23717,24 @@ function createPreviewPublisher(defaultFile) {
         }
         if (page2 !== void 0 && !pages.some((p) => p.page === page2)) return err(`No map page named "${page2}".`);
         if (page2 === void 0 && !pages.some((p) => p.page === void 0)) pages.unshift({ page: void 0, map: EMPTY_MAP });
-        const images = join2(directory, "images");
+        const images = join5(directory, "images");
         ownedDirectory(images);
         const present = /* @__PURE__ */ new Set();
         for (const item of pages) {
           const svg = renderMapSvg(item.map);
           const digest = createHash("sha256").update(svg).digest("hex");
           const image = `images/${digest}.svg`;
-          save(join2(images, `${digest}.svg`), svg);
+          save(join5(images, `${digest}.svg`), svg);
           const filename = documentName(item.page);
-          save(join2(directory, filename), renderMapMarkdown(item.map, image, pages));
+          save(join5(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
-        for (const filename of readdirSync2(directory)) {
+        for (const filename of readdirSync3(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
-            save(join2(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
+            save(join5(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
         }
-        const index = join2(directory, "index.md");
+        const index = join5(directory, "index.md");
         save(index, renderPreviewIndex(pages));
         return ok({ path: resolve(path), index: resolve(index), pages: pages.length });
       } finally {
@@ -23702,13 +23759,13 @@ function createPreviewPublisher(defaultFile) {
 
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
-import { dirname as dirname4, join as join3 } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync5 } from "node:fs";
+import { dirname as dirname8, join as join6 } from "node:path";
 
 // src/web/source.ts
 import { createHash as createHash2 } from "node:crypto";
 import { statSync as statSync2 } from "node:fs";
-import { basename as basename2, dirname as dirname3 } from "node:path";
+import { basename as basename2, dirname as dirname7 } from "node:path";
 function readWebSnapshot(defaultFile) {
   const pages = listPageFiles(defaultFile).map((file) => {
     const id2 = pageIdOfFile(defaultFile, file) ?? "";
@@ -23723,15 +23780,15 @@ function readWebSnapshot(defaultFile) {
     }
   });
   if (pages.length === 0) pages.push({ id: "", title: "\u7B49\u5F85\u7B2C\u4E00\u5F20\u5730\u56FE", modified: 0, map: EMPTY_MAP });
-  const value = { project: basename2(dirname3(dirname3(defaultFile))), pages };
+  const value = { project: basename2(dirname7(dirname7(defaultFile))), pages };
   return { revision: createHash2("sha256").update(JSON.stringify(value)).digest("hex"), value };
 }
 
 // src/web/launcher.ts
-var webRuntimeFile = (defaultFile) => join3(dirname4(defaultFile), "web", "server.json");
+var webRuntimeFile = (defaultFile) => join6(dirname8(defaultFile), "web", "server.json");
 async function runningWebUrl(defaultFile) {
   try {
-    const info = JSON.parse(readFileSync3(webRuntimeFile(defaultFile), "utf8"));
+    const info = JSON.parse(readFileSync5(webRuntimeFile(defaultFile), "utf8"));
     if (!Number.isInteger(info.port) || info.port < 1 || info.port > 65535 || !/^[a-f0-9]{48}$/.test(info.token)) return void 0;
     const url = `http://127.0.0.1:${info.port}/${info.token}/`;
     const response = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(700) });
@@ -23757,7 +23814,7 @@ async function openWebPreview(defaultFile, entry, page2, terminal = false) {
     }
   }
   if (!url) {
-    if (!existsSync3(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
+    if (!existsSync4(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
     const child = spawn(process.execPath, [entry, "--serve", defaultFile], { detached: true, windowsHide: true, stdio: "ignore" });
     let failure;
     child.on("error", (error2) => {
@@ -23794,9 +23851,7 @@ function terminalHandoff(node, watcher, stateFile, page2) {
   };
 }
 
-// src/server/server.ts
-var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.22.0";
+// src/server/tool-definitions.ts
 var TITLE_MAX = 120;
 var LABEL_MAX = 60;
 var DETAIL_MAX = 600;
@@ -23832,10 +23887,6 @@ function edgeEnds() {
     to: id("the node being used (must live on a strictly lower layer)")
   };
 }
-var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
-var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
 function line(max, description) {
   return external_exports.string().min(1).max(max).regex(NO_CONTROLS, NO_CONTROLS_TEXT).describe(description);
 }
@@ -23845,6 +23896,160 @@ function note(max, description) {
 function closed(shape) {
   return external_exports.object(shape).strict();
 }
+function declareTool() {
+  return {
+    title: "Declare map structure",
+    description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. The title lives here and only here: pass it again to replace it, or null to remove it. Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.",
+    inputSchema: closed({
+      page: page(),
+      title: line(TITLE_MAX, "map title, e.g. the feature being built; null removes it").nullable().optional(),
+      kind: mapKind().optional(),
+      lanes: external_exports.array(
+        closed({
+          id: id("stable kebab-case identifier of the lane"),
+          label: line(LABEL_MAX, "column name, e.g. a sequence participant")
+        })
+      ).optional().describe("vertical columns crossing all bands; declaration order = left-to-right"),
+      layers: external_exports.array(
+        closed({
+          id: id("stable kebab-case identifier of the band"),
+          name: line(LABEL_MAX, "display name of the band"),
+          rank: rank()
+        })
+      ).optional(),
+      groups: external_exports.array(
+        closed({
+          id: id("stable kebab-case identifier of the group"),
+          label: line(LABEL_MAX, "subsystem name shown at the far zoom"),
+          layer: id("band this group clusters; members must live on the same band")
+        })
+      ).optional(),
+      nodes: external_exports.array(
+        closed({
+          id: id("stable kebab-case identifier of the node"),
+          label: line(LABEL_MAX, "display label inside the box"),
+          layer: id("id of the band this node lives in"),
+          status: status("defaults to planned").optional(),
+          evidence: line(
+            EVIDENCE_MAX,
+            "how an already-verified node was verified; for regressed: what broke. Declaring a node straight to done needs it as much as updating one does."
+          ).optional(),
+          detail: note(
+            DETAIL_MAX,
+            "design notes shown in the pane detail panel: responsibility, contract, key decisions"
+          ).optional(),
+          group: id("same-band group this node belongs to").optional(),
+          kind: nodeKind().optional(),
+          lane: id("lane (column) this node belongs to").optional(),
+          submap: id(
+            "page slug of this node's child map \u2014 the pane badges the node \u229E and double-click dives in. Declare the child page separately. Create a sub-map only when the node's internals genuinely deserve their own picture; most nodes need none."
+          ).optional()
+        })
+      ).optional(),
+      edges: external_exports.array(
+        closed({
+          ...edgeEnds(),
+          label: line(EDGE_LABEL_MAX, "what flows along the edge").optional()
+        })
+      ).optional()
+    })
+  };
+}
+function updateTool() {
+  return {
+    title: "Record progress and revise the map",
+    description: "The revision tool, all-or-nothing. Record progress on nodes: in-progress when starting a node (the pane spins), done with evidence when its verification passes, regressed with evidence when a done node breaks. Revise what the ghost design got wrong: move a node to another band, join or leave a group or lane, rename a band (or re-rank it, which reorders the whole map), relabel a group or a lane. Every clearable field takes null to empty it \u2014 that is how a field is cleared, never an empty string. Bands, groups and lanes are applied before the node updates, and within one node update `layer` moves the node before its other fields. The map is a ledger: report honestly, it never blocks you.",
+    inputSchema: closed({
+      page: page(),
+      updates: external_exports.array(
+        closed({
+          id: id("id of the node to update"),
+          status: status("the status to record").optional(),
+          label: line(LABEL_MAX, "new display label inside the box").optional(),
+          evidence: line(EVIDENCE_MAX, "for done: how it was verified; for regressed: what broke; null clears it").nullable().optional(),
+          detail: note(
+            DETAIL_MAX,
+            "design notes shown in the pane detail panel: responsibility, contract, key decisions; null clears them"
+          ).nullable().optional(),
+          layer: id(
+            "move the node to this band; applied before this item's other fields, so a node can move and join a group on the new band in one item. Every edge touching it must still point strictly downward, and a grouped node may only move to its group's band."
+          ).optional(),
+          group: id("join this same-band group; null leaves the current group").nullable().optional(),
+          kind: nodeKind().nullable().optional(),
+          lane: id("join this lane; null leaves the current lane").nullable().optional(),
+          submap: id("link a child map page by slug; null unlinks it").nullable().optional()
+        })
+      ).min(1).optional(),
+      layers: external_exports.array(
+        closed({
+          id: id("id of the band to revise"),
+          name: line(LABEL_MAX, "new display name of the band").optional(),
+          rank: rank().optional()
+        })
+      ).min(1).optional().describe("rename and/or re-rank existing bands; an item must carry a name, a rank, or both"),
+      groups: external_exports.array(closed({ id: id("id of the group to relabel"), label: line(LABEL_MAX, "new subsystem name") })).min(1).optional().describe("relabel existing groups; membership and band are untouched"),
+      lanes: external_exports.array(closed({ id: id("id of the lane to relabel"), label: line(LABEL_MAX, "new column name") })).min(1).optional().describe("relabel existing lanes; order and membership are untouched")
+    })
+  };
+}
+function removeTool() {
+  return {
+    title: "Revise the map",
+    description: 'Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work. `pages` is the other scale: it DELETES whole page files, so a finished effort can be cleaned up instead of accumulating tabs forever. A bare `{pages: ["slug"]}` with no other field is the normal form; combined with map edits, the edits are applied first and the pages are deleted after. The deletion is permanent and cannot be undone, so delete only pages whose effort is over \u2014 and only ever with the user behind it. An unknown slug is refused with the project\'s real page list (naming a page that does not exist is a typo, not a request). The default page has no slug and is not deletable here. A node elsewhere still pointing at a deleted page with `submap` stays legal \u2014 a submap reference has no existence invariant \u2014 but it has nowhere to dive until the page comes back.',
+    inputSchema: closed({
+      page: page(),
+      edges: external_exports.array(closed(edgeEnds())).optional(),
+      nodes: external_exports.array(id("id of the node to remove, with every edge touching it")).optional(),
+      groups: external_exports.array(id("id of the group to remove; members stay, merely ungrouped")).optional(),
+      lanes: external_exports.array(id("id of the lane to remove; members stay, merely off-lane")).optional(),
+      layers: external_exports.array(id("id of the band to remove; it must hold no nodes and no groups")).optional(),
+      pages: external_exports.array(
+        id(
+          "slug of a page whose WHOLE map file is deleted \u2014 the page and everything drawn on it. Not the page this same call targets with `page`."
+        )
+      ).optional().describe("pages to delete entirely, after this call's map edits; permanent")
+    })
+  };
+}
+function setupTool() {
+  return {
+    title: "Configure when maps open",
+    description: 'Get or set the mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it: the reply names the policy chosen for the USER (every project), the one this PROJECT overrides it with if any, and which of them is in effect. If it reports "not set", ask the USER to choose (never pick for them): always = ' + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + '. Then call again with their choice to persist it. It defaults to user scope, which is the normal one \u2014 the question is about how someone works, so it is asked once ever, not once per repository. Pass scope: "project" only when the user wants THIS project to differ from that habit. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.',
+    inputSchema: closed({
+      policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy"),
+      scope: external_exports.enum(POLICY_SCOPES).optional().describe(
+        'where to record the choice: "user" (default) applies to every project this user opens; "project" overrides that for this project alone. Ignored when reading.'
+      )
+    })
+  };
+}
+function viewTool() {
+  return {
+    title: "View the current map",
+    description: "Render the current Mellos map as monochrome text \u2014 the same picture the split-pane watcher shows live. Use it to check the map state or to show it inline in conversation. Every response ends with a `pages:` line naming the pages this project actually has and which one you are looking at, so this is also how you discover whether a map exists at all and under which slugs \u2014 never probe the files.",
+    inputSchema: closed({
+      page: page(),
+      zoom: external_exports.number().int().min(ZOOM_MIN).max(ZOOM_MAX).optional().describe("zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs")
+    })
+  };
+}
+function openTool() {
+  return {
+    title: "Open the map pane",
+    description: 'For automatic display beside the current ChatGPT desktop conversation in Codex mode, use surface: "web-terminal", then call open_in_codex with the returned browser hostOpen object. No paste or Computer Use is needed. For the native host terminal, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Automatic terminal opening supports Windows Terminal and tmux on Linux/macOS. If opening fails, relay the reason and copyable command; retry only after the environment changes or the user asks.',
+    inputSchema: closed({
+      surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web", "web-terminal"]).optional().describe("web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal or tmux launcher (default)"),
+      page: id(
+        "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
+      ).optional(),
+      window: external_exports.boolean().optional().describe(
+        `open the map in its own "mellos-mapping" window (a new tmux window on Linux/macOS) instead of splitting this conversation's window. Pass it only when the user asked for the map separate (a second monitor, a small screen); the split is the default because the map is meant to sit beside what it describes.`
+      )
+    })
+  };
+}
+
+// src/server/presence.ts
 var DEFAULT_PAGE_NAME = "(default)";
 var DEFAULT_PAGE_ABSENT = "(default: absent)";
 function pagesLine(stateFile, shown) {
@@ -23857,26 +24062,49 @@ function pagesLine(stateFile, shown) {
 function pageName(page2) {
   return page2 ?? DEFAULT_PAGE_NAME;
 }
-function paneLine(stateFile, touched) {
+function paneLine(stateFile, touched, openFailure) {
   const viewers = readLiveViewers(stateFile, Date.now());
   if (viewers.length === 0) {
+    if (openFailure !== void 0) return `pane: CLOSED \u2014 automatic opening previously failed. Do not retry mmap_open until the terminal environment changes or the user asks to retry. The map is saved; mmap_view remains available inline. Last failure: ${openFailure}`;
     return `pane: CLOSED \u2014 nobody is seeing this map. Open it with mmap_open {page: ${touched === void 0 ? "(omit for the default page)" : `"${touched}"`}} and do not ask first: a user with a mapping policy has already said they want the picture.`;
   }
-  if (viewers.some((v) => v.page === touched)) return "pane: open on this page \u2014 the user is seeing this.";
+  if (viewers.some((v) => v.page === touched)) return "pane: running on this page \u2014 a heartbeat confirms the process, not terminal visibility.";
   const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(", ");
   if (viewers.some((v) => v.follow)) {
     return `pane: open on ${elsewhere}, auto-follow on \u2014 it lands on this page within a second.`;
   }
   return `pane: open on ${elsewhere}, auto-follow OFF \u2014 the user pinned that page, so this change is NOT on their screen. Tell them rather than switching it behind them; mmap_open {page} retargets the pane if they want it moved.`;
 }
+
+// src/server/map-service.ts
+function loadOrEmpty(file) {
+  const loaded = loadMapFile(file);
+  if (loaded.ok) return loaded;
+  return loaded.error.kind === "not-found" ? { ok: true, value: EMPTY_MAP } : { ok: false, error: describeStoreError(loaded.error) };
+}
+function mutateMap(file, apply) {
+  const current = loadOrEmpty(file);
+  if (!current.ok) return { ok: false, error: { kind: "load", detail: current.error } };
+  const applied = apply(current.value);
+  if (!applied.ok) return { ok: false, error: { kind: "refused", detail: applied.error } };
+  const saved = saveMapFile(file, applied.value);
+  return saved.ok ? applied : { ok: false, error: { kind: "save", error: saved.error } };
+}
+
+// src/server/pane-launcher.ts
+import { spawn as spawn2 } from "node:child_process";
+import { existsSync as existsSync5 } from "node:fs";
+import { dirname as dirname9, join as join7 } from "node:path";
+import { fileURLToPath } from "node:url";
+var pageName2 = (page2) => page2 ?? "(default)";
 var LAUNCH_TIMEOUT_MS = 6e4;
 var PANE_REPORT_TIMEOUT_MS = 8e3;
 var PANE_REPORT_POLL_MS = 250;
 function launcherPath(moduleUrl) {
-  return join4(dirname5(dirname5(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
+  return join7(dirname9(dirname9(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
 }
 function projectDirOf(stateFile) {
-  return dirname5(dirname5(stateFile));
+  return dirname9(dirname9(stateFile));
 }
 function launcherArgs(projectDir, page2, window) {
   const args = [projectDir];
@@ -23907,6 +24135,14 @@ function runLauncher(script, args) {
     });
   });
 }
+function launchPane(args) {
+  const script = launcherPath(import.meta.url);
+  if (!existsSync5(script)) return Promise.resolve({
+    ok: false,
+    output: `the launcher is missing at ${script}. This install is incomplete \u2014 reinstall the plugin (a source checkout needs "npm run build").`
+  });
+  return runLauncher(script, args);
+}
 function paneShows(viewers, page2) {
   return page2 === void 0 ? viewers.length > 0 : viewers.some((v) => v.page === page2);
 }
@@ -23923,15 +24159,16 @@ function openOutcome(run, viewers, page2) {
   viewers = viewers.filter((viewer) => pid === void 0 || viewer.pid === pid);
   if (!run.ok) {
     return `could not open the pane: ${run.output === "" ? "the launcher failed without saying why" : run.output}
-Relay the launcher reason. A failed default split is not permission to open a separate window.`;
+Relay the launcher reason and any copyable fallback command. Do not retry mmap_open until the terminal environment changes or the user asks to retry. A failed default split is not permission to open a separate window.`;
   }
   if (paneShows(viewers, page2)) {
-    return `pane: open and showing ${pageName(page2)} \u2014 the user can see the map now.
+    const visible = /^MMAP_PANE [^\r\n]*\bvisibility=visible(?:\s|$)/m.test(run.output);
+    return `pane: running and reporting ${pageName2(page2)} \u2014 ${visible ? "the launcher verified its tmux window is active and its pane is visible in the attached session." : "terminal visibility is not confirmed by the process heartbeat."}
 ${run.output}`;
   }
   if (viewers.length > 0) {
-    const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(", ");
-    return `pane: open, but it reports ${elsewhere} rather than ${pageName(page2)}. With auto-follow on it lands there on your next write; with follow off the user is holding that page on purpose.
+    const elsewhere = [...new Set(viewers.map((v) => pageName2(v.page)))].join(", ");
+    return `pane: open, but it reports ${elsewhere} rather than ${pageName2(page2)}. With auto-follow on it lands there on your next write; with follow off the user is holding that page on purpose.
 ` + run.output;
   }
   return `the launcher succeeded but no pane has reported in within ${PANE_REPORT_TIMEOUT_MS / 1e3}s. It may still be starting; the \`pane:\` line on your next write says whether it made it.
@@ -23941,20 +24178,20 @@ function launcherViewerPid(run) {
   const raw = /^MMAP_PANE [^\r\n]*\bpid=([1-9]\d*)(?:\s|$)/m.exec(run.output)?.[1];
   return raw === void 0 ? void 0 : Number(raw);
 }
+
+// src/server/server.ts
+var SERVER_NAME = "mellos-mapping";
+var SERVER_VERSION = "0.22.1";
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
 function saveFailed(error2) {
   return text(`save failed, nothing changed (retry): ${describeStoreError(error2)}`, true);
 }
-function loadOrEmpty(stateFile) {
-  const loaded = loadMapFile(stateFile);
-  if (loaded.ok) return { ok: true, value: loaded.value };
-  if (loaded.error.kind === "not-found") return { ok: true, value: EMPTY_MAP };
-  return { ok: false, error: describeStoreError(loaded.error) };
-}
-function buildServer(stateFile, userConfigFile) {
+function buildServer(stateFile, userConfigFile, launch = launchPane) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  let paneOpenFailure;
+  const currentPaneLine = (page2) => paneLine(stateFile, page2, paneOpenFailure);
   const projectConfigFile = configFilePath(stateFile);
   const previews = createPreviewPublisher(stateFile);
   const refreshPreview = (page2) => {
@@ -23968,17 +24205,16 @@ preview: STALE \u2014 map changes were saved, but preview generation failed: ${p
   };
   const fileOf = (page2) => pageFilePath(stateFile, page2);
   const mutate = (page2, apply) => {
-    const file = fileOf(page2);
-    const current = loadOrEmpty(file);
-    if (!current.ok) return text(current.error, true);
-    const applied = apply(current.value);
-    if (!applied.ok) return text(`refused (nothing changed): ${applied.error}`, true);
-    const saved = saveMapFile(file, applied.value);
-    if (!saved.ok) return saveFailed(saved.error);
-    return text(summarize(applied.value) + (page2 !== void 0 ? ` [page: ${page2}]` : "") + refreshPreview(page2));
+    const result = mutateMap(fileOf(page2), apply);
+    if (!result.ok) {
+      const failure = result.error;
+      if (failure.kind === "save") return saveFailed(failure.error);
+      return text(failure.kind === "refused" ? `refused (nothing changed): ${failure.detail}` : failure.detail, true);
+    }
+    return text(summarize(result.value) + (page2 !== void 0 ? ` [page: ${page2}]` : "") + refreshPreview(page2));
   };
   const withPane = (result, page2) => result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ""}
-${existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : paneLine(stateFile, page2)}`);
+${existsSync6(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page2)}`);
   const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
   const refusePageDeletion = (pages, target) => {
     if (target !== void 0 && pages.includes(target)) {
@@ -24021,63 +24257,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
   };
   server.registerTool(
     "mmap_declare",
-    {
-      title: "Declare map structure",
-      description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. The title lives here and only here: pass it again to replace it, or null to remove it. Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.",
-      inputSchema: closed({
-        page: page(),
-        title: line(TITLE_MAX, "map title, e.g. the feature being built; null removes it").nullable().optional(),
-        kind: mapKind().optional(),
-        lanes: external_exports.array(
-          closed({
-            id: id("stable kebab-case identifier of the lane"),
-            label: line(LABEL_MAX, "column name, e.g. a sequence participant")
-          })
-        ).optional().describe("vertical columns crossing all bands; declaration order = left-to-right"),
-        layers: external_exports.array(
-          closed({
-            id: id("stable kebab-case identifier of the band"),
-            name: line(LABEL_MAX, "display name of the band"),
-            rank: rank()
-          })
-        ).optional(),
-        groups: external_exports.array(
-          closed({
-            id: id("stable kebab-case identifier of the group"),
-            label: line(LABEL_MAX, "subsystem name shown at the far zoom"),
-            layer: id("band this group clusters; members must live on the same band")
-          })
-        ).optional(),
-        nodes: external_exports.array(
-          closed({
-            id: id("stable kebab-case identifier of the node"),
-            label: line(LABEL_MAX, "display label inside the box"),
-            layer: id("id of the band this node lives in"),
-            status: status("defaults to planned").optional(),
-            evidence: line(
-              EVIDENCE_MAX,
-              "how an already-verified node was verified; for regressed: what broke. Declaring a node straight to done needs it as much as updating one does."
-            ).optional(),
-            detail: note(
-              DETAIL_MAX,
-              "design notes shown in the pane detail panel: responsibility, contract, key decisions"
-            ).optional(),
-            group: id("same-band group this node belongs to").optional(),
-            kind: nodeKind().optional(),
-            lane: id("lane (column) this node belongs to").optional(),
-            submap: id(
-              "page slug of this node's child map \u2014 the pane badges the node \u229E and double-click dives in. Declare the child page separately. Create a sub-map only when the node's internals genuinely deserve their own picture; most nodes need none."
-            ).optional()
-          })
-        ).optional(),
-        edges: external_exports.array(
-          closed({
-            ...edgeEnds(),
-            label: line(EDGE_LABEL_MAX, "what flows along the edge").optional()
-          })
-        ).optional()
-      })
-    },
+    declareTool(),
     (input) => {
       const result = withPane(mutate(input.page, (map) => applyDeclare(map, input)), input.page);
       if (result.isError === true) return result;
@@ -24087,62 +24267,12 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
   );
   server.registerTool(
     "mmap_update",
-    {
-      title: "Record progress and revise the map",
-      description: "The revision tool, all-or-nothing. Record progress on nodes: in-progress when starting a node (the pane spins), done with evidence when its verification passes, regressed with evidence when a done node breaks. Revise what the ghost design got wrong: move a node to another band, join or leave a group or lane, rename a band (or re-rank it, which reorders the whole map), relabel a group or a lane. Every clearable field takes null to empty it \u2014 that is how a field is cleared, never an empty string. Bands, groups and lanes are applied before the node updates, and within one node update `layer` moves the node before its other fields. The map is a ledger: report honestly, it never blocks you.",
-      inputSchema: closed({
-        page: page(),
-        updates: external_exports.array(
-          closed({
-            id: id("id of the node to update"),
-            status: status("the status to record").optional(),
-            label: line(LABEL_MAX, "new display label inside the box").optional(),
-            evidence: line(EVIDENCE_MAX, "for done: how it was verified; for regressed: what broke; null clears it").nullable().optional(),
-            detail: note(
-              DETAIL_MAX,
-              "design notes shown in the pane detail panel: responsibility, contract, key decisions; null clears them"
-            ).nullable().optional(),
-            layer: id(
-              "move the node to this band; applied before this item's other fields, so a node can move and join a group on the new band in one item. Every edge touching it must still point strictly downward, and a grouped node may only move to its group's band."
-            ).optional(),
-            group: id("join this same-band group; null leaves the current group").nullable().optional(),
-            kind: nodeKind().nullable().optional(),
-            lane: id("join this lane; null leaves the current lane").nullable().optional(),
-            submap: id("link a child map page by slug; null unlinks it").nullable().optional()
-          })
-        ).min(1).optional(),
-        layers: external_exports.array(
-          closed({
-            id: id("id of the band to revise"),
-            name: line(LABEL_MAX, "new display name of the band").optional(),
-            rank: rank().optional()
-          })
-        ).min(1).optional().describe("rename and/or re-rank existing bands; an item must carry a name, a rank, or both"),
-        groups: external_exports.array(closed({ id: id("id of the group to relabel"), label: line(LABEL_MAX, "new subsystem name") })).min(1).optional().describe("relabel existing groups; membership and band are untouched"),
-        lanes: external_exports.array(closed({ id: id("id of the lane to relabel"), label: line(LABEL_MAX, "new column name") })).min(1).optional().describe("relabel existing lanes; order and membership are untouched")
-      })
-    },
+    updateTool(),
     (input) => withPane(mutate(input.page, (map) => applyUpdate(map, input)), input.page)
   );
   server.registerTool(
     "mmap_remove",
-    {
-      title: "Revise the map",
-      description: 'Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work. `pages` is the other scale: it DELETES whole page files, so a finished effort can be cleaned up instead of accumulating tabs forever. A bare `{pages: ["slug"]}` with no other field is the normal form; combined with map edits, the edits are applied first and the pages are deleted after. The deletion is permanent and cannot be undone, so delete only pages whose effort is over \u2014 and only ever with the user behind it. An unknown slug is refused with the project\'s real page list (naming a page that does not exist is a typo, not a request). The default page has no slug and is not deletable here. A node elsewhere still pointing at a deleted page with `submap` stays legal \u2014 a submap reference has no existence invariant \u2014 but it has nowhere to dive until the page comes back.',
-      inputSchema: closed({
-        page: page(),
-        edges: external_exports.array(closed(edgeEnds())).optional(),
-        nodes: external_exports.array(id("id of the node to remove, with every edge touching it")).optional(),
-        groups: external_exports.array(id("id of the group to remove; members stay, merely ungrouped")).optional(),
-        lanes: external_exports.array(id("id of the lane to remove; members stay, merely off-lane")).optional(),
-        layers: external_exports.array(id("id of the band to remove; it must hold no nodes and no groups")).optional(),
-        pages: external_exports.array(
-          id(
-            "slug of a page whose WHOLE map file is deleted \u2014 the page and everything drawn on it. Not the page this same call targets with `page`."
-          )
-        ).optional().describe("pages to delete entirely, after this call's map edits; permanent")
-      })
-    },
+    removeTool(),
     (input) => {
       if (input.pages === void 0) return withPane(mutate(input.page, (map) => applyRemove(map, input)), input.page);
       const refusal = refusePageDeletion(input.pages, input.page);
@@ -24160,16 +24290,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
   );
   server.registerTool(
     "mmap_setup",
-    {
-      title: "Configure when maps open",
-      description: 'Get or set the mapping policy \u2014 WHEN the assistant opens a Mellos map. Call with no arguments to read it: the reply names the policy chosen for the USER (every project), the one this PROJECT overrides it with if any, and which of them is in effect. If it reports "not set", ask the USER to choose (never pick for them): always = ' + describeMappingPolicy("always") + "; complex = " + describeMappingPolicy("complex") + "; on-request = " + describeMappingPolicy("on-request") + '. Then call again with their choice to persist it. It defaults to user scope, which is the normal one \u2014 the question is about how someone works, so it is asked once ever, not once per repository. Pass scope: "project" only when the user wants THIS project to differ from that habit. The policy guides you; it never blocks the tools, and an explicit user request for a map always wins.',
-      inputSchema: closed({
-        policy: external_exports.enum(MAPPING_POLICIES).optional().describe("the user's choice to persist; omit to read the current policy"),
-        scope: external_exports.enum(POLICY_SCOPES).optional().describe(
-          'where to record the choice: "user" (default) applies to every project this user opens; "project" overrides that for this project alone. Ignored when reading.'
-        )
-      })
-    },
+    setupTool(),
     (input) => {
       const scope = input.scope ?? "user";
       const configFile = scope === "project" ? projectConfigFile : userConfigFile;
@@ -24197,21 +24318,14 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
   );
   server.registerTool(
     "mmap_view",
-    {
-      title: "View the current map",
-      description: "Render the current Mellos map as monochrome text \u2014 the same picture the split-pane watcher shows live. Use it to check the map state or to show it inline in conversation. Every response ends with a `pages:` line naming the pages this project actually has and which one you are looking at, so this is also how you discover whether a map exists at all and under which slugs \u2014 never probe the files.",
-      inputSchema: closed({
-        page: page(),
-        zoom: external_exports.number().int().min(ZOOM_MIN).max(ZOOM_MAX).optional().describe("zoom ladder: 1 = detail (notes unfold), 0 = standard (default), -1..-3 = scaled down, -4 = overview glyphs")
-      })
-    },
+    viewTool(),
     (input) => {
       const current = loadOrEmpty(fileOf(input.page));
       if (!current.ok) return text(current.error, true);
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
       const surface = previews.enabled() ? `markdown: ${previewFile(stateFile, input.page)}
-Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync4(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : paneLine(stateFile, input.page);
+Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync6(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
       return text(`${picture}
 ${pagesLine(stateFile, input.page)}
 ${surface}`);
@@ -24219,32 +24333,20 @@ ${surface}`);
   );
   server.registerTool(
     "mmap_open",
-    {
-      title: "Open the map pane",
-      description: 'For automatic display beside the current ChatGPT desktop conversation in Codex mode, use surface: "web-terminal", then call open_in_codex with the returned browser hostOpen object. No paste or Computer Use is needed. For the native host terminal, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.',
-      inputSchema: closed({
-        surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web", "web-terminal"]).optional().describe("web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)"),
-        page: id(
-          "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
-        ).optional(),
-        window: external_exports.boolean().optional().describe(
-          `open the map in its own "mellos-mapping" window instead of splitting this conversation's window. Pass it only when the user asked for the map separate (a second monitor, a small screen); the split is the default because the map is meant to sit beside what it describes.`
-        )
-      })
-    },
+    openTool(),
     async (input) => {
       if (input.surface === "codex-terminal") {
         if (input.window === true) return text("codex-terminal uses the current conversation panel; window: true is not supported.", true);
         if (input.page && !listPageFiles(stateFile).some((file) => pageIdOfFile(stateFile, file) === input.page)) {
           return text(`Unknown page: ${input.page}. ${pagesLine(stateFile, input.page)}`, true);
         }
-        const handoff = terminalHandoff(process.execPath, fileURLToPath(new URL("./watch.mjs", import.meta.url)), stateFile, input.page);
+        const handoff = terminalHandoff(process.execPath, fileURLToPath2(new URL("./watch.mjs", import.meta.url)), stateFile, input.page);
         return text("terminal: ready-to-start\n" + JSON.stringify(handoff, null, 2) + "\nUse open_in_codex with hostOpen in the CURRENT conversation, without a threadId. If a supported host tool can run commands in that user terminal, use it. Otherwise give the user the command for their shell to paste once. An exec_command session_id belongs to the agent PTY, not this terminal. queued is not visible, and opened is not running. Use read_thread_terminal to confirm the map title and controls after startup. Preserve a page the user pinned.");
       }
       if (input.surface === "web" || input.surface === "web-terminal") {
         if (input.window === true) return text('surface: "web" cannot be combined with window: true. Open the returned URL using the desktop host.', true);
         try {
-          const url = await openWebPreview(stateFile, fileURLToPath(new URL("./web.mjs", import.meta.url)), input.page, input.surface === "web-terminal");
+          const url = await openWebPreview(stateFile, fileURLToPath2(new URL("./web.mjs", import.meta.url)), input.page, input.surface === "web-terminal");
           return text(`surface: ${input.surface}
 hostOpen: ${JSON.stringify({ placement: "right", target: { type: "browser", url } })}
 preview: ready
@@ -24263,23 +24365,19 @@ markdown: ${published.value.path}
 index: ${published.value.index}
 Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation's right file panel using the host tool. No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.`);
       }
-      const script = launcherPath(import.meta.url);
-      if (!existsSync4(script)) {
-        return text(
-          `cannot open the pane: the launcher is missing at ${script}. This install is incomplete \u2014 tell the user to reinstall the plugin (a source checkout needs "npm run build").`,
-          true
-        );
-      }
-      const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
       const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
-      return text(openOutcome(run, viewers, input.page), !run.ok || !paneShows(viewers, input.page));
+      const outcome = openOutcome(run, viewers, input.page);
+      const failed = !run.ok || !paneShows(viewers, input.page);
+      paneOpenFailure = failed ? outcome : void 0;
+      return text(outcome, failed);
     }
   );
   return server;
 }
 function resolveStateFile(env, cwd) {
   const projectDir = env["MELLOS_MAPPING_CWD"] ?? env["CLAUDE_PROJECT_DIR"] ?? cwd;
-  return join4(projectDir, STATE_FILE_RELATIVE_PATH);
+  return join8(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 function resolveUserConfigFile(home) {
   return userConfigFilePath(home);
@@ -24294,7 +24392,7 @@ async function main() {
 function launchedAsEntry(argv1, moduleUrl) {
   if (argv1 === void 0) return false;
   try {
-    return realpathSync2(argv1) === realpathSync2(fileURLToPath(moduleUrl));
+    return realpathSync2(argv1) === realpathSync2(fileURLToPath2(moduleUrl));
   } catch {
     return pathToFileURL(argv1).href === moduleUrl;
   }

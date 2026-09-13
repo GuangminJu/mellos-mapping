@@ -50,6 +50,10 @@ AI 声明计划、启动本地服务并把 URL 打开到当前对话右侧浏览
 服务后重新打开地图，以加载新运行程序。`node install.mjs --check` 只检查文件、前置软件和 MCP，
 不修改宿主配置。
 
+升级会先完整复制并校验新版，再切换安装目录；升级验收失败则恢复旧文件并重新
+检查宿主注册。安装器会核对 Codex 报告的插件路径及 MCP 运行文件。内容发生
+变化必须提升发行版本号。
+
 ```sh
 codex plugin remove mellos-mapping@mellos-mapping-codex
 codex mcp remove mellos-mapping
