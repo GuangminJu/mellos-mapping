@@ -86,4 +86,3 @@ export function paneLine(stateFile: string, touched: string | undefined, openFai
     'retargets the pane if they want it moved.'
   );
 }
-

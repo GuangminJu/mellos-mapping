@@ -164,4 +164,3 @@ export function launcherViewerPid(run: LauncherRun): number | undefined {
   const raw = /^MMAP_PANE [^\r\n]*\bpid=([1-9]\d*)(?:\s|$)/m.exec(run.output)?.[1];
   return raw === undefined ? undefined : Number(raw);
 }
-
