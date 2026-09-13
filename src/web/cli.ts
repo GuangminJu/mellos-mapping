@@ -50,6 +50,8 @@ export async function runWeb(args: readonly string[]): Promise<void> {
   }
   console.log(JSON.stringify({ surface: terminal ? 'web-terminal' : 'web', url: await openWebPreview(file, entry, page, terminal), visibility: 'unconfirmed' }));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// Node resolves the module path through symlinks, but leaves argv[1] as supplied
+// (notably /var vs /private/var on macOS). Compare the same canonical path.
+if (process.argv[1] && existsSync(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   runWeb(process.argv.slice(2)).catch(error => { console.error(String(error)); process.exitCode = 1; });
 }

@@ -5477,7 +5477,7 @@ async function runWeb(args) {
   }
   console.log(JSON.stringify({ surface: terminal ? "web-terminal" : "web", url: await openWebPreview(file, entry, page, terminal), visibility: "unconfirmed" }));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve2(process.argv[1])).href) {
+if (process.argv[1] && existsSync4(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync2(process.argv[1])).href) {
   runWeb(process.argv.slice(2)).catch((error) => {
     console.error(String(error));
     process.exitCode = 1;

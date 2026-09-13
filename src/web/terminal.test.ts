@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, readdirSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,12 @@ async function connect(url: string, page = 'alpha', ack = true) {
 async function until(test: () => boolean) { const end = Date.now() + 4000; while (!test()) { if (Date.now() > end) throw new Error('Timed out waiting for terminal'); await new Promise(resolve => setTimeout(resolve, 20)); } }
 
 describe('web terminal transport', () => {
+  it('starts the shipped web CLI through an aliased installation directory', () => {
+    const project = mkdtempSync(join(tmpdir(), 'mellos-web-alias-')); temporary.push(project);
+    const alias = join(project, 'runtime'); symlinkSync(join(root, 'dist'), alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const result = spawnSync(process.execPath, [join(alias, 'web.mjs'), '--help'], { encoding: 'utf8', windowsHide: true });
+    expect(result.status).toBe(0); expect(result.stdout).toContain('--terminal');
+  });
   it('strictly bounds sizes, input and messages', () => {
     for (const value of [{ type: 'start', cols: 19, rows: 20 }, { type: 'resize', cols: 100, rows: 201 }, { type: 'input', data: 'a'.repeat(4097) }, { type: 'start', cols: 80, rows: 24, command: 'anything' }, { type: 'exec', data: 'anything' }, null]) expect(parseTerminalInput(JSON.stringify(value))).toBeUndefined();
     expect(parseTerminalInput('{')).toBeUndefined();
