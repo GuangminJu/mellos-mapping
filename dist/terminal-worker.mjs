@@ -478,6 +478,41 @@ function flipForSequence(map) {
   };
 }
 
+// src/domain/text.ts
+var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
+var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
+function mapTextError(map) {
+  const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
+  let error = check("title", map.title);
+  if (error) return error;
+  for (const [i, layer] of map.layers.entries()) {
+    error = check(`layers[${i}].name`, layer.name);
+    if (error) return error;
+  }
+  for (const name of ["lanes", "groups"]) {
+    for (const [i, item] of map[name].entries()) {
+      error = check(`${name}[${i}].label`, item.label);
+      if (error) return error;
+    }
+  }
+  for (const [i, node] of map.nodes.entries()) {
+    for (const name of ["label", "evidence", "detail"]) {
+      error = check(`nodes[${i}].${name}`, node[name], name !== "label");
+      if (error) return error;
+    }
+  }
+  for (const [i, edge] of map.edges.entries()) {
+    error = check(`edges[${i}].label`, edge.label);
+    if (error) return error;
+  }
+  return void 0;
+}
+function terminalText(text, multiline = false) {
+  return text.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
+}
+
 // src/render/width.ts
 var WIDE_RANGES = [
   [4352, 4447],
@@ -572,6 +607,7 @@ function displayWidth(text) {
   return w;
 }
 function fitWidth(s, width) {
+  s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
@@ -587,7 +623,7 @@ function wrapWidth(s, width) {
   const lines = [];
   let line = "";
   let w = 0;
-  for (const ch of s.replace(/\r/g, "")) {
+  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
     if (ch === "\n") {
       lines.push(line);
       line = "";
@@ -679,7 +715,7 @@ var Canvas = class {
   /** Write literal text starting at (x, y). Returns the column just past it. */
   text(x, y, s, style, bold = false) {
     let cx = x;
-    for (const ch of s) {
+    for (const ch of terminalText(s)) {
       const w = charWidth(ch.codePointAt(0));
       if (w === 0) {
         const base = this.cell(Math.max(0, cx - 1), y);
@@ -1574,7 +1610,8 @@ function parseMap(raw, path) {
     if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
     map = linked.value;
   }
-  return ok(map);
+  const textError = mapTextError(map);
+  return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 
 // src/store/store.ts

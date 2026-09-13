@@ -15,6 +15,8 @@
  * Pure functions of a string; no canvas, no options, no I/O.
  */
 
+import { terminalText } from '../domain/text.js';
+
 const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0x1100, 0x115f], // Hangul Jamo
   // Wide symbols scattered through the BMP — mostly emoji that predate the
@@ -102,6 +104,7 @@ export function displayWidth(text: string): number {
 
 /** Truncate to a display width, ANSI-free input, appending … when cut. */
 export function fitWidth(s: string, width: number): string {
+  s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = '';
   let w = 0;
@@ -119,7 +122,7 @@ export function wrapWidth(s: string, width: number): string[] {
   const lines: string[] = [];
   let line = '';
   let w = 0;
-  for (const ch of s.replace(/\r/g, '')) {
+  for (const ch of terminalText(s.replace(/\r/g, '').replace(/\t/g, '  '), true)) {
     if (ch === '\n') {
       lines.push(line);
       line = '';

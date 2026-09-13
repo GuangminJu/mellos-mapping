@@ -22,6 +22,7 @@
  */
 
 import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
+import { mapTextError } from '../domain/text.js';
 import {
   EMPTY_MAP,
   ID_RULE,
@@ -322,7 +323,8 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
     map = linked.value;
   }
 
-  return ok(map);
+  const textError = mapTextError(map);
+  return textError ? err({ kind: 'bad-shape', path, detail: textError }) : ok(map);
 }
 
 /** Serialize a map into the on-disk shape. Inverse of parseMap for valid maps (F1). */
