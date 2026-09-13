@@ -24181,7 +24181,7 @@ function launcherViewerPid(run) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.22.0";
+var SERVER_VERSION = "0.22.1";
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
