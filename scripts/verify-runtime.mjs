@@ -1,14 +1,17 @@
+// @ts-check
 /** Dependency-free MCP handshake used by a fresh clone's installer. */
 import { spawn } from 'node:child_process';
 export const TOOL_NAMES = ['mmap_declare', 'mmap_open', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view'];
 
+/** @param {string} server @param {string} cwd @param {NodeJS.ProcessEnv} [env] @returns {Promise<string[]>} */
 export function verifyRuntime(server, cwd, env = process.env) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [server], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     let buffer = '', errors = '', complete = false;
-    const finish = (error, value) => {
+    /** @param {unknown} error @param {string[]} [value] */
+    const finish = (error, value = []) => {
       if (complete) return;
       complete = true;
       clearTimeout(timer);
@@ -20,6 +23,7 @@ export function verifyRuntime(server, cwd, env = process.env) {
     child.stdin.on('error', error => finish(error));
     child.on('exit', code => { if (!complete) finish(new Error(`MCP exited (${code}). ${errors.slice(-500)}`)); });
     child.stderr.on('data', data => { errors = (errors + data).slice(-2000); });
+    /** @param {unknown} value */
     const send = value => child.stdin.write(JSON.stringify(value) + '\n');
     child.stdout.on('data', data => {
       buffer += data;
@@ -33,7 +37,7 @@ export function verifyRuntime(server, cwd, env = process.env) {
             send({ jsonrpc: '2.0', method: 'notifications/initialized' });
             send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
           } else if (message.id === 2) {
-            const names = message.result.tools.map(tool => tool.name).sort();
+            const names = message.result.tools.map(/** @param {{name: string}} tool */ tool => tool.name).sort();
             if (JSON.stringify(names) !== JSON.stringify(TOOL_NAMES)) return finish(new Error('Installed MCP tool set is incomplete.'));
             finish(null, names);
           }

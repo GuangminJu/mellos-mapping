@@ -1,3 +1,4 @@
+// @ts-check
 /** Host protocol adapters. Acceptance checks the files the host actually loads. */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -6,6 +7,7 @@ import { registerServer } from './codex-register.mjs';
 import { requireSuccess } from './host-cli.mjs';
 import { checkedPath } from './release-files.mjs';
 
+/** @param {string} root @param {import('./install-types.js').ReleaseManifest} manifest */
 export function verifyInstalledFiles(root, manifest) {
   const prefix = manifest.edition === 'chatgpt-app' ? 'plugins/mellos-mapping/' : '';
   for (const [file, expected] of Object.entries(manifest.sha256)) {
@@ -20,24 +22,30 @@ export function verifyInstalledFiles(root, manifest) {
   }
 }
 
+/** @param {string} edition @param {string} target @param {import('./install-types.js').HostRunner} run */
 export function createHostInstallation(edition, target, run) {
   const codex = edition === 'chatgpt-app';
   const market = codex ? 'mellos-mapping-codex' : 'mellos-mapping';
   const id = `mellos-mapping@${market}`;
   const prefix = codex ? 'plugins/mellos-mapping' : '';
+  /** @param {string[]} args @param {string} label */
   const json = (args, label) => JSON.parse(requireSuccess(run(args), label));
+  /** @returns {import('./install-types.js').HostPlugin[]} */
   const list = () => {
     const value = json(['plugin', 'list', '--json'], 'Read installed plugins');
     return codex ? value.installed ?? [] : value;
   };
+  /** @param {import('./install-types.js').HostPlugin} plugin */
   const matches = plugin => codex ? plugin.pluginId === id : plugin.id === id;
   const previous = list().find(matches);
-  let existing;
+  /** @type {boolean} */
+  let existing = false;
   if (!codex) {
     const listed = json(['plugin', 'marketplace', 'list', '--json'], 'Read Claude marketplaces');
-    existing = (Array.isArray(listed) ? listed : listed.marketplaces ?? []).find(entry => entry.name === market);
-    if (existing) {
-      const location = existing.source?.path ?? existing.source?.source ?? existing.path ?? existing.installLocation;
+    const registered = (Array.isArray(listed) ? listed : listed.marketplaces ?? []).find(/** @param {{name: string}} entry */ entry => entry.name === market);
+    existing = registered !== undefined;
+    if (registered) {
+      const location = registered.source?.path ?? registered.source?.source ?? registered.path ?? registered.installLocation;
       if (!location || resolve(location) !== resolve(target)) throw new Error(`Claude marketplace '${market}' already comes from another source. Keep that install, or remove that marketplace with Claude before switching to this clone.`);
     }
   } else if (previous && resolve(previous.source?.path ?? '') !== resolve(join(target, prefix))) {
@@ -46,6 +54,7 @@ export function createHostInstallation(edition, target, run) {
   return {
     market,
     previous,
+    /** @param {import('./install-types.js').ReleaseManifest} manifest */
     install(manifest) {
       if (codex) {
         requireSuccess(run(['plugin', 'marketplace', 'add', target]), 'Register Codex marketplace');

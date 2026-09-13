@@ -3703,13 +3703,9 @@ var require_websocket_server = __commonJS({
 });
 
 // src/web/cli.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync2, rmSync as rmSync2, statSync as statSync3 } from "node:fs";
-import { dirname as dirname5, join as join4, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync2, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
+import { dirname as dirname7, join as join5, resolve as resolve2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-// src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
@@ -3794,41 +3790,6 @@ function describeMapError(e) {
     case "edge-not-downward":
       return `edge ${e.from} (rank ${e.fromRank}) -> ${e.to} (rank ${e.toRank}) is not strictly downward; ` + (e.fromRank === e.toRank ? `same-band siblings may not depend on each other \u2014 either "${e.to}" is really a lower concept (declare it on a lower band) or "${e.from}" and "${e.to}" are one node (merge them)` : `"${e.from}" would USE "${e.to}" from a lower band \u2014 reverse the edge if "${e.to}" is the user, otherwise move or re-rank so "${e.from}" sits above "${e.to}"`);
   }
-}
-
-// src/domain/text.ts
-var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
-var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
-function mapTextError(map) {
-  const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
-  let error = check("title", map.title);
-  if (error) return error;
-  for (const [i, layer] of map.layers.entries()) {
-    error = check(`layers[${i}].name`, layer.name);
-    if (error) return error;
-  }
-  for (const name of ["lanes", "groups"]) {
-    for (const [i, item] of map[name].entries()) {
-      error = check(`${name}[${i}].label`, item.label);
-      if (error) return error;
-    }
-  }
-  for (const [i, node] of map.nodes.entries()) {
-    for (const name of ["label", "evidence", "detail"]) {
-      error = check(`nodes[${i}].${name}`, node[name], name !== "label");
-      if (error) return error;
-    }
-  }
-  for (const [i, edge] of map.edges.entries()) {
-    error = check(`edges[${i}].label`, edge.label);
-    if (error) return error;
-  }
-  return void 0;
-}
-function terminalText(text, multiline = false) {
-  return text.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
 }
 
 // src/domain/ops.ts
@@ -3961,6 +3922,41 @@ function updateNode(map, input) {
     ...input.label !== void 0 ? { label: input.label } : {}
   };
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
+}
+
+// src/domain/text.ts
+var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
+var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
+function mapTextError(map) {
+  const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
+  let error = check("title", map.title);
+  if (error) return error;
+  for (const [i, layer] of map.layers.entries()) {
+    error = check(`layers[${i}].name`, layer.name);
+    if (error) return error;
+  }
+  for (const name of ["lanes", "groups"]) {
+    for (const [i, item] of map[name].entries()) {
+      error = check(`${name}[${i}].label`, item.label);
+      if (error) return error;
+    }
+  }
+  for (const [i, node] of map.nodes.entries()) {
+    for (const name of ["label", "evidence", "detail"]) {
+      error = check(`nodes[${i}].${name}`, node[name], name !== "label");
+      if (error) return error;
+    }
+  }
+  for (const [i, edge] of map.edges.entries()) {
+    error = check(`edges[${i}].label`, edge.label);
+    if (error) return error;
+  }
+  return void 0;
+}
+function terminalText(text, multiline = false) {
+  return text.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
 }
 
 // src/store/format.ts
@@ -4174,7 +4170,9 @@ function parseMap(raw, path) {
   return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 
-// src/store/store.ts
+// src/store/atomic.ts
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 var RENAME_MAX_ATTEMPTS = 10;
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
@@ -4218,14 +4216,15 @@ function writeAtomic(path, contents, maxAttempts) {
     }
   }
 }
-function stripBom(text) {
-  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
-}
+
+// src/store/pages.ts
+import { existsSync, readdirSync, rmSync as rmSync2 } from "node:fs";
+import { basename, dirname as dirname2, join } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+  return page === void 0 ? defaultFile : join(dirname2(defaultFile), PAGES_DIR_NAME, `${page}.json`);
 }
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
@@ -4237,23 +4236,34 @@ function listPageFiles(defaultFile) {
   if (existsSync(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
-    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+    entries = readdirSync(join(dirname2(defaultFile), PAGES_DIR_NAME));
   } catch {
   }
   for (const e of entries.sort()) {
-    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+    if (e.endsWith(".json")) out.push(join(dirname2(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
 }
 function deletePageFile(path) {
   try {
-    rmSync(path, { force: true });
+    rmSync2(path, { force: true });
     return ok(void 0);
   } catch (e) {
     return err({ kind: "delete-failed", path, detail: errnoOf(e) });
   }
 }
-var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+
+// src/store/json-text.ts
+function stripBom(text) {
+  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
+}
+
+// src/store/migration.ts
+import { dirname as dirname3, join as join2 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join2(".claude", "mellos-mapping.json");
+
+// src/store/maps.ts
+import { readFileSync } from "node:fs";
 function loadMapFile(path) {
   let text;
   try {
@@ -4275,19 +4285,19 @@ function loadMapFile(path) {
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
-import { dirname as dirname3, join as join2 } from "node:path";
+import { dirname as dirname5, join as join3 } from "node:path";
 
 // src/web/source.ts
 import { createHash } from "node:crypto";
-import { statSync as statSync2 } from "node:fs";
-import { basename as basename2, dirname as dirname2 } from "node:path";
+import { statSync } from "node:fs";
+import { basename as basename2, dirname as dirname4 } from "node:path";
 function readWebSnapshot(defaultFile) {
   const pages = listPageFiles(defaultFile).map((file) => {
     const id = pageIdOfFile(defaultFile, file) ?? "";
     const title = id || "\u9ED8\u8BA4\u5730\u56FE";
     try {
       if (id !== "" && !ID_RULE.test(id)) throw new Error("Invalid page filename");
-      const modified = statSync2(file).mtimeMs;
+      const modified = statSync(file).mtimeMs;
       const result = loadMapFile(file);
       return result.ok ? { id, title: result.value.title ?? title, modified, map: result.value } : { id, title, modified, error: describeStoreError(result.error) };
     } catch (error) {
@@ -4295,12 +4305,12 @@ function readWebSnapshot(defaultFile) {
     }
   });
   if (pages.length === 0) pages.push({ id: "", title: "\u7B49\u5F85\u7B2C\u4E00\u5F20\u5730\u56FE", modified: 0, map: EMPTY_MAP });
-  const value = { project: basename2(dirname2(dirname2(defaultFile))), pages };
+  const value = { project: basename2(dirname4(dirname4(defaultFile))), pages };
   return { revision: createHash("sha256").update(JSON.stringify(value)).digest("hex"), value };
 }
 
 // src/web/launcher.ts
-var webRuntimeFile = (defaultFile) => join2(dirname3(defaultFile), "web", "server.json");
+var webRuntimeFile = (defaultFile) => join3(dirname5(defaultFile), "web", "server.json");
 async function runningWebUrl(defaultFile) {
   try {
     const info = JSON.parse(readFileSync2(webRuntimeFile(defaultFile), "utf8"));
@@ -4357,7 +4367,7 @@ import { createServer } from "node:http";
 // src/preview/publisher.ts
 import { createHash as createHash2 } from "node:crypto";
 import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
-import { dirname as dirname4, join as join3, resolve } from "node:path";
+import { dirname as dirname6, join as join4, resolve } from "node:path";
 
 // src/semantics/vocabulary.ts
 var STATUS_GLYPHS = {
@@ -5074,11 +5084,11 @@ var PREVIEW_DIR_NAME = "previews";
 var ENABLED = ".enabled";
 var PUBLISH_LOCK = ".publish-lock";
 function previewDirectory(defaultFile) {
-  return join3(dirname4(defaultFile), PREVIEW_DIR_NAME);
+  return join4(dirname6(defaultFile), PREVIEW_DIR_NAME);
 }
 function previewFile(defaultFile, page) {
   if (page !== void 0 && !ID_RULE.test(page)) throw new Error("Invalid preview page id.");
-  return join3(previewDirectory(defaultFile), documentName(page));
+  return join4(previewDirectory(defaultFile), documentName(page));
 }
 function save(path, contents) {
   try {
@@ -5091,14 +5101,14 @@ function save(path, contents) {
 }
 function ownedDirectory(path) {
   mkdirSync2(path, { recursive: true });
-  const expected = join3(realpathSync(dirname4(path)), path.slice(dirname4(path).length + 1));
+  const expected = join4(realpathSync(dirname6(path)), path.slice(dirname6(path).length + 1));
   const actual = realpathSync(path);
   if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
     throw new Error(`Preview directory redirects outside its parent: ${path}`);
   }
 }
 function acquireLock(directory) {
-  const path = join3(directory, PUBLISH_LOCK);
+  const path = join4(directory, PUBLISH_LOCK);
   const deadline = Date.now() + 2e3;
   while (true) {
     try {
@@ -5113,7 +5123,7 @@ function acquireLock(directory) {
 }
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
-  const enabledFile = join3(directory, ENABLED);
+  const enabledFile = join4(directory, ENABLED);
   const enabled = () => existsSync3(enabledFile);
   const refresh = (page) => {
     try {
@@ -5131,24 +5141,24 @@ function createPreviewPublisher(defaultFile) {
         }
         if (page !== void 0 && !pages.some((p) => p.page === page)) return err(`No map page named "${page}".`);
         if (page === void 0 && !pages.some((p) => p.page === void 0)) pages.unshift({ page: void 0, map: EMPTY_MAP });
-        const images = join3(directory, "images");
+        const images = join4(directory, "images");
         ownedDirectory(images);
         const present = /* @__PURE__ */ new Set();
         for (const item of pages) {
           const svg = renderMapSvg(item.map);
           const digest = createHash2("sha256").update(svg).digest("hex");
           const image = `images/${digest}.svg`;
-          save(join3(images, `${digest}.svg`), svg);
+          save(join4(images, `${digest}.svg`), svg);
           const filename = documentName(item.page);
-          save(join3(directory, filename), renderMapMarkdown(item.map, image, pages));
+          save(join4(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
         for (const filename of readdirSync2(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
-            save(join3(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
+            save(join4(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
         }
-        const index = join3(directory, "index.md");
+        const index = join4(directory, "index.md");
         save(index, renderPreviewIndex(pages));
         return ok({ path: resolve(path), index: resolve(index), pages: pages.length });
       } finally {
@@ -5461,19 +5471,19 @@ async function runWeb(args) {
   if (args[0] === "--serve" && args.length === 2) {
     const file2 = resolve2(args[1]);
     if (await runningWebUrl(file2)) return;
-    const directory = dirname5(webRuntimeFile(file2));
+    const directory = dirname7(webRuntimeFile(file2));
     mkdirSync3(directory, { recursive: true });
-    if (realpathSync2(directory).toLowerCase() !== join4(realpathSync2(dirname5(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
-    const assets = join4(dirname5(entry), "web");
+    if (realpathSync2(directory).toLowerCase() !== join5(realpathSync2(dirname7(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
+    const assets = join5(dirname7(entry), "web");
     let service;
     service = await startWebService(file2, {
-      html: readFileSync4(join4(assets, "index.html"), "utf8"),
-      javascript: readFileSync4(join4(assets, "app.js"), "utf8"),
-      css: readFileSync4(join4(assets, "app.css"), "utf8"),
-      terminal: { html: readFileSync4(join4(assets, "terminal.html"), "utf8"), javascript: readFileSync4(join4(assets, "terminal.js"), "utf8"), css: readFileSync4(join4(assets, "terminal.css"), "utf8"), xtermCss: readFileSync4(join4(assets, "xterm.css"), "utf8") }
-    }, { terminalWorker: join4(dirname5(entry), "terminal-worker.mjs"), onClose: () => {
+      html: readFileSync4(join5(assets, "index.html"), "utf8"),
+      javascript: readFileSync4(join5(assets, "app.js"), "utf8"),
+      css: readFileSync4(join5(assets, "app.css"), "utf8"),
+      terminal: { html: readFileSync4(join5(assets, "terminal.html"), "utf8"), javascript: readFileSync4(join5(assets, "terminal.js"), "utf8"), css: readFileSync4(join5(assets, "terminal.css"), "utf8"), xtermCss: readFileSync4(join5(assets, "xterm.css"), "utf8") }
+    }, { terminalWorker: join5(dirname7(entry), "terminal-worker.mjs"), onClose: () => {
       try {
-        if (JSON.parse(readFileSync4(webRuntimeFile(file2), "utf8")).token === service.token) rmSync2(webRuntimeFile(file2));
+        if (JSON.parse(readFileSync4(webRuntimeFile(file2), "utf8")).token === service.token) rmSync3(webRuntimeFile(file2));
       } catch {
       }
     } });
@@ -5504,8 +5514,8 @@ async function runWeb(args) {
     else throw new Error(usage);
   }
   const project = resolve2(args[0]);
-  if (!existsSync4(project) || !statSync3(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
-  const file = join4(project, STATE_FILE_RELATIVE_PATH);
+  if (!existsSync4(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
+  const file = join5(project, STATE_FILE_RELATIVE_PATH);
   if (stop) {
     const url = await runningWebUrl(file);
     if (url) await fetch(`${url}api/stop`, { method: "POST", signal: AbortSignal.timeout(2e3) });

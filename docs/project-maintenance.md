@@ -20,6 +20,20 @@
 | `lib/`、`node_modules/` | 可重建的库输出与依赖，不提交 |
 | `docs/` | 用户、开发与发布说明；双语 README 的结构保持一致 |
 | `artifacts/` | 本地验证证据、安装包和原型，不提交 |
+
+核心边界：`server/tool-definitions.ts` 只定义 MCP 协议；`map-service.ts` 负责
+读取、应用和保存地图；`pane-launcher.ts` 管理启动进程与可见性回执；`presence.ts`
+解释心跳。`server.ts` 组合这些模块，不让终端或宿主规则进入领域操作。
+
+`store/store.ts` 是兼容公共入口，内部按 `atomic`、`pages`、`maps`、`channels`、
+`viewers`、`policy`、`migration` 分工，内部模块不反向依赖入口。
+`watch/pane-state.ts` 决定显示哪个页面，`watch/view-state.ts` 管理页面视图与手势；
+终端主循环负责执行 I/O。新增交互优先补充状态事件及事件序列测试。
+
+`npm run typecheck` 同时检查 TypeScript 和启用 `@ts-check` 的七个安装关键脚本：
+`install-release`、`release-files`、`release-transaction`、`host-installation`、
+`host-cli`、`codex-register`、`verify-runtime`。其他历史脚本按修改范围逐步纳入，
+不以放宽这些边界的类型要求代替迁移。类型声明只服务于源码检查，发行版仍直接运行 JavaScript。
 | `.mellos/` | 此项目的地图及本地运行状态，不是产品发行文件 |
 
 现有模块边界优先于移动文件。共享规则放在能承担职责的最低层；宿主分支不维护

@@ -3,7 +3,7 @@ import { PassThrough, Writable } from "node:stream";
 
 // src/watch/watch.ts
 import { realpathSync, statSync as statSync2 } from "node:fs";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { dirname as dirname7, join as join6 } from "node:path";
 
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
@@ -1396,10 +1396,6 @@ function paint(scene, opts) {
   return { canvas, hits };
 }
 
-// src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-
 // src/store/format.ts
 var STATE_FILE_VERSION = 1;
 function makePageId(raw) {
@@ -1614,7 +1610,9 @@ function parseMap(raw, path) {
   return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 
-// src/store/store.ts
+// src/store/atomic.ts
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
 function sleepSync(ms) {
@@ -1654,17 +1652,15 @@ function writeAtomic(path, contents, maxAttempts) {
     }
   }
 }
-function isRecord2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function stripBom(text) {
-  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
-}
+
+// src/store/pages.ts
+import { existsSync, readdirSync, rmSync as rmSync2 } from "node:fs";
+import { basename, dirname as dirname2, join } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+  return page === void 0 ? defaultFile : join(dirname2(defaultFile), PAGES_DIR_NAME, `${page}.json`);
 }
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
@@ -1676,42 +1672,80 @@ function listPageFiles(defaultFile) {
   if (existsSync(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
-    entries = readdirSync(join(dirname(defaultFile), PAGES_DIR_NAME));
+    entries = readdirSync(join(dirname2(defaultFile), PAGES_DIR_NAME));
   } catch {
   }
   for (const e of entries.sort()) {
-    if (e.endsWith(".json")) out.push(join(dirname(defaultFile), PAGES_DIR_NAME, e));
+    if (e.endsWith(".json")) out.push(join(dirname2(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
 }
 function deletePageFile(path) {
   try {
-    rmSync(path, { force: true });
+    rmSync2(path, { force: true });
     return ok(void 0);
   } catch (e) {
     return err({ kind: "delete-failed", path, detail: errnoOf(e) });
   }
 }
+
+// src/store/channels.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2, rmSync as rmSync4 } from "node:fs";
+import { dirname as dirname4, join as join3 } from "node:path";
+
+// src/store/json-text.ts
+function isRecord2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function stripBom(text) {
+  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
+}
+
+// src/store/viewers.ts
+import { readdirSync as readdirSync2, readFileSync, statSync, rmSync as rmSync3 } from "node:fs";
+import { dirname as dirname3, join as join2 } from "node:path";
+var VIEWERS_DIR_NAME = "viewers";
+var VIEWER_FILE_VERSION = 1;
+var VIEWER_HEARTBEAT_MS = 1e3;
+function viewersDirPath(defaultFile) {
+  return join2(dirname3(defaultFile), VIEWERS_DIR_NAME);
+}
+function viewerFilePath(defaultFile, pid) {
+  return join2(viewersDirPath(defaultFile), `${pid}.json`);
+}
+function publishViewer(defaultFile, pid, report) {
+  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow, owner: report.owner };
+  return writeAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}
+`, 1);
+}
+function retireViewer(defaultFile, pid) {
+  try {
+    rmSync3(viewerFilePath(defaultFile, pid), { force: true });
+  } catch {
+  }
+}
+
+// src/store/channels.ts
 var FOCUS_FILE_NAME = "focus";
 function focusFilePath(defaultFile, pid) {
   return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
 }
 function paneChannelPath(defaultFile, channel, pid) {
-  if (pid === void 0) return join(dirname(defaultFile), channel);
+  if (pid === void 0) return join3(dirname4(defaultFile), channel);
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid pane process id");
-  return join(viewersDirPath(defaultFile), `${pid}.${channel}`);
+  return join3(viewersDirPath(defaultFile), `${pid}.${channel}`);
 }
 function takeFocusRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : focusFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync(targeted) ? targeted : focusFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync2(targeted) ? targeted : focusFilePath(defaultFile);
   let raw;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = readFileSync2(path, "utf8");
   } catch {
     return void 0;
   }
   try {
-    rmSync(path, { force: true });
+    rmSync4(path, { force: true });
   } catch {
   }
   let parsed;
@@ -1733,10 +1767,10 @@ function quitFilePath(defaultFile, pid) {
 }
 function takeQuitRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : quitFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync(targeted) ? targeted : quitFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync2(targeted) ? targeted : quitFilePath(defaultFile);
   let raw;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = readFileSync2(path, "utf8");
   } catch {
     return false;
   }
@@ -1751,55 +1785,45 @@ function takeQuitRequest(defaultFile, pid) {
 }
 function sweepQuitRequest(defaultFile, pid) {
   try {
-    rmSync(quitFilePath(defaultFile, pid), { force: true });
+    rmSync4(quitFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
-var VIEWERS_DIR_NAME = "viewers";
-var VIEWER_FILE_VERSION = 1;
-var VIEWER_HEARTBEAT_MS = 1e3;
-function viewersDirPath(defaultFile) {
-  return join(dirname(defaultFile), VIEWERS_DIR_NAME);
-}
-function viewerFilePath(defaultFile, pid) {
-  return join(viewersDirPath(defaultFile), `${pid}.json`);
-}
-function publishViewer(defaultFile, pid, report) {
-  const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow, owner: report.owner };
-  return writeAtomic(viewerFilePath(defaultFile, pid), `${JSON.stringify(body, null, 2)}
-`, 1);
-}
-function retireViewer(defaultFile, pid) {
-  try {
-    rmSync(viewerFilePath(defaultFile, pid), { force: true });
-  } catch {
-  }
-}
+
+// src/store/policy.ts
+import { dirname as dirname5, join as join4 } from "node:path";
 var CONFIG_FILE_NAME = "config.json";
 function configFilePath(defaultFile) {
-  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+  return join4(dirname5(defaultFile), CONFIG_FILE_NAME);
 }
-var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+
+// src/store/migration.ts
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, renameSync as renameSync2 } from "node:fs";
+import { dirname as dirname6, join as join5 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join5(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
 var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
 function migrateLegacyStore(defaultFile) {
-  const projectRoot = dirname(dirname(defaultFile));
-  const legacyDefault = join(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
-  const legacyPages = join(dirname(legacyDefault), LEGACY_PAGES_DIR_NAME);
-  const legacyConfig = join(dirname(legacyDefault), LEGACY_CONFIG_FILE_NAME);
-  const hasLegacy = existsSync(legacyDefault) || existsSync(legacyPages) || existsSync(legacyConfig);
-  const hasCurrent = existsSync(defaultFile) || existsSync(join(dirname(defaultFile), PAGES_DIR_NAME)) || existsSync(configFilePath(defaultFile));
+  const projectRoot = dirname6(dirname6(defaultFile));
+  const legacyDefault = join5(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join5(dirname6(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join5(dirname6(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync3(legacyDefault) || existsSync3(legacyPages) || existsSync3(legacyConfig);
+  const hasCurrent = existsSync3(defaultFile) || existsSync3(join5(dirname6(defaultFile), PAGES_DIR_NAME)) || existsSync3(configFilePath(defaultFile));
   if (!hasLegacy || hasCurrent) return false;
-  mkdirSync(dirname(defaultFile), { recursive: true });
-  if (existsSync(legacyDefault)) renameSync(legacyDefault, defaultFile);
-  if (existsSync(legacyPages)) renameSync(legacyPages, join(dirname(defaultFile), PAGES_DIR_NAME));
-  if (existsSync(legacyConfig)) renameSync(legacyConfig, configFilePath(defaultFile));
+  mkdirSync2(dirname6(defaultFile), { recursive: true });
+  if (existsSync3(legacyDefault)) renameSync2(legacyDefault, defaultFile);
+  if (existsSync3(legacyPages)) renameSync2(legacyPages, join5(dirname6(defaultFile), PAGES_DIR_NAME));
+  if (existsSync3(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
   return true;
 }
+
+// src/store/maps.ts
+import { readFileSync as readFileSync3 } from "node:fs";
 function loadMapFile(path) {
   let text;
   try {
-    text = readFileSync(path, "utf8");
+    text = readFileSync3(path, "utf8");
   } catch (e) {
     const code = e.code;
     if (code === "ENOENT") return err({ kind: "not-found", path });
@@ -1913,6 +1937,82 @@ function parseInput(chunk) {
     i += 1;
   }
   return { events, rest: "" };
+}
+
+// src/watch/view-state.ts
+var defaultPage = () => ({ offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, selectedId: void 0 });
+function initialViewState() {
+  return {
+    ...defaultPage(),
+    pageViews: /* @__PURE__ */ new Map(),
+    hoverId: void 0,
+    dragAnchor: void 0,
+    press: void 0,
+    dividerDrag: false,
+    lastClick: void 0
+  };
+}
+function reduceView(state, event) {
+  switch (event.kind) {
+    case "reset":
+      return { ...state, offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT };
+    case "pan":
+      return { ...state, offsetX: state.offsetX + event.dx, offsetY: state.offsetY + event.dy };
+    case "position":
+      return { ...state, offsetX: event.x, offsetY: event.y };
+    case "zoom":
+      return { ...state, zoom: event.value };
+    case "hover":
+      return event.id === state.hoverId ? state : { ...state, hoverId: event.id };
+    case "select":
+      return { ...state, selectedId: event.id };
+    case "down":
+      return {
+        ...state,
+        dividerDrag: event.divider,
+        dragAnchor: event.divider ? void 0 : { x: event.x, y: event.y, ox: state.offsetX, oy: state.offsetY },
+        press: event.divider ? void 0 : { moved: false }
+      };
+    case "drag": {
+      if (state.dividerDrag || !state.dragAnchor) return state;
+      const { x, y, ox, oy } = state.dragAnchor;
+      const offsetX = ox - (event.x - x);
+      const offsetY = oy - (event.y - y);
+      return offsetX === state.offsetX && offsetY === state.offsetY ? state : { ...state, offsetX, offsetY, press: { moved: true } };
+    }
+    case "up":
+      return { ...state, dragAnchor: void 0, press: void 0, dividerDrag: false };
+    case "pages": {
+      const pageViews = new Map([...state.pageViews].filter(([file]) => event.files.includes(file)));
+      if (event.previous === event.active || event.active === void 0) return { ...state, pageViews };
+      if (event.previous !== void 0 && event.files.includes(event.previous)) pageViews.set(event.previous, {
+        offsetX: state.offsetX,
+        offsetY: state.offsetY,
+        zoom: state.zoom,
+        selectedId: state.selectedId
+      });
+      return {
+        ...state,
+        ...pageViews.get(event.active) ?? defaultPage(),
+        pageViews,
+        hoverId: void 0,
+        dragAnchor: void 0,
+        press: void 0,
+        dividerDrag: false,
+        lastClick: void 0
+      };
+    }
+  }
+}
+function isPointerClick(state) {
+  return !state.dividerDrag && state.press !== void 0 && !state.press.moved;
+}
+function clickNode(state, id, now, doubleClickMs) {
+  const double = id !== void 0 && state.lastClick?.id === id && now - state.lastClick.at <= doubleClickMs;
+  return {
+    state: { ...state, selectedId: id, lastClick: double || id === void 0 ? void 0 : { id, at: now } },
+    diveId: double ? id : void 0
+  };
 }
 
 // src/watch/io.ts
@@ -2175,7 +2275,7 @@ function describeArgsError(e) {
   }
 }
 function parseArgs(argv, cwd) {
-  let file = join2(cwd, STATE_FILE_RELATIVE_PATH);
+  let file = join6(cwd, STATE_FILE_RELATIVE_PATH);
   let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
   let color = true;
@@ -2457,7 +2557,7 @@ function waitingInfo(s, width) {
   const clock = s.elapsedMs !== void 0 ? ` \xB7 waiting ${elapsedLabel(s.elapsedMs)}` : "";
   const lines = [
     `watching  ${s.defaultFile}`,
-    `      and ${join2(s.pagesDir, "*.json")}`,
+    `      and ${join6(s.pagesDir, "*.json")}`,
     `polling every ${s.intervalMs} ms${clock}`
   ];
   for (const b of s.broken) lines.push(`! ${b}`);
@@ -2517,22 +2617,13 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
     cfg.follow,
     cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page)
   );
-  const pageViews = /* @__PURE__ */ new Map();
+  let view = initialViewState();
   let lastTabSegments = [];
   let tabScroll = 0;
-  let offsetX = 0;
-  let offsetY = 0;
-  let zoom = ZOOM_DEFAULT;
-  let dragAnchor;
-  let press;
-  let hoverId;
-  let selectedId;
   let lastHits = [];
   let lastContent = { w: 0, h: 0 };
   let pendingInput = "";
   let panelContentRows = PANEL_CONTENT_ROWS;
-  let dividerDrag = false;
-  let lastClick;
   let flash;
   let lastTabFiles = [];
   const topFiles = () => topLevelFiles(cfg.file, filesOf(pane), mapsOf(pane));
@@ -2576,14 +2667,8 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
   };
   const adoptView = (previous) => {
     const file = pane.activeFile;
+    view = reduceView(view, { kind: "pages", previous, active: file, files: filesOf(pane) });
     if (file === void 0 || file === previous) return;
-    if (previous !== void 0) pageViews.set(previous, { offsetX, offsetY, zoom, selectedId });
-    const view = pageViews.get(file);
-    offsetX = view?.offsetX ?? 0;
-    offsetY = view?.offsetY ?? 0;
-    zoom = view?.zoom ?? ZOOM_DEFAULT;
-    selectedId = view?.selectedId;
-    hoverId = void 0;
     const top = topFiles();
     const tabIndex = top.indexOf(file);
     if (tabIndex >= 0) {
@@ -2605,8 +2690,8 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
     const sy = termY - 1 - tabRows();
     if (sx < 0 || sx >= viewWidth()) return void 0;
     if (sy < 0 || sy >= viewHeight()) return void 0;
-    const cx = sx + offsetX;
-    const cy = sy + offsetY;
+    const cx = sx + view.offsetX;
+    const cy = sy + view.offsetY;
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
   const publishPresence = () => {
@@ -2646,8 +2731,8 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
   const sceneOptions = () => ({
     color: cfg.color,
     unicode: cfg.unicode,
-    zoom,
-    focus: hoverId ?? selectedId,
+    zoom: view.zoom,
+    focus: view.hoverId ?? view.selectedId,
     // A spinner on another page must not invalidate this completed picture.
     spinnerFrame: map?.nodes.some((node) => node.status === "in-progress") ? spinnerFrame : 0
   });
@@ -2658,7 +2743,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     const viewW = viewWidth();
     panelContentRows = clampPanelRows(panelContentRows, io.output.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
-    const focus = hoverId ?? selectedId;
+    const focus = view.hoverId ?? view.selectedId;
     let body;
     let panned = "";
     let pannable = false;
@@ -2666,7 +2751,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       const rendered = renderWindow(
         map,
         sceneOptions(),
-        { x: offsetX, y: offsetY, width: viewW, height: viewH },
+        { x: view.offsetX, y: view.offsetY, width: viewW, height: viewH },
         renderScene
       );
       if (!rendered.ok) {
@@ -2676,9 +2761,12 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         const windowed = rendered.value;
         const maxX = Math.max(0, windowed.contentWidth - viewW);
         const maxY = Math.max(0, windowed.contentHeight - viewH);
-        if (offsetX > maxX || offsetY > maxY || offsetX < 0 || offsetY < 0) {
-          offsetX = Math.min(Math.max(0, offsetX), maxX);
-          offsetY = Math.min(Math.max(0, offsetY), maxY);
+        if (view.offsetX > maxX || view.offsetY > maxY || view.offsetX < 0 || view.offsetY < 0) {
+          view = reduceView(view, {
+            kind: "position",
+            x: Math.min(Math.max(0, view.offsetX), maxX),
+            y: Math.min(Math.max(0, view.offsetY), maxY)
+          });
           paint2();
           return;
         }
@@ -2686,13 +2774,13 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         body = windowed.lines;
         lastHits = windowed.hits;
         lastContent = { w: windowed.contentWidth, h: windowed.contentHeight };
-        if (offsetX !== 0 || offsetY !== 0) panned = `  (+${offsetX},+${offsetY})`;
+        if (view.offsetX !== 0 || view.offsetY !== 0) panned = `  (+${view.offsetX},+${view.offsetY})`;
       }
     } else {
       const info = waitingInfo(
         {
           defaultFile: cfg.file,
-          pagesDir: join2(dirname2(cfg.file), PAGES_DIR_NAME),
+          pagesDir: join6(dirname7(cfg.file), PAGES_DIR_NAME),
           intervalMs: cfg.intervalMs,
           elapsedMs: interactive ? Date.now() - startedAt : void 0,
           broken: pane.pages.flatMap(
@@ -2711,7 +2799,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     if (map === void 0) {
       panel = Array.from({ length: panelContentRows }, () => ({ text: "", sgr: "" }));
     } else if (focus !== void 0) {
-      panel = nodePanel(map, focus, cfg.unicode, panelWidth, selectedId === focus, panelContentRows) ?? mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
+      panel = nodePanel(map, focus, cfg.unicode, panelWidth, view.selectedId === focus, panelContentRows) ?? mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     } else {
       panel = mapPanel(map, cfg.unicode, panelWidth, panelContentRows);
     }
@@ -2749,7 +2837,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     } else {
       lastTabSegments = [];
     }
-    const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(zoom)}`;
+    const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(view.zoom)}`;
     const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 x delete page \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET2}` : footerText;
@@ -2802,12 +2890,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       focusRequest: request === void 0 ? void 0 : pageFilePath(cfg.file, request.page),
       // a drag in progress holds auto-follow off: the user is engaged with
       // THIS page, and a missed switch is re-triggered by the next save
-      engaged: dragAnchor !== void 0
+      engaged: view.dragAnchor !== void 0
     });
     pane = scanned.state;
-    for (const known of [...pageViews.keys()]) {
-      if (!files.includes(known)) pageViews.delete(known);
-    }
     adoptView(previous);
     adoptPage();
     if (flash?.confirm === true && pane.pendingDelete === void 0) flash = void 0;
@@ -2860,22 +2945,19 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             quit();
             return;
           case "reset":
-            offsetX = 0;
-            offsetY = 0;
-            zoom = ZOOM_DEFAULT;
+            view = reduceView(view, { kind: "reset" });
             dirty = true;
             break;
           case "clear":
             if (pane.pendingDelete !== void 0) {
               pane = disarmDelete(pane);
               flash = void 0;
-            } else if (selectedId !== void 0) selectedId = void 0;
+            } else if (view.selectedId !== void 0) view = reduceView(view, { kind: "select", id: void 0 });
             else climbBack();
             dirty = true;
             break;
           case "pan":
-            offsetX += event.dx;
-            offsetY += event.dy;
+            view = reduceView(view, event);
             dirty = true;
             break;
           case "zoom": {
@@ -2884,11 +2966,11 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
               dirty = true;
               break;
             }
-            const next = clampZoom(zoom + event.delta);
-            if (next === zoom || map === void 0) break;
-            const anchorId = hoverId ?? selectedId ?? nearestHit(lastHits, offsetX + viewWidth() / 2, offsetY + viewHeight() / 2)?.id;
+            const next = clampZoom(view.zoom + event.delta);
+            if (next === view.zoom || map === void 0) break;
+            const anchorId = view.hoverId ?? view.selectedId ?? nearestHit(lastHits, view.offsetX + viewWidth() / 2, view.offsetY + viewHeight() / 2)?.id;
             const before = lastHits.find((h) => h.id === anchorId);
-            zoom = next;
+            view = reduceView(view, { kind: "zoom", value: next });
             const measured = renderWindow(
               map,
               sceneOptions(),
@@ -2903,12 +2985,11 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             const after = before === void 0 ? void 0 : sized.hits.find((h) => h.id === before.id);
             const moved = anchorOffsets(
               before !== void 0 && after !== void 0 ? { before, after } : void 0,
-              { x: offsetX, y: offsetY },
+              { x: view.offsetX, y: view.offsetY },
               lastContent,
               { w: sized.contentWidth, h: sized.contentHeight }
             );
-            offsetX = moved.x;
-            offsetY = moved.y;
+            view = reduceView(view, { kind: "position", ...moved });
             lastHits = sized.hits;
             lastContent = { w: sized.contentWidth, h: sized.contentHeight };
             dirty = true;
@@ -2916,22 +2997,17 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
           }
           case "mouse-move": {
             const over = hitTest(event.x, event.y);
-            if (over !== hoverId) {
-              hoverId = over;
+            if (over !== view.hoverId) {
+              view = reduceView(view, { kind: "hover", id: over });
               dirty = true;
             }
             break;
           }
           case "mouse-down":
-            if (event.y === dividerY()) {
-              dividerDrag = true;
-              break;
-            }
-            dragAnchor = { x: event.x, y: event.y, ox: offsetX, oy: offsetY };
-            press = { moved: false };
+            view = reduceView(view, { kind: "down", x: event.x, y: event.y, divider: event.y === dividerY() });
             break;
           case "mouse-drag":
-            if (dividerDrag) {
+            if (view.dividerDrag) {
               const next = panelRowsFromDividerY(event.y, io.output.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
@@ -2939,23 +3015,18 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
               }
               break;
             }
-            if (dragAnchor) {
-              const nx = dragAnchor.ox - (event.x - dragAnchor.x);
-              const ny = dragAnchor.oy - (event.y - dragAnchor.y);
-              if (nx !== offsetX || ny !== offsetY) {
-                offsetX = nx;
-                offsetY = ny;
-                if (press) press.moved = true;
-                dirty = true;
-              }
+            {
+              const nextView = reduceView(view, { kind: "drag", x: event.x, y: event.y });
+              dirty ||= nextView !== view;
+              view = nextView;
             }
             break;
           case "mouse-up":
-            if (dividerDrag) {
-              dividerDrag = false;
+            if (view.dividerDrag) {
+              view = reduceView(view, { kind: "up" });
               break;
             }
-            if (press && !press.moved) {
+            if (isPointerClick(view)) {
               const tabHit = tabRows() > 0 && event.y === 1 ? lastTabSegments.find((s) => event.x >= s.lo && event.x <= s.hi) : void 0;
               if (tabHit !== void 0) {
                 if (tabHit.action.kind === "back") {
@@ -2971,7 +3042,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
               } else {
                 const id = hitTest(event.x, event.y);
                 const now = Date.now();
-                if (id !== void 0 && lastClick?.id === id && now - lastClick.at <= DOUBLE_CLICK_MS) {
+                const clicked = clickNode(view, id, now, DOUBLE_CLICK_MS);
+                view = clicked.state;
+                if (clicked.diveId !== void 0) {
                   const submap = map?.nodes.find((n) => n.id === id)?.submap;
                   if (submap !== void 0 && pane.activeFile !== void 0) {
                     const target = pageFilePath(cfg.file, submap);
@@ -2983,16 +3056,11 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
                       flash = { text: `submap "${submap}" has no page yet`, until: now + FLASH_ACK_MS };
                     }
                   }
-                  lastClick = void 0;
-                } else {
-                  lastClick = id !== void 0 ? { id, at: now } : void 0;
                 }
-                selectedId = id;
               }
               dirty = true;
             }
-            dragAnchor = void 0;
-            press = void 0;
+            view = reduceView(view, { kind: "up" });
             break;
           case "next-page":
           case "prev-page": {

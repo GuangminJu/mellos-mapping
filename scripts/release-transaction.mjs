@@ -1,8 +1,12 @@
+// @ts-check
 /** Stage a complete installation before switching the stable host-facing path. */
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { checkedPath, containsPath, validateRelease } from './release-files.mjs';
 
+/** @param {string} source @param {string} target
+ * @param {import('./install-types.js').ReleaseManifest} manifest
+ * @param {{copy?: typeof copyFileSync}} [options] */
 export function stageRelease(source, target, manifest, { copy = copyFileSync } = {}) {
   source = resolve(source); target = resolve(target);
   if (containsPath(target, source)) throw new Error('Release source must be outside the installation.');
@@ -11,6 +15,7 @@ export function stageRelease(source, target, manifest, { copy = copyFileSync } =
   const lock = `${target}.install-lock`;
   try { writeFileSync(lock, String(process.pid), { flag: 'wx' }); }
   catch (error) { throw new Error(`Installation is locked: ${lock}. Check for another installer before removing the lock.`, { cause: error }); }
+  /** @type {string | undefined} */
   let work;
   let active = false;
   let backedUp = false;
@@ -52,7 +57,8 @@ export function stageRelease(source, target, manifest, { copy = copyFileSync } =
   } catch (error) { cleanup(); throw error; }
 }
 
-/** Synchronous copy for packaging callers, with the same all-files boundary. */
+/** Synchronous copy for packaging callers, with the same all-files boundary.
+ * @param {string} source @param {string} target @param {import('./install-types.js').ReleaseManifest} manifest */
 export function copyRelease(source, target, manifest) {
   const transaction = stageRelease(source, target, manifest);
   try { transaction.activate(); }

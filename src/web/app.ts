@@ -1,6 +1,5 @@
 /// <reference lib="dom" />
 /** Browser composition root: all mutable viewer state stays here. */
-import type { MellosMap } from '../domain/types.js';
 import { isVerified } from '../preview/presentation.js';
 import { renderMapSvg } from '../preview/svg.js';
 import { xml } from '../preview/text.js';
