@@ -885,6 +885,19 @@ function zoomViewport(view2, scale, x, y) {
   return { scale: next, x: x - (x - view2.x) * ratio, y: y - (y - view2.y) * ratio };
 }
 
+// src/web/zoom.ts
+function showsOverview(state, hasGroups) {
+  return hasGroups && (state.overview || state.viewport.scale < 0.55);
+}
+function zoomScene(state, factor, x, y) {
+  return {
+    viewport: zoomViewport(state.viewport, state.viewport.scale * factor, x, y),
+    // Overview and fit can aggregate a scene explicitly. Moving closer resumes
+    // scale-driven detail instead of leaving that earlier choice latched on.
+    overview: state.overview && factor <= 1
+  };
+}
+
 // src/web/app.ts
 var element = (id) => document.getElementById(id);
 var viewport = element("viewport");
@@ -995,7 +1008,7 @@ ${page.error}
   const state = view();
   if (state.selected && !focusInfo(map, state.selected)) state.selected = void 0;
   if (hover && !focusInfo(map, hover)) hover = void 0;
-  renderedOverview = map.groups.length > 0 && (state.overview || state.viewport.scale < 0.55);
+  renderedOverview = showsOverview(state, map.groups.length > 0);
   scene = layoutWebScene(map, renderedOverview);
   stage.innerHTML = renderStage(map, scene);
   if (!state.fitted) {
@@ -1079,8 +1092,8 @@ function fit() {
   transform();
 }
 function zoom(factor, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
-  view().viewport = zoomViewport(view().viewport, view().viewport.scale * factor, x, y);
-  if ((!!current()?.map?.groups.length && (view().overview || view().viewport.scale < 0.55)) !== renderedOverview) render();
+  Object.assign(view(), zoomScene(view(), factor, x, y));
+  if (showsOverview(view(), !!current()?.map?.groups.length) !== renderedOverview) render();
   else transform();
 }
 pages.addEventListener("change", () => switchPage(pages.value));
