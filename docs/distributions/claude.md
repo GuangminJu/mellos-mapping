@@ -35,6 +35,11 @@ Run `node install.mjs` from the newer release to update; start a new conversatio
 and restart existing watchers. `node install.mjs --check` verifies the release
 and prerequisites without changing host configuration.
 
+Updates stage and check a complete release before replacing the retained copy.
+Failed upgrade checks restore the previous files and recheck host registration.
+Installation also verifies Claude's actual cache files. Changed content requires
+a new version; a repeated version number cannot prove the cache was refreshed.
+
 If a marketplace named `mellos-mapping` already points elsewhere, the installer
 stops instead of replacing it silently. Update through that original marketplace,
 or remove it with Claude's plugin manager before switching to this clone.

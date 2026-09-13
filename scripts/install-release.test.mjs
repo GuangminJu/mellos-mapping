@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkedPath, copyRelease, installRelease, validateRelease } from './install-release.mjs';
+import { stageRelease } from './release-transaction.mjs';
+import { verifyInstalledFiles } from './host-installation.mjs';
+import { copyFileSync } from 'node:fs';
 
 let temporary, source, installHome;
 beforeEach(() => {
@@ -20,9 +23,27 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(temporary, { recursive: true, force: true }));
 function host() {
-  return vi.fn(args => ({ status: 0, stdout: args.join(' ').startsWith('mcp get')
-    ? JSON.stringify({ transport: { args: [join(installHome, 'chatgpt-app/plugins/mellos-mapping/dist/server.mjs')] } })
-    : args[0] === '--version' ? 'codex 1' : JSON.stringify({ installed: [{ name: 'mellos-mapping', enabled: true, version: '1.0.0' }] }) }));
+  let installed = false;
+  return vi.fn(args => {
+    const target = join(installHome, 'chatgpt-app');
+    if (args[0] === 'plugin' && args[1] === 'add' && !args.includes('--help')) installed = true;
+    return { status: 0, stdout: args.join(' ').startsWith('mcp get')
+      ? JSON.stringify({ transport: { args: [join(target, 'plugins/mellos-mapping/dist/server.mjs')] } })
+      : args[0] === '--version' ? 'codex 1' : JSON.stringify({ installed: installed ? [{
+        pluginId: 'mellos-mapping@mellos-mapping-codex', name: 'mellos-mapping', enabled: true,
+        version: validateRelease(target).version, source: { path: join(target, 'plugins/mellos-mapping') },
+      }] : [] }) };
+  });
+}
+
+function revise(version = '1.0.1') {
+  const manifest = validateRelease(source);
+  const file = 'plugins/mellos-mapping/dist/server.mjs';
+  writeFileSync(join(source, file), 'new server');
+  manifest.version = version;
+  manifest.sha256[file] = createHash('sha256').update('new server').digest('hex');
+  writeFileSync(join(source, 'release.json'), JSON.stringify(manifest));
+  return manifest;
 }
 
 describe('clone installer', () => {
@@ -37,7 +58,7 @@ describe('clone installer', () => {
     expect(run.mock.calls.find(([args]) => args[0] === 'mcp' && args[1] === 'add' && args[2] === 'mellos-mapping')[0]).toEqual([
       'mcp', 'add', 'mellos-mapping', '--', process.execPath, join(first.target, 'plugins/mellos-mapping/dist/server.mjs')]);
     expect(run.mock.calls.some(([args]) => args.includes('remove'))).toBe(false);
-    expect(verify).toHaveBeenCalledTimes(2);
+    expect(verify).toHaveBeenCalledTimes(4);
     expect(existsSync(verify.mock.calls[0][1])).toBe(false);
   });
 
@@ -65,5 +86,81 @@ describe('clone installer', () => {
     const manifest = validateRelease(source);
     copyRelease(source, installHome, manifest);
     expect(validateRelease(installHome)).toEqual(manifest);
+  });
+
+  it('a failed second copy leaves the complete previous version intact', () => {
+    const previous = validateRelease(source);
+    const target = join(installHome, 'chatgpt-app');
+    copyRelease(source, target, previous);
+    const next = revise();
+    let copied = 0;
+    expect(() => stageRelease(source, target, next, { copy: (from, to) => {
+      if (++copied === 2) throw new Error('disk full');
+      copyFileSync(from, to);
+    } })).toThrow('disk full');
+    expect(validateRelease(target)).toEqual(previous);
+    expect(readFileSync(join(target, 'plugins/mellos-mapping/dist/server.mjs'), 'utf8')).toBe('server');
+    expect(existsSync(`${target}.install-lock`)).toBe(false);
+  });
+
+  it('refuses concurrent installs and supports rollback after activation', () => {
+    const previous = validateRelease(source);
+    const target = join(installHome, 'chatgpt-app');
+    copyRelease(source, target, previous);
+    const next = revise();
+    const transaction = stageRelease(source, target, next);
+    expect(() => stageRelease(source, target, next)).toThrow('locked');
+    transaction.activate();
+    expect(validateRelease(target).version).toBe('1.0.1');
+    transaction.rollback();
+    expect(validateRelease(target)).toEqual(previous);
+  });
+
+  it('restores previous files and registration when installed runtime verification fails', async () => {
+    const run = host();
+    const verify = vi.fn(async () => []);
+    const options = { installHome, makeRunner: () => run, verify, log: () => {} };
+    const first = await installRelease(source, [], options);
+    const previous = validateRelease(first.target);
+    revise();
+    verify.mockImplementationOnce(async () => []).mockRejectedValueOnce(new Error('installed runtime broken'));
+    await expect(installRelease(source, [], options)).rejects.toThrow('installed runtime broken');
+    expect(validateRelease(first.target)).toEqual(previous);
+    expect(run.mock.calls.filter(([args]) => args[0] === 'mcp' && args[1] === 'add' && args[2] === 'mellos-mapping')).toHaveLength(3);
+  });
+
+  it('refuses same-version replacement before mutating the installation', async () => {
+    const run = host();
+    const options = { installHome, makeRunner: () => run, verify: async () => [], log: () => {} };
+    const first = await installRelease(source, [], options);
+    const previous = validateRelease(first.target);
+    revise('1.0.0');
+    run.mockClear();
+    await expect(installRelease(source, [], options)).rejects.toThrow('Bump the release version');
+    expect(validateRelease(first.target)).toEqual(previous);
+    expect(run.mock.calls.some(([args]) => args[0] === 'plugin' && args[1] === 'add' && !args.includes('--help'))).toBe(false);
+  });
+
+  it('rejects stale host cache content even when its reported version is correct', () => {
+    const manifest = validateRelease(source);
+    const cached = join(temporary, 'host cache');
+    copyRelease(source, cached, manifest);
+    const next = revise();
+    expect(() => verifyInstalledFiles(join(cached, 'plugins/mellos-mapping'), next)).toThrow('Host cache');
+    expect(() => verifyInstalledFiles(join(source, 'plugins/mellos-mapping'), next)).not.toThrow();
+  });
+
+  it('leaves files unchanged when the named marketplace belongs to another clone', async () => {
+    const run = host();
+    const options = { installHome, makeRunner: () => run, verify: async () => [], log: () => {} };
+    const first = await installRelease(source, [], options);
+    const previous = validateRelease(first.target);
+    revise();
+    const foreign = vi.fn(args => args[0] === 'plugin' && args[1] === 'list'
+      ? { status: 0, stdout: JSON.stringify({ installed: [{ pluginId: 'mellos-mapping@mellos-mapping-codex', source: { path: join(temporary, 'another clone') } }] }) }
+      : run(args));
+    await expect(installRelease(source, [], { ...options, makeRunner: () => foreign })).rejects.toThrow('another source');
+    expect(validateRelease(first.target)).toEqual(previous);
+    expect(existsSync(`${first.target}.install-lock`)).toBe(false);
   });
 });

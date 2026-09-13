@@ -59,6 +59,11 @@ so it loads the new runtime.
 Use `node install.mjs --check` for package, prerequisites and MCP checks without
 changing host configuration.
 
+Updates stage and check a complete release before replacing the retained copy.
+Failed upgrade checks restore the previous files and recheck host registration.
+Installation verifies the files at Codex's reported plugin path and MCP runtime.
+Changed content requires a new release version.
+
 ```sh
 codex plugin remove mellos-mapping@mellos-mapping-codex
 codex mcp remove mellos-mapping
