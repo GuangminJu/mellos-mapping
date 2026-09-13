@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * Register the shared runtime at user scope so it inherits each session's
  * working directory. The skill bundle and the runtime are separate host
@@ -10,6 +11,7 @@ import { isFile, launchedAsEntry, runCodex } from './codex-cli.mjs';
 
 export const COMMAND_NOT_FOUND_EXIT_CODE = 9009;
 
+/** @param {number | null} status */
 export function describeFailure(status) {
   return status === COMMAND_NOT_FOUND_EXIT_CODE || status === null
     ? 'codex CLI not found on PATH — install Codex first, then re-run this script.'
@@ -20,6 +22,8 @@ export function describeFailure(status) {
  * Validate before changing configuration. `mcp add` replaces its named entry
  * in one operation; removing first creates an unnecessary failure window.
  * Dependencies are supplied here so tests cannot change the real user config.
+ * @param {string} pluginRoot
+ * @param {{run?: import('./install-types.js').HostRunner, nodePath?: string, fileExists?: (path: string) => boolean}} [options]
  */
 export function registerServer(pluginRoot, { run = runCodex, nodePath = process.execPath, fileExists = isFile } = {}) {
   const serverPath = join(pluginRoot, 'dist', 'server.mjs');
@@ -40,7 +44,7 @@ if (launchedAsEntry(import.meta.url)) {
     console.log('State files resolve to each session’s working directory (.mellos/map.json).');
     console.log('Start a new Codex conversation to load the skills and six mmap tools.');
   } catch (error) {
-    console.error(error.message);
+    console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
 }

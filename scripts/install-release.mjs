@@ -1,57 +1,23 @@
+// @ts-check
 /** Install a prebuilt edition without npm dependencies or developer-local paths. */
-import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { join } from 'node:path';
 import { hostRunner, requireSuccess } from './host-cli.mjs';
-import { registerServer } from './codex-register.mjs';
+import { validateRelease } from './release-files.mjs';
+import { stageRelease } from './release-transaction.mjs';
+import { createHostInstallation } from './host-installation.mjs';
+export { checkedPath, validateRelease } from './release-files.mjs';
+export { copyRelease } from './release-transaction.mjs';
 import { verifyRuntime } from './verify-runtime.mjs';
 
 const editions = ['claude', 'chatgpt-app'];
 export const USAGE = 'node install.mjs [claude|chatgpt-app] [--check]';
-const hash = data => createHash('sha256').update(data).digest('hex');
 
-export function checkedPath(root, file) {
-  if (isAbsolute(file) || file.includes('\\') || file.split('/').some(p => !p || p === '.' || p === '..')) {
-    throw new Error(`Invalid release path: ${file}`);
-  }
-  const path = resolve(root, file);
-  const rel = relative(resolve(root), path);
-  if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`Path escapes release: ${file}`);
-  const boundary = resolve(root);
-  for (let cursor = path; ; cursor = dirname(cursor)) {
-    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) throw new Error(`Redirected installation path: ${cursor}`);
-    if (cursor === boundary) break;
-  }
-  return path;
-}
 
-export function validateRelease(root) {
-  const manifest = JSON.parse(readFileSync(join(root, 'release.json'), 'utf8'));
-  if (!editions.includes(manifest.edition) || !/^\d+\.\d+\.\d+$/.test(manifest.version) ||
-      !manifest.sha256 || typeof manifest.sha256 !== 'object') throw new Error('Invalid release.json');
-  const prefix = manifest.edition === 'chatgpt-app' ? 'plugins/mellos-mapping/' : '';
-  for (const required of ['dist/server.mjs', 'dist/watch.mjs', 'skills/mellos-mapping/SKILL.md']) {
-    if (!manifest.sha256[prefix + required]) throw new Error(`Release is missing ${required}`);
-  }
-  for (const [file, expected] of Object.entries(manifest.sha256)) {
-    if (hash(readFileSync(checkedPath(root, file))) !== expected) throw new Error(`Release checksum mismatch: ${file}. Download a complete release again.`);
-  }
-  return manifest;
-}
-
-export function copyRelease(source, target, manifest) {
-  for (const file of [...Object.keys(manifest.sha256), 'release.json']) {
-    const destination = checkedPath(target, file);
-    const data = readFileSync(checkedPath(source, file));
-    if (existsSync(destination) && readFileSync(destination).equals(data)) continue;
-    mkdirSync(dirname(destination), { recursive: true });
-    const temporary = `${destination}.install-${process.pid}`;
-    try { writeFileSync(temporary, data, { flag: 'wx' }); renameSync(temporary, destination); }
-    finally { if (existsSync(temporary)) rmSync(temporary); }
-  }
-}
-
+/** @param {string} source @param {string[]} argv
+ * @param {{env?: NodeJS.ProcessEnv, installHome?: string, makeRunner?: typeof hostRunner,
+ * verify?: typeof verifyRuntime, log?: (message: string) => void}} [options] */
 export async function installRelease(source, argv, {
   env = process.env, installHome = join(homedir(), '.mellos', 'installations'),
   makeRunner = hostRunner, verify = verifyRuntime, log = console.log,
@@ -84,38 +50,35 @@ export async function installRelease(source, argv, {
   log(`Verified ${edition} ${manifest.version}: ${cliVersion}; all six MCP tools available.`);
   if (argv.includes('--check')) return { edition, checked: true };
   const target = join(installHome, edition);
-  copyRelease(source, target, manifest);
-  const market = codex ? 'mellos-mapping-codex' : 'mellos-mapping';
-  if (codex) {
-    requireSuccess(run(['plugin', 'marketplace', 'add', target]), 'Register Codex marketplace');
-    requireSuccess(run(['plugin', 'add', `mellos-mapping@${market}`]), 'Install Codex plugin');
-    registerServer(join(target, prefix), { run });
-    const registered = JSON.parse(requireSuccess(run(['mcp', 'get', 'mellos-mapping', '--json']), 'Verify MCP registration'));
-    const transport = registered.transport ?? registered;
-    if (!transport.args?.includes(join(target, prefix, 'dist/server.mjs'))) throw new Error('Codex MCP registration points to a different runtime.');
-    const plugins = JSON.parse(requireSuccess(run(['plugin', 'list', '--marketplace', market, '--json']), 'Verify Codex plugin installation'));
-    if (!plugins.installed?.some(plugin => plugin.name === 'mellos-mapping' && plugin.enabled && plugin.version === manifest.version)) {
-      throw new Error('Codex did not report this release as installed and enabled.');
+  const transaction = stageRelease(source, target, manifest);
+  let host;
+  let previous;
+  let hostChanged = false;
+  try {
+    // Read ownership and the previous manifest while holding the installation lock.
+    previous = existsSync(join(target, 'release.json')) ? validateRelease(target) : undefined;
+    if (previous?.version === manifest.version &&
+        (Object.keys(previous.sha256).length !== Object.keys(manifest.sha256).length ||
+         Object.entries(previous.sha256).some(([file, digest]) => manifest.sha256[file] !== digest))) {
+      throw new Error('This version is already installed with different files. Bump the release version before upgrading.');
     }
-  } else {
-    // A local catalog has a stable path. Re-running installation updates its cache.
-    const listed = JSON.parse(requireSuccess(run(['plugin', 'marketplace', 'list', '--json']), 'Read Claude marketplaces'));
-    const markets = Array.isArray(listed) ? listed : listed.marketplaces ?? [];
-    const existing = markets.find(entry => entry.name === market);
-    if (existing) {
-      const location = existing.source?.path ?? existing.source?.source ?? existing.path ?? existing.installLocation;
-      if (!location || resolve(location) !== resolve(target)) {
-        throw new Error(`Claude marketplace '${market}' already comes from another source. Keep that install, or remove that marketplace with Claude before switching to this clone.`);
-      }
-      requireSuccess(run(['plugin', 'marketplace', 'update', market]), 'Update Claude marketplace');
-    } else requireSuccess(run(['plugin', 'marketplace', 'add', target]), 'Register Claude marketplace');
-    requireSuccess(run(['plugin', 'install', `mellos-mapping@${market}`, '--scope', 'user']), 'Install Claude plugin');
-    if (existing) requireSuccess(run(['plugin', 'update', `mellos-mapping@${market}`]), 'Update Claude plugin');
-    const plugins = JSON.parse(requireSuccess(run(['plugin', 'list', '--json']), 'Verify Claude plugin installation'));
-    if (!plugins.some(plugin => plugin.id === `mellos-mapping@${market}` && plugin.enabled && plugin.version === manifest.version)) {
-      throw new Error('Claude did not report this release as installed and enabled.');
+    host = createHostInstallation(edition, target, run);
+    transaction.activate();
+    hostChanged = true;
+    const runtimeRoot = host.install(manifest);
+    const installedScratch = mkdtempSync(join(tmpdir(), 'mellos-installed-check-'));
+    try { await verify(join(runtimeRoot, 'dist/server.mjs'), installedScratch, checkEnv); }
+    finally { rmSync(installedScratch, { recursive: true, force: true }); }
+  } catch (error) {
+    transaction.rollback();
+    if (hostChanged && previous && host?.previous) {
+      try { host.install(previous); }
+      catch (restoreError) { throw new AggregateError([error, restoreError], 'Upgrade failed; previous files restored, but host registration could not be verified. Rerun the previous release installer.'); }
     }
+    throw error;
   }
+  transaction.commit();
+  const market = host.market;
   log(`Installed in ${target}. The clone can be moved or deleted; runtime files are retained here.`);
   log('Start a new host conversation to load the skill and tools. Existing conversations keep their previous tools.');
   if (codex) log('Ask: 用梅勒斯地图制定计划，用 web-terminal 自动在当前对话右侧展示。 The browser page starts mmap directly; no manual paste is needed.');

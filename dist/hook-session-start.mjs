@@ -3,14 +3,10 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 
 // src/hook/session-start.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync } from "node:fs";
+import { existsSync, readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { dirname as dirname4, join as join4 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-// src/store/store.ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
@@ -19,23 +15,30 @@ var RANK_MIN = 0;
 var RANK_MAX = 99;
 var RANK_RULE_TEXT = `an integer in ${RANK_MIN}..${RANK_MAX}, 0 = bottom / most primitive`;
 
-// src/store/store.ts
+// src/store/pages.ts
+import { basename, dirname, join } from "node:path";
+var STORE_DIR_NAME = ".mellos";
+var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
+var PAGES_DIR_NAME = "pages";
+
+// src/store/json-text.ts
 function isRecord(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function stripBom(text) {
   return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
 }
-var STORE_DIR_NAME = ".mellos";
-var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
-var PAGES_DIR_NAME = "pages";
+
+// src/store/policy.ts
+import { readFileSync } from "node:fs";
+import { dirname as dirname2, join as join2 } from "node:path";
 var CONFIG_FILE_NAME = "config.json";
 var CONFIG_FILE_VERSION = 1;
 function configFilePath(defaultFile) {
-  return join(dirname(defaultFile), CONFIG_FILE_NAME);
+  return join2(dirname2(defaultFile), CONFIG_FILE_NAME);
 }
 function userConfigFilePath(userBase) {
-  return join(userBase, STORE_DIR_NAME, CONFIG_FILE_NAME);
+  return join2(userBase, STORE_DIR_NAME, CONFIG_FILE_NAME);
 }
 var MAPPING_POLICIES = ["always", "complex", "on-request"];
 function makeMappingPolicy(raw) {
@@ -84,7 +87,10 @@ function effectiveMappingPolicy(projectConfigFile, userConfigFile) {
   const source = project.value !== void 0 ? "project" : user.value !== void 0 ? "user" : void 0;
   return ok({ project: project.value, user: user.value, effective, source });
 }
-var LEGACY_STATE_FILE_RELATIVE_PATH = join(".claude", "mellos-mapping.json");
+
+// src/store/migration.ts
+import { dirname as dirname3, join as join3 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join3(".claude", "mellos-mapping.json");
 
 // src/hook/session-start.ts
 function sessionStartContext(input) {
@@ -119,10 +125,10 @@ function sessionStartContext(input) {
   ].join("\n");
 }
 function hasMap(stateFile) {
-  return existsSync2(stateFile) || existsSync2(join2(dirname2(stateFile), PAGES_DIR_NAME));
+  return existsSync(stateFile) || existsSync(join4(dirname4(stateFile), PAGES_DIR_NAME));
 }
 function mmapShimFilePath(localAppData) {
-  return join2(localAppData, "mellos-mapping", "bin", "mmap.cmd");
+  return join4(localAppData, "mellos-mapping", "bin", "mmap.cmd");
 }
 function mmapShimCurrent(shimContent, mmapPath) {
   return shimContent !== void 0 && shimContent.includes(`"${mmapPath}"`);
@@ -155,7 +161,7 @@ function ensureMmapCommand(pluginRoot) {
   if (process.platform !== "win32") return void 0;
   const localAppData = process.env["LOCALAPPDATA"];
   if (localAppData === void 0 || localAppData === "") return void 0;
-  const mmapPath = join2(pluginRoot, "dist", "mmap.mjs");
+  const mmapPath = join4(pluginRoot, "dist", "mmap.mjs");
   let shim;
   try {
     shim = readFileSync2(mmapShimFilePath(localAppData), "utf8");
@@ -165,7 +171,7 @@ function ensureMmapCommand(pluginRoot) {
   if (mmapShimCurrent(shim, mmapPath)) return void 0;
   const run = spawnSync(
     process.execPath,
-    [join2(pluginRoot, "scripts", "install-mmap-command.mjs"), "--json"],
+    [join4(pluginRoot, "scripts", "install-mmap-command.mjs"), "--json"],
     { encoding: "utf8", windowsHide: true, timeout: 15e3 }
   );
   if (run.status !== 0 || typeof run.stdout !== "string") return void 0;
@@ -199,10 +205,10 @@ async function readAll(stream) {
 async function main() {
   const raw = process.stdin.isTTY === true ? "" : await readAll(process.stdin);
   const projectDir = parseHookInput(raw).cwd ?? process.cwd();
-  const stateFile = join2(projectDir, STATE_FILE_RELATIVE_PATH);
+  const stateFile = join4(projectDir, STATE_FILE_RELATIVE_PATH);
   const scopes = effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir()));
   if (!scopes.ok) return;
-  const pluginRoot = dirname2(dirname2(fileURLToPath(import.meta.url)));
+  const pluginRoot = dirname4(dirname4(fileURLToPath(import.meta.url)));
   const context = sessionStartContext({
     policy: scopes.value.effective,
     hasStore: hasMap(stateFile)
