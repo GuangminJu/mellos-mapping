@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /** Opt-in real host CLI check; all configuration and runtime paths are temporary. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +28,29 @@ try {
   const installHome = join(profile, '.mellos/installations');
   const logs = [];
   const options = { env, installHome, log: value => logs.push(value) };
+  const old = join(temporary, 'previous release');
+  const oldManifest = validateRelease(clone);
+  copyRelease(clone, old, oldManifest);
+  const version = oldManifest.version;
+  const [major, minor, patch] = version.split('.').map(Number);
+  oldManifest.version = patch > 0 ? `${major}.${minor}.${patch - 1}` : minor > 0 ? `${major}.${minor - 1}.999` : `${major - 1}.999.999`;
+  for (const file of Object.keys(oldManifest.sha256)) {
+    const path = join(old, file);
+    if (file.endsWith('.json')) {
+      const content = readFileSync(path, 'utf8').replaceAll(`"version": "${version}"`, `"version": "${oldManifest.version}"`);
+      writeFileSync(path, content);
+    }
+    if (file.endsWith('dist/server.mjs')) writeFileSync(path, readFileSync(path, 'utf8') + '\n// Previous release fixture\n');
+    oldManifest.sha256[file] = createHash('sha256').update(readFileSync(path)).digest('hex');
+  }
+  writeFileSync(join(old, 'release.json'), JSON.stringify(oldManifest));
+  const previous = await installRelease(old, [], options);
+  let checks = 0;
+  await assert.rejects(installRelease(clone, [], { ...options, verify: async (...args) => {
+    if (++checks === 2) throw new Error('Injected post-install failure');
+    return verifyRuntime(...args);
+  } }), /Injected post-install failure/);
+  assert.deepEqual(validateRelease(previous.target), oldManifest);
   const first = await installRelease(clone, [], options);
   const second = await installRelease(clone, [], options);
   assert.equal(first.target, second.target);
@@ -39,7 +63,7 @@ try {
     ? ['plugin', 'list', '--marketplace', first.market, '--json']
     : ['plugin', 'list', '--json']), 'List installed plugins');
   assert.ok(installed.includes('mellos-mapping'));
-  console.log(JSON.stringify({ edition, firstInstall: true, repeatedInstall: true,
+  console.log(JSON.stringify({ edition, firstInstall: true, upgrade: true, failedUpgradeRestored: true, repeatedInstall: true,
     cloneRemoved: true, runtimeHandshake: true, installation: JSON.parse(installed) }, null, 2));
 } finally {
   // Solely the generated test profile and configuration, never the real profile.

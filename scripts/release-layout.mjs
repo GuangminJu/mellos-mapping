@@ -6,6 +6,7 @@ import { CODEX_FILES, packageCodex } from './package-codex.mjs';
 
 export const EDITIONS = ['claude', 'chatgpt-app'];
 export const INSTALLER_FILES = ['install.mjs', '.gitattributes', 'scripts/install-release.mjs', 'scripts/host-cli.mjs',
+  'scripts/release-files.mjs', 'scripts/release-transaction.mjs', 'scripts/host-installation.mjs',
   'scripts/codex-cli.mjs', 'scripts/codex-register.mjs', 'scripts/verify-runtime.mjs',
   'scripts/verify-release.mjs', 'scripts/verify-web-terminal.mjs', '.github/workflows/edition-ci.yml'];
 export const CLAUDE_FILES = [...CODEX_FILES.filter(file => !file.startsWith('.codex-plugin/') &&
