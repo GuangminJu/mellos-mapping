@@ -203,12 +203,12 @@ const platformTerminal = () => process.platform === 'win32' ? terminal : createT
 
 /** Resolve identity before deciding whether to reuse, open or toggle. */
 export function preparePane(cfg, store, mapFile, io = platformTerminal()) {
-  const inspected = io.kind === 'tmux' ? io.inspectSession(cfg) : cfg.mode === PANE_MODE.window
+  const viewers = store.readLiveViewers(mapFile, Date.now());
+  const inspected = io.kind === 'tmux' ? io.inspectSession(cfg, viewers) : cfg.mode === PANE_MODE.window
     ? { ok: true, value: { owners: ['window'], owner: 'window' } }
     : io.inspectSession();
   if (!inspected.ok) return inspected;
   const session = inspected.value;
-  const viewers = store.readLiveViewers(mapFile, Date.now());
   const viewer = selectPaneViewer(viewers, session.owners);
   if (io.kind !== 'tmux' && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
     return { ok: false, error: 'Could not identify this conversation’s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window.' };
@@ -218,6 +218,11 @@ export function preparePane(cfg, store, mapFile, io = platformTerminal()) {
     viewer,
     previousPids: viewers.map((item) => item.pid),
   } };
+}
+
+/** A process heartbeat alone cannot establish that its pane is on screen. */
+export function revealPane(target, viewer, io = platformTerminal()) {
+  return io.kind === 'tmux' ? io.revealPane(target, viewer) : { ok: true, value: 'unverified' };
 }
 
 /** Compose a verified target with the watcher payload. Never changes the requested mode. */

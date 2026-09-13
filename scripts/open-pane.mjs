@@ -40,6 +40,7 @@ import {
   loadPluginPaths,
   placePane,
   preparePane,
+  revealPane,
   awaitNewPane,
   pluginRootOf,
   takeWatcherFlag,
@@ -123,12 +124,14 @@ async function main() {
   }
   const context = prepared.value;
   if (!cfg.force && context.viewer) {
+    const visible = revealPane(context.target, context.viewer);
+    if (!visible.ok) fail(visible.error);
     if (cfg.pageSlug !== undefined) {
       writeFocusRequest(store.focusFilePath(mapFile, context.viewer.pid), cfg.pageSlug);
-      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} refocused=${cfg.pageSlug}`);
+      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} visibility=${visible.value} refocused=${cfg.pageSlug}`);
       console.log(`A watcher for ${mapFile} is already running — asked it to show page "${cfg.pageSlug}".`);
     } else {
-      console.log(`MMAP_PANE already-open pid=${context.viewer.pid}`);
+      console.log(`MMAP_PANE already-open pid=${context.viewer.pid} visibility=${visible.value}`);
       console.log(`A watcher for ${mapFile} is already running — not opening another pane (use --force to override).`);
     }
     process.exit(0);
@@ -142,8 +145,10 @@ async function main() {
   if (!reported.ok) {
     fail(reported.error);
   }
+  const visible = revealPane(context.target, reported.value);
+  if (!visible.ok) fail(visible.error);
   if (placed.value.backend === 'tmux') {
-    console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=tmux session=${placed.value.session}`);
+    console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=tmux session=${placed.value.session} visibility=${visible.value}`);
     console.log(placed.value.mode === PANE_MODE.window
       ? 'Map opened in a new tmux window.' : 'Map opened beside this conversation (tmux split).');
   } else if (placed.value.mode === PANE_MODE.window) {

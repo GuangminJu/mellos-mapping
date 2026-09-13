@@ -546,7 +546,7 @@ ends with what those reports say:
 | The line | What it means |
 | --- | --- |
 | `pane: CLOSED` | nobody is seeing this map; the assistant opens one with `mmap_open` instead of asking you to |
-| `pane: open on this page` | you are watching this land |
+| `pane: running on this page` | a live process reports this page; its terminal may be hidden |
 | `pane: open on <other>, auto-follow on` | the pane follows the page last written, so it arrives here by itself |
 | `pane: open on <other>, auto-follow OFF` | you pinned that page by hand: the change is real and NOT on your screen. The assistant is told to say so rather than move your view |
 
@@ -555,6 +555,11 @@ launcher — a question that used to cost a Windows-only process scan and could
 not say which page was on screen. A report whose pane stopped refreshing it is
 ignored after five seconds and deleted after a minute, so a killed pane cannot
 go on claiming an audience.
+
+A heartbeat does not establish screen visibility. An explicit tmux open also
+selects the existing watcher's window, reveals it if another pane was zoomed,
+and verifies the attached session's active window before reporting visibility.
+Focusing that watcher in a shell without `TMUX` reuses its original owner.
 
 ### Setup: choose when maps open
 

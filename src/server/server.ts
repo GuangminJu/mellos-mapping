@@ -11,10 +11,9 @@
  *   mmap_open     put the map on the user's screen — the one tool that reaches
  *                 outside the store, by running the same launcher a human runs
  *
- * Every write and every view also reports WHO IS SEEING IT (paneLine, from
- * the viewers channel in Layer 1). Without that line an assistant could fill
- * a ledger nobody had on screen and never learn it — the single most common
- * way this plugin used to fail its user.
+ * Every write and view reports the live watcher and its current page.
+ * Heartbeats establish process presence; only a host adapter can verify
+ * whether its terminal pane is visible at the time of an explicit open.
  *
  * Every mutating call is load -> apply (all-or-nothing, Layer 2) -> save
  * (atomic, Layer 1). The server holds no map state between calls: the file
@@ -263,14 +262,14 @@ function pageName(page: string | undefined): string {
 }
 
 /**
- * One line on whether the user can SEE the page this call touched.
+ * One line on whether a running watcher reports the page this call touched.
  *
  * @param stateFile - the default page's file path (the store's base).
  * @param touched - the page this call wrote or rendered; undefined = default.
  *
  * Four facts, and only one of them is good news:
  *   - no pane at all: the work is invisible, and opening one is the fix.
- *   - a pane on this very page: the user is watching this land.
+ *   - a pane on this page: its process is alive, but its window may be hidden.
  *   - a pane elsewhere with auto-follow on: it comes here by itself, because
  *     follow tracks the page last WRITTEN — which this call just was.
  *   - a pane elsewhere with follow off: the user pinned that page by hand.
@@ -289,7 +288,7 @@ function paneLine(stateFile: string, touched: string | undefined, openFailure?: 
       'and do not ask first: a user with a mapping policy has already said they want the picture.'
     );
   }
-  if (viewers.some((v) => v.page === touched)) return 'pane: open on this page — the user is seeing this.';
+  if (viewers.some((v) => v.page === touched)) return 'pane: running on this page — a heartbeat confirms the process, not terminal visibility.';
   const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(', ');
   if (viewers.some((v) => v.follow)) {
     return `pane: open on ${elsewhere}, auto-follow on — it lands on this page within a second.`;
@@ -453,7 +452,10 @@ export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], pa
     );
   }
   if (paneShows(viewers, page)) {
-    return `pane: open and showing ${pageName(page)} — the user can see the map now.\n${run.output}`;
+    const visible = /^MMAP_PANE [^\r\n]*\bvisibility=visible(?:\s|$)/m.test(run.output);
+    return `pane: running and reporting ${pageName(page)} — ${visible
+      ? 'the launcher verified its tmux window is active and its pane is visible in the attached session.'
+      : 'terminal visibility is not confirmed by the process heartbeat.'}\n${run.output}`;
   }
   if (viewers.length > 0) {
     const elsewhere = [...new Set(viewers.map((v) => pageName(v.page)))].join(', ');
