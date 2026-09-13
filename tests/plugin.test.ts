@@ -14,9 +14,42 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (path: string): string => readFileSync(join(repoRoot, path), 'utf8');
+
+// Keep the published manifests compatible with Claude Code versions that
+// reject unknown keys (#7). Newer hosts accept displayName, but installing
+// this plugin should not require users to upgrade their host first.
+describe('Claude manifests use the backwards-compatible metadata schema', () => {
+  const author = z.object({ name: z.string(), email: z.string().optional(), url: z.string().optional() }).strict();
+  const metadata = {
+    name: z.string(), version: z.string(), description: z.string(), author,
+    homepage: z.string().optional(),
+  };
+  const plugin = z.object({
+    ...metadata,
+    repository: z.string().optional(), license: z.string().optional(),
+    keywords: z.array(z.string()).optional(),
+  }).strict();
+  const marketplace = z.object({
+    name: z.string(), owner: author, description: z.string(),
+    plugins: z.array(z.object({
+      ...metadata, source: z.literal('./'),
+      category: z.string().optional(), tags: z.array(z.string()).optional(),
+      strict: z.boolean().optional(),
+    }).strict()).min(1),
+  }).strict();
+
+  it('the installable plugin retains supported metadata without newer host-only fields', () => {
+    expect(() => plugin.parse(JSON.parse(read('.claude-plugin/plugin.json')))).not.toThrow();
+  });
+
+  it('the marketplace uses tags and only metadata older marketplace validators accept', () => {
+    expect(() => marketplace.parse(JSON.parse(read('.claude-plugin/marketplace.json')))).not.toThrow();
+  });
+});
 
 interface HookHandler {
   readonly type: string;
