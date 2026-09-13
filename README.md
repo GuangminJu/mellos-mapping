@@ -594,15 +594,18 @@ render as boxes and one id must mean one box.
 
 ## Development
 
+See [contributing](CONTRIBUTING.md) and the
+[project structure, branch and recovery guide](docs/project-maintenance.md).
+
 ```
-npm install
+npm ci
 npm run verify
 ```
 
-`verify` is four steps, in this order: `typecheck`, `test`, `build` (bundles
-`dist/`, emits `lib/` with declarations, cleaning both first), and
-`check:package` — which packs the tarball through the real `prepack`
-lifecycle and fails if any `exports` or `bin` target is missing from it.
+Use Node.js 22.12+ for development. `verify` runs `typecheck`, `test`, `build`
+(bundles `dist/` and emits `lib/` with declarations), `check:package`,
+`check:codex`, and `check:release`. These check npm entrypoints, the Codex
+package and both installable editions, including their MCP handshake.
 
 The repo is itself layered bottom-up, and each layer has its spec:
 
@@ -613,7 +616,7 @@ The repo is itself layered bottom-up, and each layer has its spec:
 | 1 store | `src/store/store.ts` | `store.test.ts`, `atomic-save.test.ts` | atomic state-file persistence on Node |
 | 1 semantics | `src/semantics/` | `semantics.test.ts` | medium-neutral view semantics: zoom ladder, group aggregation, page-set rules, sequence flip, the shared glyph vocabulary |
 | 2 apply | `src/server/apply.ts` | `apply.test.ts` | tool inputs → transactional op sequences |
-| 3 server | `src/server/server.ts` | `server.test.ts`, `save-failure.test.ts` | the five MCP tools over stdio |
+| 3 server | `src/server/server.ts` | `server.test.ts`, `save-failure.test.ts` | the six MCP tools over stdio |
 | 4 render | `src/render/` | `render.test.ts`, `routing.test.ts` | the ASCII renderer and its wire routing |
 | 4 pane | `src/watch/` | `watch.test.ts`, `pane-state.test.ts`, `input.test.ts` | the polling pane: page set, input parsing, panel and chrome |
 | — launchers | `scripts/` | `open-pane.test.mjs`, `codex-register.test.mjs` | plain-node entry points |

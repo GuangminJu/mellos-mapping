@@ -7,13 +7,13 @@ is to run the same command CI runs.
 ## Setup
 
 ```
-npm install
+npm ci
 npm run verify
 ```
 
-`verify` is four steps in this order — `typecheck`, `test`, `build`,
-`check:package`. CI runs exactly that on Linux, macOS and Windows against
-Node 20. Green locally is very nearly green there.
+Use Node.js 22.12+ for development. `verify` runs `typecheck`, `test`, `build`,
+`check:package`, `check:codex`, and `check:release`, in that order. CI runs
+the same command on Linux, macOS and Windows against Node 22.
 
 ## The constraint that surprises people
 
@@ -29,8 +29,13 @@ npm tarball.
 
 ## Branches and pull requests
 
-- Work on a branch — `feature/<name>`, `fix/<name>`, `refactor/<name>`.
-  Nothing goes straight to `master`.
+- Start from current `main` and work on `codex/<name>` (or a descriptive
+  `feature/`, `fix/`, `refactor/` branch). Open the PR against `main`.
+- `claude` and `chatgpt-app` contain generated releases. Source changes belong
+  on `main`; use [release candidates](docs/releasing.md) to update editions.
+- Keep parallel worktrees beside the repository, outside `artifacts/`.
+  Archive completed work before pruning branches; see the
+  [project and Git guide](docs/project-maintenance.md).
 - One PR, one change. A refactor and a fix in the same diff can be neither
   reviewed nor reverted independently.
 - `npm run verify` green before you open it.

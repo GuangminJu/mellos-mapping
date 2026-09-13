@@ -535,14 +535,16 @@ AI。从此再也不需要按项目设置什么。
 
 ## 开发
 
+先阅读[贡献说明](CONTRIBUTING.md)和[项目结构、分支与恢复指南](docs/project-maintenance.md)。
+
 ```
-npm install
+npm ci
 npm run verify
 ```
 
-`verify` 是按顺序的四步：`typecheck`、`test`、`build`（打包 `dist/`、产出带声明的 `lib/`，两个
-目录都先清空），以及 `check:package`——它按真实的 `prepack` 生命周期打出
-tarball，只要 `exports` 或 `bin` 里有任何目标没被打进去就失败。
+开发环境使用 Node.js 22.12+。`verify` 依次运行 `typecheck`、`test`、`build`
+（打包 `dist/`、产出带声明的 `lib/`）、`check:package`、`check:codex` 和
+`check:release`，检查 npm 入口、Codex 包和两个可安装发行包，包括 MCP 握手。
 
 这个仓库本身就是自下而上分层的，每一层都有自己的规格测试：
 
@@ -553,7 +555,7 @@ tarball，只要 `exports` 或 `bin` 里有任何目标没被打进去就失败�
 | 1 store | `src/store/store.ts` | `store.test.ts`、`atomic-save.test.ts` | Node 上的原子化状态文件持久化 |
 | 1 semantics | `src/semantics/` | `semantics.test.ts` | 媒介无关的视图语义：缩放阶梯、分组聚合、页集规则、时序翻转、共享字形词汇表 |
 | 2 apply | `src/server/apply.ts` | `apply.test.ts` | 工具输入 → 事务性操作序列 |
-| 3 server | `src/server/server.ts` | `server.test.ts`、`save-failure.test.ts` | stdio 上的五个 MCP 工具 |
+| 3 server | `src/server/server.ts` | `server.test.ts`、`save-failure.test.ts` | stdio 上的六个 MCP 工具 |
 | 4 render | `src/render/` | `render.test.ts`、`routing.test.ts` | ASCII 渲染器与它的走线 |
 | 4 pane | `src/watch/` | `watch.test.ts`、`pane-state.test.ts`、`input.test.ts` | 轮询面板：页集、输入解析、详情面板与外框 |
 | — 启动脚本 | `scripts/` | `open-pane.test.mjs`、`codex-register.test.mjs` | 纯 node 的入口 |
