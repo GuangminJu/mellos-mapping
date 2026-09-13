@@ -305,9 +305,12 @@ function pageName(page: string | undefined): string {
  *     The change is real and unseen, and the honest move is to say so, not to
  *     yank their view around behind them (SKILL.md: don't fight it).
  */
-function paneLine(stateFile: string, touched: string | undefined): string {
+function paneLine(stateFile: string, touched: string | undefined, openFailure?: string): string {
   const viewers = readLiveViewers(stateFile, Date.now());
   if (viewers.length === 0) {
+    if (openFailure !== undefined) return 'pane: CLOSED — automatic opening previously failed. ' +
+      'Do not retry mmap_open until the terminal environment changes or the user asks to retry. ' +
+      `The map is saved; mmap_view remains available inline. Last failure: ${openFailure}`;
     return (
       'pane: CLOSED — nobody is seeing this map. Open it with mmap_open ' +
       `{page: ${touched === undefined ? '(omit for the default page)' : `"${touched}"`}} ` +
@@ -429,6 +432,15 @@ function runLauncher(script: string, args: readonly string[]): Promise<LauncherR
   });
 }
 
+/** Resolve the installed launcher at the process boundary, independently of map operations. */
+function launchPane(args: readonly string[]): Promise<LauncherRun> {
+  const script = launcherPath(import.meta.url);
+  if (!existsSync(script)) return Promise.resolve({ ok: false,
+    output: `the launcher is missing at ${script}. This install is incomplete — reinstall the plugin (a source checkout needs "npm run build").`,
+  });
+  return runLauncher(script, args);
+}
+
 /**
  * Is what was asked for on a screen?
  *
@@ -465,7 +477,7 @@ export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], pa
   if (!run.ok) {
     return (
       `could not open the pane: ${run.output === '' ? 'the launcher failed without saying why' : run.output}\n` +
-      'Relay the launcher reason. A failed default split is not permission to open a separate window.'
+      'Relay the launcher reason and any copyable fallback command. Do not retry mmap_open until the terminal environment changes or the user asks to retry. A failed default split is not permission to open a separate window.'
     );
   }
   if (paneShows(viewers, page)) {
@@ -529,8 +541,12 @@ function loadOrEmpty(stateFile: string): Result<MellosMap, string> {
  *   spec's server can never read — or write — the developer's real one.
  * Exported for tests.
  */
-export function buildServer(stateFile: string, userConfigFile: string): McpServer {
+export function buildServer(stateFile: string, userConfigFile: string, launch: (args: readonly string[]) => Promise<LauncherRun> = launchPane): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  // Session-local failure feedback prevents each map write from re-requesting
+  // the same unavailable terminal. An explicit successful retry clears it.
+  let paneOpenFailure: string | undefined;
+  const currentPaneLine = (page: string | undefined): string => paneLine(stateFile, page, paneOpenFailure);
   const projectConfigFile = configFilePath(stateFile);
   const previews = createPreviewPublisher(stateFile);
   const refreshPreview = (page: string | undefined): string => {
@@ -565,7 +581,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
    * bury the reason it did not.
    */
   const withPane = (result: ToolText, page: string | undefined): ToolText =>
-    result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ''}\n${existsSync(webRuntimeFile(stateFile)) ? 'web: configured — the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : paneLine(stateFile, page)}`);
+    result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ''}\n${existsSync(webRuntimeFile(stateFile)) ? 'web: configured — the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page)}`);
   /** The named pages this project has right now, read from the store. */
   const knownPages = (): PageId[] =>
     listPageFiles(stateFile)
@@ -983,7 +999,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join('\n');
       const surface = previews.enabled()
         ? `markdown: ${previewFile(stateFile, input.page as PageId | undefined)}\nUse mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.`
-        : existsSync(webRuntimeFile(stateFile)) ? 'web: configured — use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : paneLine(stateFile, input.page);
+        : existsSync(webRuntimeFile(stateFile)) ? 'web: configured — use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
       return text(`${picture}\n${pagesLine(stateFile, input.page)}\n${surface}`);
     },
   );
@@ -1008,10 +1024,10 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
         'ask for one. It never closes a pane: taking the map off the screen belongs to the user ' +
         '(the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a ' +
         'pane actually reported itself in afterwards, not merely that a command was run. ' +
-        'Windows Terminal is the supported route; anywhere else it says so and you relay the ' +
-        'manual command from the README.',
+        'Automatic terminal opening supports Windows Terminal and tmux on Linux/macOS. ' +
+        'If opening fails, relay the reason and copyable command; retry only after the environment changes or the user asks.',
       inputSchema: closed({
-        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web', 'web-terminal']).optional().describe('web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)'),
+        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web', 'web-terminal']).optional().describe('web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal or tmux launcher (default)'),
         page: id(
           'page to show first — the page THIS effort lives on, the same slug you pass to the ' +
             'other tools. Omit only for the default page: without it a fresh pane opens on ' +
@@ -1021,7 +1037,7 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
           .boolean()
           .optional()
           .describe(
-            'open the map in its own "mellos-mapping" window instead of splitting this ' +
+            'open the map in its own "mellos-mapping" window (a new tmux window on Linux/macOS) instead of splitting this ' +
               'conversation\'s window. Pass it only when the user asked for the map separate ' +
               '(a second monitor, a small screen); the split is the default because the map is ' +
               'meant to sit beside what it describes.',
@@ -1056,17 +1072,12 @@ export function buildServer(stateFile: string, userConfigFile: string): McpServe
           'Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation\'s right file panel using the host tool. ' +
           'No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.');
       }
-      const script = launcherPath(import.meta.url);
-      if (!existsSync(script)) {
-        return text(
-          `cannot open the pane: the launcher is missing at ${script}. This install is incomplete — ` +
-            'tell the user to reinstall the plugin (a source checkout needs "npm run build").',
-          true,
-        );
-      }
-      const run = await runLauncher(script, launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
       const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
-      return text(openOutcome(run, viewers, input.page), !run.ok || !paneShows(viewers, input.page));
+      const outcome = openOutcome(run, viewers, input.page);
+      const failed = !run.ok || !paneShows(viewers, input.page);
+      paneOpenFailure = failed ? outcome : undefined;
+      return text(outcome, failed);
     },
   );
 

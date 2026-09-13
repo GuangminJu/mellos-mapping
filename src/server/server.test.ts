@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -25,11 +25,13 @@ import {
   openOutcome,
   projectDirOf,
   resolveStateFile,
+  type LauncherRun,
 } from './server.js';
 
 let dir: string;
 let client: Client;
 let stateFile: string;
+const launch = vi.fn<(args: readonly string[]) => Promise<LauncherRun>>();
 /**
  * The USER-scope configuration, inside the temp tree. Every server this spec
  * builds is handed one: a spec must never be able to read, let alone write,
@@ -41,7 +43,8 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mellos-mapping-server-'));
   stateFile = join(dir, '.mellos', 'map.json');
   userConfigFile = join(dir, 'home', '.mellos', 'config.json');
-  const server = buildServer(stateFile, userConfigFile);
+  launch.mockReset().mockResolvedValue({ ok: false, output: 'No attached tmux session. Run: node /plugin/watch.mjs --file /project/map.json' });
+  const server = buildServer(stateFile, userConfigFile, launch);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'spec-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -862,6 +865,31 @@ describe('the pane line — whether anybody is SEEING what the call did', () => 
 });
 
 describe('mmap_open — the assistant putting the map on screen', () => {
+  it('stops the closed-pane retry loop across writes and views, and allows an explicit recovery', async () => {
+    await callText('mmap_declare', { page: 'effort', layers: [{ id: 'base', name: 'Base', rank: 0 }],
+      nodes: [{ id: 'core', label: 'Core', layer: 'base' }] });
+    const failed = await callText('mmap_open', { page: 'effort' });
+    expect(failed.isError).toBe(true);
+    expect(failed.text).toContain('Do not retry mmap_open');
+    expect(failed.text).toContain('Run: node /plugin/watch.mjs');
+    const updated = await callText('mmap_update', { page: 'effort', updates: [{ id: 'core', status: 'in-progress' }] });
+    const viewed = await callText('mmap_view', { page: 'effort' });
+    for (const result of [updated, viewed]) {
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain('automatic opening previously failed');
+      expect(result.text).not.toContain('Open it with mmap_open');
+    }
+    expect(launch).toHaveBeenCalledTimes(1);
+    launch.mockImplementationOnce(async () => {
+      publishViewer(stateFile, 4242, { page: 'effort' as PageId, follow: true });
+      return { ok: true, output: 'MMAP_PANE mode=split pid=4242 backend=tmux' };
+    });
+    expect((await callText('mmap_open', { page: 'effort' })).isError).toBe(false);
+    expect((await callText('mmap_view', { page: 'effort' })).text).toContain('pane: open on this page');
+    rmSync(viewerFilePath(stateFile, 4242));
+    expect((await callText('mmap_view', { page: 'effort' })).text).toContain('Open it with mmap_open');
+  });
+
   it('the launcher is found next to the server, in scripts/', () => {
     // both shapes this module runs in sit one directory below the plugin root
     const root = resolve('/plugin');

@@ -241,6 +241,23 @@ npx -y -p mellos-mapping mellos-mapping-watch
 3. 看着节点从底部一路亮起。图让你不安的时候就打断它——这正是它存在的
    意义。
 
+在 Linux 和 macOS 上，`mmap_open` 与 `mmap` 会自动使用 tmux。启动器优先
+定位继承的 `TMUX`/`TMUX_PANE`；工具进程丢失这些变量时，会自动发现默认
+tmux 服务中唯一已连接的会话。默认在右侧分屏并保留输入焦点；`--window`
+创建一个新的 tmux 窗口。再次打开会复用属于该源面板或会话窗口的 watcher。
+
+如果有多个已连接的会话，或使用自定义 tmux socket，在 MCP 服务进程的
+环境中设置以下变量（修改后重启该进程）：
+
+| 环境变量 | 含义 |
+| --- | --- |
+| `MELLOS_MAPPING_TMUX_TARGET` | 指定 tmux 会话或面板，例如 `work:2.1` 或 `%7` |
+| `MELLOS_MAPPING_TMUX_SOCKET` | socket 的绝对路径，例如 `/tmp/my-tmux/socket` |
+
+目标不明确、会话未连接或没有安装 tmux 时，启动器会返回具体原因，以及
+包含项目、页面和正确引号的一条完整 watcher 命令，可以粘贴到可见终端。
+地图仍可正常写入；打开失败后，助手只在环境变化或你要求重试时再次打开。
+
 分屏支持鼠标（xterm SGR any-event 协议——htop 和 tmux 说的同一种话）：
 
 | 输入 | 动作 |

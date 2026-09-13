@@ -76,7 +76,9 @@
     "scripts/mmap.mjs",
     "scripts/open-pane.mjs",
     "scripts/pane-core.mjs",
-    "scripts/terminal-session.mjs"
+    "scripts/terminal-session.mjs",
+    "scripts/tmux-session.mjs",
+    "scripts/watcher-command.mjs"
   ],
   "engines": {
     "node": ">=18"

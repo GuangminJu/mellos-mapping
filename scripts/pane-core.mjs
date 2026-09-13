@@ -30,6 +30,8 @@
  * Pure helpers are exported for the spec; nothing here runs on import.
  */
 import * as terminal from './terminal-session.mjs';
+import { createTmuxAdapter } from './tmux-session.mjs';
+import { watcherArgs } from './watcher-command.mjs';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -185,9 +187,7 @@ export function writeQuitRequest(quitFile) {
 
 /** The `wt` payload that runs the watcher: the pane's title, cwd and command. */
 export function paneCommand(cfg, watchPath, mapFile) {
-  const cmd = ['--title', 'mellos map', '-d', cfg.projectDir, 'node', watchPath, '--file', mapFile, ...cfg.watcherFlags];
-  if (cfg.pageSlug !== undefined) cmd.push('--page', cfg.pageSlug);
-  return cmd;
+  return ['--title', 'mellos map', '-d', cfg.projectDir, 'node', ...watcherArgs(cfg, watchPath, mapFile)];
 }
 
 /** Explicitly requested independent window; default opens never fall back here. */
@@ -199,27 +199,30 @@ export function selectPaneViewer(viewers, owners) {
   return viewers.find((viewer) => viewer.owner !== undefined && owners.includes(viewer.owner));
 }
 
+const platformTerminal = () => process.platform === 'win32' ? terminal : createTmuxAdapter();
+
 /** Resolve identity before deciding whether to reuse, open or toggle. */
-export function preparePane(cfg, store, mapFile, io = terminal) {
-  const inspected = cfg.mode === PANE_MODE.window
+export function preparePane(cfg, store, mapFile, io = platformTerminal()) {
+  const inspected = io.kind === 'tmux' ? io.inspectSession(cfg) : cfg.mode === PANE_MODE.window
     ? { ok: true, value: { owners: ['window'], owner: 'window' } }
     : io.inspectSession();
   if (!inspected.ok) return inspected;
   const session = inspected.value;
   const viewers = store.readLiveViewers(mapFile, Date.now());
   const viewer = selectPaneViewer(viewers, session.owners);
-  if (cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
+  if (io.kind !== 'tmux' && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
     return { ok: false, error: 'Could not identify this conversation’s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window.' };
   }
   return { ok: true, value: {
-    target: { mode: cfg.mode, owner: session.owner ?? viewer?.owner, hwnd: session.hwnd },
+    target: { ...session, mode: cfg.mode, owner: session.owner ?? viewer?.owner },
     viewer,
     previousPids: viewers.map((item) => item.pid),
   } };
 }
 
 /** Compose a verified target with the watcher payload. Never changes the requested mode. */
-export function placePane(cfg, watchPath, mapFile, target, io = terminal) {
+export function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
+  if (io.kind === 'tmux') return io.openPane(cfg, watchPath, mapFile, target);
   const payload = [...paneCommand(cfg, watchPath, mapFile), '--owner', target.owner];
   if (target.mode === PANE_MODE.window) {
     const opened = io.openWt(['-w', DEDICATED_WINDOW_NAME, 'nt', ...payload], 'open the requested window');

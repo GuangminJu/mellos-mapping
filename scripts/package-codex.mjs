@@ -31,6 +31,8 @@ export const CODEX_FILES = [
   'scripts/open-pane.mjs',
   'scripts/pane-core.mjs',
   'scripts/terminal-session.mjs',
+  'scripts/tmux-session.mjs',
+  'scripts/watcher-command.mjs',
   'docs/codex.md',
   'LICENSE',
 ];

@@ -258,6 +258,25 @@ get the six `mmap_*` tools and the pane, and bring their own prompting.
 3. Watch nodes light up from the bottom. Interrupt when the picture worries
    you — that is what it is for.
 
+On Linux and macOS, `mmap_open` and `mmap` automatically use tmux. The launcher
+targets the inherited `TMUX`/`TMUX_PANE`; if the tool process lost those variables,
+it discovers the single attached session on the default tmux server. The default
+is a right split that preserves input focus; `--window` creates a new tmux window.
+Repeated opens reuse the watcher bound to that source pane or session window.
+
+For multiple attached sessions or a custom tmux socket, set these variables in
+the environment of the MCP server (restart it after changing them):
+
+| Variable | Meaning |
+| --- | --- |
+| `MELLOS_MAPPING_TMUX_TARGET` | Explicit tmux session or pane, such as `work:2.1` or `%7` |
+| `MELLOS_MAPPING_TMUX_SOCKET` | Absolute socket path, for example `/tmp/my-tmux/socket` |
+
+Ambiguous sessions, detached sessions and missing tmux produce a concrete error
+and a fully quoted watcher command, including the project and requested page,
+to paste into any visible terminal. Map writes remain available; after an open
+failure the assistant retries only when the environment changes or you ask.
+
 The pane is mouse-aware (xterm SGR any-event tracking — the same protocol
 htop and tmux speak):
 
