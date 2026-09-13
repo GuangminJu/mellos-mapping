@@ -72,10 +72,21 @@ ordinary implementation work alone does not authorize changing host config.
 The plugin root is two directories above this skill's directory. See
 `<plugin root>/docs/codex.md` for Codex packaging and installation details.
 
+## Automatic desktop terminal in a browser
+
+In ChatGPT desktop Codex mode, prefer `mmap_open {surface: "web-terminal", page}`
+when no other surface was chosen. Pass its `hostOpen` object to `open_in_codex`
+in the current conversation: right placement, browser target, returned URL.
+The page starts the existing mmap terminal automatically, with independent font
+size. No manual paste or Computer Use is needed. An older schema can use
+`node "<plugin root>/dist/web.mjs" "<project>" --terminal --page <slug>`.
+Respect manually pinned pages and report queued opening honestly. Native Claude
+Code terminal placement remains the default for terminal hosts.
+
 ## Desktop document panel
 
 When the current host exposes a file side panel (for example Codex desktop's
-`open_in_codex`) and the user has not chosen a terminal or web viewer, use the Markdown
+`open_in_codex`) and the user requests a document or no browser panel is available, use the Markdown
 surface. This replaces the terminal-placement instructions in step 2 below.
 
 1. Call `mmap_open {surface: "markdown", page: "<effort-slug>"}`. This generates

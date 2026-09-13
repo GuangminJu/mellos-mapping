@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateRelease } from './install-release.mjs';
 import { verifyRuntime } from './verify-runtime.mjs';
+import { verifyWebTerminal } from './verify-web-terminal.mjs';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const manifest = validateRelease(root);
 const temporary = mkdtempSync(join(tmpdir(), 'mellos-verify-release-'));
@@ -14,5 +15,6 @@ delete env.MELLOS_MAPPING_CWD; delete env.CLAUDE_PROJECT_DIR;
 try {
   const prefix = manifest.edition === 'chatgpt-app' ? 'plugins/mellos-mapping' : '';
   await verifyRuntime(join(root, prefix, 'dist/server.mjs'), temporary, env);
-  console.log(`${manifest.edition} ${manifest.version}: file integrity and all six MCP tools verified.`);
+  await verifyWebTerminal(join(root, prefix, 'dist/server.mjs'), temporary, env);
+  console.log(`${manifest.edition} ${manifest.version}: file integrity, six MCP tools, bundled browser assets and terminal worker verified.`);
 } finally { rmSync(temporary, { recursive: true, force: true }); }

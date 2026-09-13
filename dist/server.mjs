@@ -23740,9 +23740,22 @@ async function runningWebUrl(defaultFile) {
   }
   return void 0;
 }
-async function openWebPreview(defaultFile, entry, page2) {
+async function openWebPreview(defaultFile, entry, page2, terminal = false) {
   if (page2 !== void 0 && (!ID_RULE.test(page2) || !readWebSnapshot(defaultFile).value.pages.some((p) => p.id === page2))) throw new Error(`No map page named "${page2}".`);
   let url = await runningWebUrl(defaultFile);
+  if (url && terminal) {
+    const health = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(2e3) });
+    const info = await health.json();
+    if (!info.surfaces?.includes("web-terminal")) {
+      await fetch(`${url}api/stop`, { method: "POST", signal: AbortSignal.timeout(2e3) });
+      const deadline = Date.now() + 3e3;
+      while (await runningWebUrl(defaultFile)) {
+        if (Date.now() > deadline) throw new Error("Old web viewer is still stopping. Retry opening the terminal.");
+        await new Promise((resolve2) => setTimeout(resolve2, 100));
+      }
+      url = void 0;
+    }
+  }
   if (!url) {
     if (!existsSync3(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
     const child = spawn(process.execPath, [entry, "--serve", defaultFile], { detached: true, windowsHide: true, stdio: "ignore" });
@@ -23759,7 +23772,10 @@ async function openWebPreview(defaultFile, entry, page2) {
     }
     if (!url) throw new Error("Web preview did not start. Run the web CLI directly to inspect the error.");
   }
-  return page2 === void 0 ? url : `${url}?page=${encodeURIComponent(page2)}`;
+  const query = new URLSearchParams();
+  if (terminal) query.set("view", "terminal");
+  if (page2 !== void 0) query.set("page", page2);
+  return query.size ? `${url}?${query}` : url;
 }
 
 // src/server/terminal-handoff.ts
@@ -23780,7 +23796,7 @@ function terminalHandoff(node, watcher, stateFile, page2) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.21.1";
+var SERVER_VERSION = "0.22.0";
 var TITLE_MAX = 120;
 var LABEL_MAX = 60;
 var DETAIL_MAX = 600;
@@ -24205,9 +24221,9 @@ ${surface}`);
     "mmap_open",
     {
       title: "Open the map pane",
-      description: 'For ChatGPT desktop in Codex mode, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.',
+      description: 'For automatic display beside the current ChatGPT desktop conversation in Codex mode, use surface: "web-terminal", then call open_in_codex with the returned browser hostOpen object. No paste or Computer Use is needed. For the native host terminal, use surface: "codex-terminal": prepare absolute watcher commands for the current project, then ask the host to open its right terminal. This does not launch the watcher or type into that terminal. Agent exec PTYs cannot be attached using their numeric session ids. For a document panel, use surface: "markdown": generate MD + SVG files, enable automatic preview updates after successful map writes, then use the HOST file-opening tool to display the returned absolute Markdown path on the right of the current conversation. Generated does not mean visible: this server cannot open or observe the desktop side panel. For interactive maps, choose surface: "web": start or reuse a project-local web viewer and pass the returned URL to the host browser-opening tool. Markdown and terminal remain available. The default surface is "terminal", preserving the terminal workflow. Put the live map on the user\'s screen: a terminal pane beside this conversation that redraws on every write. Call it whenever a result says `pane: CLOSED` \u2014 and do NOT ask permission first, because a user who has set a mapping policy has already said they want to see the map. With a pane already open this RETARGETS it to `page` instead of opening a second one, so it is also how you show the user a particular page when they ask for one. It never closes a pane: taking the map off the screen belongs to the user (the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a pane actually reported itself in afterwards, not merely that a command was run. Windows Terminal is the supported route; anywhere else it says so and you relay the manual command from the README.',
       inputSchema: closed({
-        surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web"]).optional().describe("codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)"),
+        surface: external_exports.enum(["terminal", "codex-terminal", "markdown", "web", "web-terminal"]).optional().describe("web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal launcher (default)"),
         page: id(
           "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
         ).optional(),
@@ -24225,11 +24241,13 @@ ${surface}`);
         const handoff = terminalHandoff(process.execPath, fileURLToPath(new URL("./watch.mjs", import.meta.url)), stateFile, input.page);
         return text("terminal: ready-to-start\n" + JSON.stringify(handoff, null, 2) + "\nUse open_in_codex with hostOpen in the CURRENT conversation, without a threadId. If a supported host tool can run commands in that user terminal, use it. Otherwise give the user the command for their shell to paste once. An exec_command session_id belongs to the agent PTY, not this terminal. queued is not visible, and opened is not running. Use read_thread_terminal to confirm the map title and controls after startup. Preserve a page the user pinned.");
       }
-      if (input.surface === "web") {
+      if (input.surface === "web" || input.surface === "web-terminal") {
         if (input.window === true) return text('surface: "web" cannot be combined with window: true. Open the returned URL using the desktop host.', true);
         try {
-          const url = await openWebPreview(stateFile, fileURLToPath(new URL("./web.mjs", import.meta.url)), input.page);
-          return text(`preview: ready
+          const url = await openWebPreview(stateFile, fileURLToPath(new URL("./web.mjs", import.meta.url)), input.page, input.surface === "web-terminal");
+          return text(`surface: ${input.surface}
+hostOpen: ${JSON.stringify({ placement: "right", target: { type: "browser", url } })}
+preview: ready
 web: ${url}
 Open this URL in the current conversation's right browser panel using the host tool. The viewer refreshes from project maps while open. Existing Markdown previews remain enabled. Desktop visibility is not confirmed by this tool.`);
         } catch (error2) {

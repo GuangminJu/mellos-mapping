@@ -1,5 +1,5 @@
-#!/usr/bin/env node
-import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
+// src/web/terminal-worker.ts
+import { PassThrough, Writable } from "node:stream";
 
 // src/watch/watch.ts
 import { realpathSync, statSync as statSync2 } from "node:fs";
@@ -127,22 +127,22 @@ function setKind(map, kind) {
 function findLane(map, id) {
   return map.lanes.find((l) => l.id === id);
 }
-function declareLane(map, input) {
-  if (findLane(map, input.id)) return err({ kind: "duplicate-lane", id: input.id });
-  return ok({ ...map, lanes: [...map.lanes, { id: input.id, label: input.label }] });
+function declareLane(map, input2) {
+  if (findLane(map, input2.id)) return err({ kind: "duplicate-lane", id: input2.id });
+  return ok({ ...map, lanes: [...map.lanes, { id: input2.id, label: input2.label }] });
 }
-function declareLayer(map, input) {
-  if (findLayer(map, input.id)) return err({ kind: "duplicate-layer", id: input.id });
-  const rankHolder = map.layers.find((l) => l.rank === input.rank);
-  if (rankHolder) return err({ kind: "duplicate-rank", rank: input.rank, existing: rankHolder.id });
-  return ok({ ...map, layers: [...map.layers, { id: input.id, name: input.name, rank: input.rank }] });
+function declareLayer(map, input2) {
+  if (findLayer(map, input2.id)) return err({ kind: "duplicate-layer", id: input2.id });
+  const rankHolder = map.layers.find((l) => l.rank === input2.rank);
+  if (rankHolder) return err({ kind: "duplicate-rank", rank: input2.rank, existing: rankHolder.id });
+  return ok({ ...map, layers: [...map.layers, { id: input2.id, name: input2.name, rank: input2.rank }] });
 }
-function declareGroup(map, input) {
-  if (findGroup(map, input.id)) return err({ kind: "duplicate-group", id: input.id });
-  const collision = checkIdSpace(map, input.id, "group");
+function declareGroup(map, input2) {
+  if (findGroup(map, input2.id)) return err({ kind: "duplicate-group", id: input2.id });
+  const collision = checkIdSpace(map, input2.id, "group");
   if (collision) return err(collision);
-  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
-  return ok({ ...map, groups: [...map.groups, { id: input.id, label: input.label, layer: input.layer }] });
+  if (!findLayer(map, input2.layer)) return err({ kind: "unknown-layer", id: input2.layer });
+  return ok({ ...map, groups: [...map.groups, { id: input2.id, label: input2.label, layer: input2.layer }] });
 }
 function aggregateStatus(nodes) {
   if (nodes.some((n) => n.status === "regressed")) return "regressed";
@@ -156,27 +156,27 @@ function groupStatus(map, id) {
 function mapStatus(map) {
   return aggregateStatus(map.nodes);
 }
-function declareNode(map, input) {
-  if (findNode(map, input.id)) return err({ kind: "duplicate-node", id: input.id });
-  const collision = checkIdSpace(map, input.id, "node");
+function declareNode(map, input2) {
+  if (findNode(map, input2.id)) return err({ kind: "duplicate-node", id: input2.id });
+  const collision = checkIdSpace(map, input2.id, "node");
   if (collision) return err(collision);
-  if (!findLayer(map, input.layer)) return err({ kind: "unknown-layer", id: input.layer });
-  if (input.group !== void 0) {
-    const bad = checkMembership(map, input.id, input.layer, input.group);
+  if (!findLayer(map, input2.layer)) return err({ kind: "unknown-layer", id: input2.layer });
+  if (input2.group !== void 0) {
+    const bad = checkMembership(map, input2.id, input2.layer, input2.group);
     if (bad) return err(bad);
   }
-  if (input.lane !== void 0 && !findLane(map, input.lane)) return err({ kind: "unknown-lane", id: input.lane });
+  if (input2.lane !== void 0 && !findLane(map, input2.lane)) return err({ kind: "unknown-lane", id: input2.lane });
   const node = {
-    id: input.id,
-    label: input.label,
-    layer: input.layer,
-    status: input.status ?? "planned",
-    ...input.evidence !== void 0 ? { evidence: input.evidence } : {},
-    ...input.detail !== void 0 ? { detail: input.detail } : {},
-    ...input.group !== void 0 ? { group: input.group } : {},
-    ...input.kind !== void 0 ? { kind: input.kind } : {},
-    ...input.lane !== void 0 ? { lane: input.lane } : {},
-    ...input.submap !== void 0 ? { submap: input.submap } : {}
+    id: input2.id,
+    label: input2.label,
+    layer: input2.layer,
+    status: input2.status ?? "planned",
+    ...input2.evidence !== void 0 ? { evidence: input2.evidence } : {},
+    ...input2.detail !== void 0 ? { detail: input2.detail } : {},
+    ...input2.group !== void 0 ? { group: input2.group } : {},
+    ...input2.kind !== void 0 ? { kind: input2.kind } : {},
+    ...input2.lane !== void 0 ? { lane: input2.lane } : {},
+    ...input2.submap !== void 0 ? { submap: input2.submap } : {}
   };
   return ok({ ...map, nodes: [...map.nodes, node] });
 }
@@ -192,18 +192,18 @@ function linkNodes(map, from, to, label) {
   if (fromRank <= toRank) return err({ kind: "edge-not-downward", from, fromRank, to, toRank });
   return ok({ ...map, edges: [...map.edges, { from, to, ...label !== void 0 ? { label } : {} }] });
 }
-function resolveOptional(input, current) {
-  return input === void 0 ? current : input === null ? void 0 : input;
+function resolveOptional(input2, current) {
+  return input2 === void 0 ? current : input2 === null ? void 0 : input2;
 }
-function updateNode(map, input) {
-  const node = findNode(map, input.id);
-  if (!node) return err({ kind: "unknown-node", id: input.id });
-  if (input.group !== void 0 && input.group !== null) {
-    const bad = checkMembership(map, node.id, node.layer, input.group);
+function updateNode(map, input2) {
+  const node = findNode(map, input2.id);
+  if (!node) return err({ kind: "unknown-node", id: input2.id });
+  if (input2.group !== void 0 && input2.group !== null) {
+    const bad = checkMembership(map, node.id, node.layer, input2.group);
     if (bad) return err(bad);
   }
-  if (input.lane !== void 0 && input.lane !== null && !findLane(map, input.lane)) {
-    return err({ kind: "unknown-lane", id: input.lane });
+  if (input2.lane !== void 0 && input2.lane !== null && !findLane(map, input2.lane)) {
+    return err({ kind: "unknown-lane", id: input2.lane });
   }
   const {
     group: currentGroup,
@@ -214,12 +214,12 @@ function updateNode(map, input) {
     detail: currentDetail,
     ...bare
   } = node;
-  const nextGroup = resolveOptional(input.group, currentGroup);
-  const nextKind = resolveOptional(input.kind, currentKind);
-  const nextLane = resolveOptional(input.lane, currentLane);
-  const nextSubmap = resolveOptional(input.submap, currentSubmap);
-  const nextEvidence = resolveOptional(input.evidence, currentEvidence);
-  const nextDetail = resolveOptional(input.detail, currentDetail);
+  const nextGroup = resolveOptional(input2.group, currentGroup);
+  const nextKind = resolveOptional(input2.kind, currentKind);
+  const nextLane = resolveOptional(input2.lane, currentLane);
+  const nextSubmap = resolveOptional(input2.submap, currentSubmap);
+  const nextEvidence = resolveOptional(input2.evidence, currentEvidence);
+  const nextDetail = resolveOptional(input2.detail, currentDetail);
   const updated = {
     ...bare,
     ...nextEvidence !== void 0 ? { evidence: nextEvidence } : {},
@@ -228,10 +228,10 @@ function updateNode(map, input) {
     ...nextKind !== void 0 ? { kind: nextKind } : {},
     ...nextLane !== void 0 ? { lane: nextLane } : {},
     ...nextSubmap !== void 0 ? { submap: nextSubmap } : {},
-    ...input.status !== void 0 ? { status: input.status } : {},
-    ...input.label !== void 0 ? { label: input.label } : {}
+    ...input2.status !== void 0 ? { status: input2.status } : {},
+    ...input2.label !== void 0 ? { label: input2.label } : {}
   };
-  return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
+  return ok({ ...map, nodes: map.nodes.map((n) => n.id === input2.id ? updated : n) });
 }
 
 // src/semantics/vocabulary.ts
@@ -1677,14 +1677,14 @@ function takeFocusRequest(defaultFile, pid) {
     rmSync(path, { force: true });
   } catch {
   }
-  let parsed2;
+  let parsed;
   try {
-    parsed2 = JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     return void 0;
   }
-  if (typeof parsed2 !== "object" || parsed2 === null) return void 0;
-  const page = parsed2.page;
+  if (typeof parsed !== "object" || parsed === null) return void 0;
+  const page = parsed.page;
   if (page === void 0 || page === null) return { page: void 0 };
   if (typeof page !== "string") return void 0;
   const id = makePageId(page);
@@ -1704,13 +1704,13 @@ function takeQuitRequest(defaultFile, pid) {
     return false;
   }
   sweepQuitRequest(defaultFile, path === targeted ? pid : void 0);
-  let parsed2;
+  let parsed;
   try {
-    parsed2 = JSON.parse(stripBom(raw));
+    parsed = JSON.parse(stripBom(raw));
   } catch {
     return false;
   }
-  return isRecord2(parsed2);
+  return isRecord2(parsed);
 }
 function sweepQuitRequest(defaultFile, pid) {
   try {
@@ -1917,13 +1917,13 @@ function openTerminalSession(options) {
 // src/watch/frame-output.ts
 function frameDifference(previous, next) {
   const compatible = previous?.columns === next.columns;
-  let output = "";
+  let output2 = "";
   for (let row = 0; row < Math.max(next.rows.length, previous?.rows.length ?? 0); row++) {
     const text = next.rows[row] ?? "";
     if (compatible && text === previous?.rows[row]) continue;
-    output += `\x1B[${row + 1};1H${text}\x1B[0m\x1B[K`;
+    output2 += `\x1B[${row + 1};1H${text}\x1B[0m\x1B[K`;
   }
-  return output;
+  return output2;
 }
 function createFrameOutput(port) {
   let previous;
@@ -1935,10 +1935,10 @@ function createFrameOutput(port) {
     if (closed || unsubscribe !== void 0 || pending === void 0) return;
     const frame = pending;
     pending = void 0;
-    const output = frameDifference(previous, frame);
-    if (output === "") return;
+    const output2 = frameDifference(previous, frame);
+    if (output2 === "") return;
     previous = frame;
-    if (!port.write(output)) {
+    if (!port.write(output2)) {
       unsubscribe = port.onDrain(() => {
         unsubscribe?.();
         unsubscribe = void 0;
@@ -2053,15 +2053,15 @@ function popDive(state) {
   }
   return { state: { ...state, diveStack: [] }, parent: void 0 };
 }
-function scan(state, input) {
+function scan(state, input2) {
   const first = !state.scanned;
   const previousActive = state.activeFile;
   const pages = [];
   const freshened = [];
   const changed = [];
-  for (const file of input.files) {
+  for (const file of input2.files) {
     const held = entryOf(state, file);
-    const mtimeMs = input.mtimeAt(file);
+    const mtimeMs = input2.mtimeAt(file);
     if (mtimeMs === void 0) {
       pages.push(held ?? { file, state: { kind: "absent" }, fresh: false });
       continue;
@@ -2071,7 +2071,7 @@ function scan(state, input) {
       pages.push(held);
       continue;
     }
-    const loaded = input.load(file);
+    const loaded = input2.load(file);
     if (loaded.ok) {
       if (!first) changed.push(file);
       const fresh = !first && file !== previousActive;
@@ -2092,24 +2092,24 @@ function scan(state, input) {
     });
   }
   let pendingFocusFile = state.pendingFocusFile;
-  if (input.focusRequest !== void 0 && !(first && pendingFocusFile !== void 0)) {
-    pendingFocusFile = input.focusRequest;
+  if (input2.focusRequest !== void 0 && !(first && pendingFocusFile !== void 0)) {
+    pendingFocusFile = input2.focusRequest;
   }
   let activeFile = previousActive;
   let requestApplied = false;
-  if (pendingFocusFile !== void 0 && input.files.includes(pendingFocusFile)) {
+  if (pendingFocusFile !== void 0 && input2.files.includes(pendingFocusFile)) {
     activeFile = pendingFocusFile;
     pendingFocusFile = void 0;
     requestApplied = true;
   }
   const mtimeIn = (file) => mtimeOf(pages.find((p) => p.file === file));
-  if (state.follow && !requestApplied && changed.length > 0 && !input.engaged) {
+  if (state.follow && !requestApplied && changed.length > 0 && !input2.engaged) {
     activeFile = mostRecentKey(changed, mtimeIn) ?? activeFile;
   }
-  if (activeFile === void 0 || !input.files.includes(activeFile)) {
-    activeFile = mostRecentKey(input.files, mtimeIn);
+  if (activeFile === void 0 || !input2.files.includes(activeFile)) {
+    activeFile = mostRecentKey(input2.files, mtimeIn);
   }
-  const files = new Set(input.files);
+  const files = new Set(input2.files);
   const next = {
     pages,
     activeFile,
@@ -2137,7 +2137,6 @@ function describeArgsError(e) {
       return `${e.flag} got "${e.raw}" (expected: ${e.rule})`;
   }
 }
-var USAGE = "usage: mellos-mapping-watch [--file <map.json>] [--page <slug>] [--interval <ms>] [--ascii] [--no-color] [--no-mouse] [--no-follow]";
 function parseArgs(argv, cwd) {
   let file = join2(cwd, STATE_FILE_RELATIVE_PATH);
   let intervalMs = POLL_INTERVAL_DEFAULT_MS;
@@ -2160,17 +2159,17 @@ function parseArgs(argv, cwd) {
       case "--page": {
         const value = valueOf(flag, argv[++i]);
         if (!value.ok) return value;
-        const parsed2 = makePageId(value.value);
-        if (!parsed2.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed2.error.rule });
-        page = parsed2.value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed.error.rule });
+        page = parsed.value;
         break;
       }
       case "--owner": {
         const value = valueOf(flag, argv[++i]);
         if (!value.ok) return value;
-        const parsed2 = makePageId(value.value);
-        if (!parsed2.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed2.error.rule });
-        owner = parsed2.value;
+        const parsed = makePageId(value.value);
+        if (!parsed.ok) return err({ kind: "invalid-value", flag, raw: value.value, rule: parsed.error.rule });
+        owner = parsed.value;
         break;
       }
       case "--interval": {
@@ -2815,10 +2814,10 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     io.input.resume();
     io.input.setEncoding("utf8");
     io.input.on("data", (chunk) => {
-      const parsed2 = parseInput(pendingInput + chunk);
-      pendingInput = parsed2.rest;
+      const parsed = parseInput(pendingInput + chunk);
+      pendingInput = parsed.rest;
       let dirty = false;
-      for (const event of parsed2.events) {
+      for (const event of parsed.events) {
         switch (event.kind) {
           case "quit":
             quit();
@@ -2995,7 +2994,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         }
       }
       if (dirty) {
-        const motionOnly = parsed2.events.every((event) => event.kind === "mouse-move" || event.kind === "mouse-drag");
+        const motionOnly = parsed.events.every((event) => event.kind === "mouse-move" || event.kind === "mouse-drag");
         if (motionOnly) requestPaint();
         else paint2();
       }
@@ -3015,11 +3014,70 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
   }
 }
 
-// src/watch/cli.ts
-var parsed = parseArgs(process.argv.slice(2), process.cwd());
-if (!parsed.ok) {
-  console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}
-${USAGE}`);
+// src/web/terminal-protocol.ts
+function parseTerminalInput(raw) {
+  if (raw.length > 16384) return void 0;
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+    const keys = Object.keys(value).sort().join(",");
+    if (value.type === "ack" && keys === "type") return { type: "ack" };
+    if (value.type === "input" && keys === "data,type" && typeof value.data === "string" && value.data.length <= 4096) return { type: "input", data: value.data };
+    if ((value.type === "start" || value.type === "resize") && keys === "cols,rows,type" && Number.isInteger(value.cols) && Number.isInteger(value.rows) && value.cols >= 20 && value.cols <= 500 && value.rows >= 8 && value.rows <= 200) {
+      return { type: value.type, cols: value.cols, rows: value.rows };
+    }
+  } catch {
+  }
+  return void 0;
+}
+
+// src/web/terminal-worker.ts
+var config = parseArgs(process.argv.slice(2), process.cwd());
+if (!config.ok || !process.send) {
+  console.error(config.ok ? "This worker requires its local service." : describeArgsError(config.error));
   process.exit(1);
 }
-runWatcher(parsed.value);
+var send = (message) => {
+  if (process.connected) process.send(message);
+};
+var BrowserOutput = class extends Writable {
+  columns = 100;
+  rows = 35;
+  acknowledge;
+  _write(chunk, _encoding, callback) {
+    this.acknowledge = () => {
+      this.acknowledge = void 0;
+      callback();
+    };
+    send({ type: "data", data: chunk.toString("utf8") });
+  }
+};
+var input = new PassThrough();
+var output = new BrowserOutput({ highWaterMark: 1 });
+var started = false;
+process.on("message", (raw) => {
+  const message = parseTerminalInput(JSON.stringify(raw));
+  if (!message) return process.exit(1);
+  if (message.type === "ack") output.acknowledge?.();
+  else if (message.type === "start" && !started) {
+    started = true;
+    output.columns = message.cols;
+    output.rows = message.rows;
+    runWatcher(config.value, {
+      interactive: true,
+      input: { setRawMode() {
+      }, resume: () => {
+        input.resume();
+      }, setEncoding: (encoding) => {
+        input.setEncoding(encoding);
+      }, on: (event, listener) => input.on(event, listener) },
+      output,
+      report: (view) => send({ type: "view", ...view.page ? { page: view.page } : {}, follow: view.follow })
+    });
+  } else if (message.type === "resize" && started) {
+    output.columns = message.cols;
+    output.rows = message.rows;
+    output.emit("resize");
+  } else if (message.type === "input" && started) input.write(message.data);
+});
+process.on("disconnect", () => process.exit(0));

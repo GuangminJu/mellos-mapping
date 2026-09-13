@@ -975,6 +975,10 @@ function goBack() {
 }
 function renderHeading() {
   const page = current(), map = page?.map;
+  const terminalUrl = new URL(base);
+  terminalUrl.searchParams.set("view", "terminal");
+  if (currentId && currentId !== "_default") terminalUrl.searchParams.set("page", currentId);
+  element("terminal-mode").href = terminalUrl.href;
   element("project").textContent = snapshot.project;
   element("title").textContent = page?.title ?? "\u5730\u56FE\u5DF2\u4E0D\u5B58\u5728";
   document.title = `${page?.title ?? "\u5730\u56FE"} \xB7 Mellos`;
