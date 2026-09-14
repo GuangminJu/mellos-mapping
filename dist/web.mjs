@@ -2271,7 +2271,7 @@ var require_websocket = __commonJS({
     var http = __require("http");
     var net = __require("net");
     var tls = __require("tls");
-    var { randomBytes: randomBytes2, createHash: createHash3 } = __require("crypto");
+    var { randomBytes: randomBytes2, createHash: createHash4 } = __require("crypto");
     var { Duplex, Readable } = __require("stream");
     var { URL: URL2 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -2939,7 +2939,7 @@ var require_websocket = __commonJS({
           abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
-        const digest = createHash3("sha1").update(key + GUID).digest("base64");
+        const digest = createHash4("sha1").update(key + GUID).digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest) {
           abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
           return;
@@ -3308,7 +3308,7 @@ var require_websocket_server = __commonJS({
     var EventEmitter = __require("events");
     var http = __require("http");
     var { Duplex } = __require("stream");
-    var { createHash: createHash3 } = __require("crypto");
+    var { createHash: createHash4 } = __require("crypto");
     var extension2 = require_extension();
     var PerMessageDeflate2 = require_permessage_deflate();
     var subprotocol2 = require_subprotocol();
@@ -3615,7 +3615,7 @@ var require_websocket_server = __commonJS({
           );
         }
         if (this._state > RUNNING) return abortHandshake(socket, 503);
-        const digest = createHash3("sha1").update(key + GUID).digest("base64");
+        const digest = createHash4("sha1").update(key + GUID).digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
           "Upgrade: websocket",
@@ -3703,8 +3703,8 @@ var require_websocket_server = __commonJS({
 });
 
 // src/web/cli.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync2, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
-import { dirname as dirname7, join as join5, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync5, realpathSync as realpathSync2, rmSync as rmSync4, statSync as statSync2 } from "node:fs";
+import { dirname as dirname8, join as join6, resolve as resolve2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // src/domain/types.ts
@@ -3924,12 +3924,37 @@ function updateNode(map, input) {
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
 }
 
+// src/domain/context.ts
+function sourceError(raw) {
+  if (!Array.isArray(raw) || raw.length > 100) return "sources must be an array of at most 100 file references";
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return "source must be an object";
+    const s = item;
+    if (Object.keys(s).some((k) => k !== "path" && k !== "sha256")) return "unknown source field";
+    if (typeof s.path !== "string" || s.path.length > 1024 || !s.path || /[\u0000-\u001f\u007f-\u009f\\:]/.test(s.path) || s.path.startsWith("/") || s.path.split("/").some((p) => !p || p === "." || p === "..")) return "source path must be relative to the project, with forward slashes and no traversal";
+    if (s.sha256 !== void 0 && (typeof s.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(s.sha256))) return "source sha256 must be a lowercase SHA256 hash";
+  }
+  return void 0;
+}
+function contextError(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "context must be an object";
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== "summary" && key !== "next") return "unknown context field";
+    if (typeof value !== "string" || value.length > 2e3 || /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(value)) return "context fields must be text of at most 2000 characters";
+  }
+  return void 0;
+}
+
 // src/domain/text.ts
 var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
 var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
 var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
 var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
 function mapTextError(map) {
+  if (map.context !== void 0) {
+    const error2 = contextError(map.context);
+    if (error2) return error2;
+  }
   const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
   let error = check("title", map.title);
   if (error) return error;
@@ -3944,6 +3969,10 @@ function mapTextError(map) {
     }
   }
   for (const [i, node] of map.nodes.entries()) {
+    if (node.sources !== void 0) {
+      const error2 = sourceError(node.sources);
+      if (error2) return `nodes[${i}]: ${error2}`;
+    }
     for (const name of ["label", "evidence", "detail"]) {
       error = check(`nodes[${i}].${name}`, node[name], name !== "label");
       if (error) return error;
@@ -4006,8 +4035,8 @@ function optionalString(rec, key, where, path) {
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
-  if (raw["version"] !== STATE_FILE_VERSION) {
-    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION}` });
+  if (raw["version"] !== STATE_FILE_VERSION && raw["version"] !== 2) {
+    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION} or 2` });
   }
   const layers = arrayField(raw, "layers", path, "required");
   if (!layers.ok) return layers;
@@ -4020,6 +4049,11 @@ function parseMap(raw, path) {
   const groups = arrayField(raw, "groups", path, "optional");
   if (!groups.ok) return groups;
   let map = EMPTY_MAP;
+  if (raw["context"] !== void 0) {
+    const error = contextError(raw["context"]);
+    if (error) return err({ kind: "bad-shape", path, detail: error });
+    map = { ...map, context: raw["context"] };
+  }
   const title = optionalString(raw, "title", "map", path);
   if (!title.ok) return title;
   if (title.value !== void 0) map = setTitle(map, title.value);
@@ -4147,6 +4181,11 @@ function parseMap(raw, path) {
       const updated = updateNode(map, { id: id.value, evidence: evidence.value });
       if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
       map = updated.value;
+    }
+    if (rawNode["sources"] !== void 0) {
+      const error = sourceError(rawNode["sources"]);
+      if (error) return err({ kind: "bad-shape", path, detail: `${where}: ${error}` });
+      map = { ...map, nodes: map.nodes.map((n) => n.id === id.value ? { ...n, sources: rawNode["sources"] } : n) };
     }
   }
   for (const [i, rawEdge] of edges.value.entries()) {
@@ -4282,15 +4321,84 @@ function loadMapFile(path) {
   return parseMap(raw, path);
 }
 
+// src/store/transaction.ts
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync as rmSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname4, join as join3 } from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+var LedgerError = class extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.code = code;
+    this.details = details;
+  }
+};
+function storeDirectory(file) {
+  const dir = dirname4(file);
+  return dir.endsWith("/pages") || dir.endsWith("\\pages") ? dirname4(dir) : dir;
+}
+function deadOwner(lock) {
+  try {
+    const owner = JSON.parse(readFileSync2(join3(lock, "owner.json"), "utf8"));
+    if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
+    try {
+      process.kill(owner.pid, 0);
+      return false;
+    } catch (e) {
+      return e.code === "ESRCH";
+    }
+  } catch {
+    return false;
+  }
+}
+function withStoreLock(file, action) {
+  const dir = storeDirectory(file);
+  mkdirSync2(dir, { recursive: true });
+  const lock = join3(dir, ".write-lock");
+  const owner = join3(lock, "owner.json");
+  const token = randomUUID();
+  try {
+    mkdirSync2(lock);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (!deadOwner(lock)) throw new LedgerError("BUSY", `Another writer owns ${lock}; retry after it completes. An orphan without owner metadata needs manual inspection.`);
+    try {
+      mkdirSync2(join3(lock, ".reap"));
+    } catch {
+      throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
+    }
+    if (!deadOwner(lock)) {
+      rmSync3(join3(lock, ".reap"), { recursive: true, force: true });
+      throw new LedgerError("BUSY", "Writer ownership changed.");
+    }
+    rmSync3(lock, { recursive: true });
+    try {
+      mkdirSync2(lock);
+    } catch {
+      throw new LedgerError("BUSY", "Another writer acquired the recovered lock.");
+    }
+  }
+  let initialized = false;
+  try {
+    writeFileSync2(owner, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
+    initialized = true;
+    return action();
+  } finally {
+    try {
+      if (!initialized || JSON.parse(readFileSync2(owner, "utf8")).token === token) rmSync3(lock, { recursive: true });
+    } catch {
+    }
+  }
+}
+
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
-import { dirname as dirname5, join as join3 } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
+import { dirname as dirname6, join as join4 } from "node:path";
 
 // src/web/source.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { statSync } from "node:fs";
-import { basename as basename2, dirname as dirname4 } from "node:path";
+import { basename as basename2, dirname as dirname5 } from "node:path";
 function readWebSnapshot(defaultFile) {
   const pages = listPageFiles(defaultFile).map((file) => {
     const id = pageIdOfFile(defaultFile, file) ?? "";
@@ -4305,15 +4413,15 @@ function readWebSnapshot(defaultFile) {
     }
   });
   if (pages.length === 0) pages.push({ id: "", title: "\u7B49\u5F85\u7B2C\u4E00\u5F20\u5730\u56FE", modified: 0, map: EMPTY_MAP });
-  const value = { project: basename2(dirname4(dirname4(defaultFile))), pages };
-  return { revision: createHash("sha256").update(JSON.stringify(value)).digest("hex"), value };
+  const value = { project: basename2(dirname5(dirname5(defaultFile))), pages };
+  return { revision: createHash2("sha256").update(JSON.stringify(value)).digest("hex"), value };
 }
 
 // src/web/launcher.ts
-var webRuntimeFile = (defaultFile) => join3(dirname5(defaultFile), "web", "server.json");
+var webRuntimeFile = (defaultFile) => join4(dirname6(defaultFile), "web", "server.json");
 async function runningWebUrl(defaultFile) {
   try {
-    const info = JSON.parse(readFileSync2(webRuntimeFile(defaultFile), "utf8"));
+    const info = JSON.parse(readFileSync3(webRuntimeFile(defaultFile), "utf8"));
     if (!Number.isInteger(info.port) || info.port < 1 || info.port > 65535 || !/^[a-f0-9]{48}$/.test(info.token)) return void 0;
     const url = `http://127.0.0.1:${info.port}/${info.token}/`;
     const response = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(700) });
@@ -4325,14 +4433,14 @@ async function runningWebUrl(defaultFile) {
 async function openWebPreview(defaultFile, entry, page, terminal = false) {
   if (page !== void 0 && (!ID_RULE.test(page) || !readWebSnapshot(defaultFile).value.pages.some((p) => p.id === page))) throw new Error(`No map page named "${page}".`);
   let url = await runningWebUrl(defaultFile);
-  if (url && terminal) {
+  if (url) {
     const health = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(2e3) });
     const info = await health.json();
-    if (!info.surfaces?.includes("web-terminal")) {
+    if (!info.formats?.includes(2) || terminal && !info.surfaces?.includes("web-terminal")) {
       await fetch(`${url}api/stop`, { method: "POST", signal: AbortSignal.timeout(2e3) });
       const deadline = Date.now() + 3e3;
       while (await runningWebUrl(defaultFile)) {
-        if (Date.now() > deadline) throw new Error("Old web viewer is still stopping. Retry opening the terminal.");
+        if (Date.now() > deadline) throw new Error("Old web viewer is still stopping. Retry opening the map.");
         await new Promise((resolve3) => setTimeout(resolve3, 100));
       }
       url = void 0;
@@ -4365,9 +4473,9 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 
 // src/preview/publisher.ts
-import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
-import { dirname as dirname6, join as join4, resolve } from "node:path";
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
+import { dirname as dirname7, join as join5, resolve } from "node:path";
 
 // src/semantics/vocabulary.ts
 var STATUS_GLYPHS = {
@@ -5084,15 +5192,15 @@ var PREVIEW_DIR_NAME = "previews";
 var ENABLED = ".enabled";
 var PUBLISH_LOCK = ".publish-lock";
 function previewDirectory(defaultFile) {
-  return join4(dirname6(defaultFile), PREVIEW_DIR_NAME);
+  return join5(dirname7(defaultFile), PREVIEW_DIR_NAME);
 }
 function previewFile(defaultFile, page) {
   if (page !== void 0 && !ID_RULE.test(page)) throw new Error("Invalid preview page id.");
-  return join4(previewDirectory(defaultFile), documentName(page));
+  return join5(previewDirectory(defaultFile), documentName(page));
 }
 function save(path, contents) {
   try {
-    if (readFileSync3(path, "utf8") === contents) return;
+    if (readFileSync4(path, "utf8") === contents) return;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -5100,19 +5208,19 @@ function save(path, contents) {
   if (!result.ok) throw new Error(describeStoreError(result.error));
 }
 function ownedDirectory(path) {
-  mkdirSync2(path, { recursive: true });
-  const expected = join4(realpathSync(dirname6(path)), path.slice(dirname6(path).length + 1));
+  mkdirSync3(path, { recursive: true });
+  const expected = join5(realpathSync(dirname7(path)), path.slice(dirname7(path).length + 1));
   const actual = realpathSync(path);
   if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
     throw new Error(`Preview directory redirects outside its parent: ${path}`);
   }
 }
 function acquireLock(directory) {
-  const path = join4(directory, PUBLISH_LOCK);
+  const path = join5(directory, PUBLISH_LOCK);
   const deadline = Date.now() + 2e3;
   while (true) {
     try {
-      mkdirSync2(path);
+      mkdirSync3(path);
       return () => rmdirSync(path);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
@@ -5123,7 +5231,7 @@ function acquireLock(directory) {
 }
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
-  const enabledFile = join4(directory, ENABLED);
+  const enabledFile = join5(directory, ENABLED);
   const enabled = () => existsSync3(enabledFile);
   const refresh = (page) => {
     try {
@@ -5141,24 +5249,24 @@ function createPreviewPublisher(defaultFile) {
         }
         if (page !== void 0 && !pages.some((p) => p.page === page)) return err(`No map page named "${page}".`);
         if (page === void 0 && !pages.some((p) => p.page === void 0)) pages.unshift({ page: void 0, map: EMPTY_MAP });
-        const images = join4(directory, "images");
+        const images = join5(directory, "images");
         ownedDirectory(images);
         const present = /* @__PURE__ */ new Set();
         for (const item of pages) {
           const svg = renderMapSvg(item.map);
-          const digest = createHash2("sha256").update(svg).digest("hex");
+          const digest = createHash3("sha256").update(svg).digest("hex");
           const image = `images/${digest}.svg`;
-          save(join4(images, `${digest}.svg`), svg);
+          save(join5(images, `${digest}.svg`), svg);
           const filename = documentName(item.page);
-          save(join4(directory, filename), renderMapMarkdown(item.map, image, pages));
+          save(join5(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
         for (const filename of readdirSync2(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
-            save(join4(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
+            save(join5(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
         }
-        const index = join4(directory, "index.md");
+        const index = join5(directory, "index.md");
         save(index, renderPreviewIndex(pages));
         return ok({ path: resolve(path), index: resolve(index), pages: pages.length });
       } finally {
@@ -5381,7 +5489,7 @@ async function startWebService(defaultFile, assets, options = {}) {
         }
       }
       if (req.method === "GET" && route === "api/health") {
-        send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, surfaces: terminalService ? ["web", "web-terminal"] : ["web"] }));
+        send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, formats: [1, 2], surfaces: terminalService ? ["web", "web-terminal"] : ["web"] }));
         return;
       }
       if (req.method === "GET" && route === "api/state") {
@@ -5396,23 +5504,26 @@ async function startWebService(defaultFile, assets, options = {}) {
         return;
       }
       if (req.method === "DELETE" && route.startsWith("api/pages/")) {
-        const id = route.slice("api/pages/".length);
-        if (id !== "_default" && !ID_RULE.test(id)) {
-          send(res, 400, '{"error":"Invalid page"}');
+        withStoreLock(defaultFile, () => {
+          const id = route.slice("api/pages/".length);
+          if (id !== "_default" && !ID_RULE.test(id)) {
+            send(res, 400, '{"error":"Invalid page"}');
+            return;
+          }
+          if (req.headers["if-match"] !== `"${readWebSnapshot(defaultFile).revision}"`) {
+            send(res, 409, '{"error":"\u5730\u56FE\u5DF2\u66F4\u65B0\uFF0C\u8BF7\u91CD\u65B0\u786E\u8BA4\u5220\u9664\u3002"}');
+            return;
+          }
+          const result = deletePageFile(pageFilePath(defaultFile, id === "_default" ? void 0 : id));
+          if (!result.ok) {
+            send(res, 500, JSON.stringify({ error: describeStoreError(result.error) }));
+            return;
+          }
+          const previews = createPreviewPublisher(defaultFile);
+          const refreshed = previews.enabled() ? previews.refresh() : void 0;
+          send(res, 200, JSON.stringify({ deleted: true, ...refreshed && !refreshed.ok ? { warning: `\u5730\u56FE\u5DF2\u5220\u9664\uFF0CMarkdown \u9884\u89C8\u5F85\u91CD\u65B0\u751F\u6210\uFF1A${refreshed.error}` } : {} }));
           return;
-        }
-        if (req.headers["if-match"] !== `"${readWebSnapshot(defaultFile).revision}"`) {
-          send(res, 409, '{"error":"\u5730\u56FE\u5DF2\u66F4\u65B0\uFF0C\u8BF7\u91CD\u65B0\u786E\u8BA4\u5220\u9664\u3002"}');
-          return;
-        }
-        const result = deletePageFile(pageFilePath(defaultFile, id === "_default" ? void 0 : id));
-        if (!result.ok) {
-          send(res, 500, JSON.stringify({ error: describeStoreError(result.error) }));
-          return;
-        }
-        const previews = createPreviewPublisher(defaultFile);
-        const refreshed = previews.enabled() ? previews.refresh() : void 0;
-        send(res, 200, JSON.stringify({ deleted: true, ...refreshed && !refreshed.ok ? { warning: `\u5730\u56FE\u5DF2\u5220\u9664\uFF0CMarkdown \u9884\u89C8\u5F85\u91CD\u65B0\u751F\u6210\uFF1A${refreshed.error}` } : {} }));
+        });
         return;
       }
       if (req.method === "POST" && route === "api/stop") {
@@ -5422,7 +5533,7 @@ async function startWebService(defaultFile, assets, options = {}) {
       }
       send(res, 404, '{"error":"Not found"}');
     } catch (error) {
-      send(res, 500, JSON.stringify({ error: String(error) }));
+      send(res, error instanceof LedgerError && error.code === "BUSY" ? 409 : 500, JSON.stringify({ error: String(error) }));
     }
   });
   const terminalService = assets.terminal && options.terminalWorker ? attachTerminalService(server, {
@@ -5471,19 +5582,19 @@ async function runWeb(args) {
   if (args[0] === "--serve" && args.length === 2) {
     const file2 = resolve2(args[1]);
     if (await runningWebUrl(file2)) return;
-    const directory = dirname7(webRuntimeFile(file2));
-    mkdirSync3(directory, { recursive: true });
-    if (realpathSync2(directory).toLowerCase() !== join5(realpathSync2(dirname7(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
-    const assets = join5(dirname7(entry), "web");
+    const directory = dirname8(webRuntimeFile(file2));
+    mkdirSync4(directory, { recursive: true });
+    if (realpathSync2(directory).toLowerCase() !== join6(realpathSync2(dirname8(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
+    const assets = join6(dirname8(entry), "web");
     let service;
     service = await startWebService(file2, {
-      html: readFileSync4(join5(assets, "index.html"), "utf8"),
-      javascript: readFileSync4(join5(assets, "app.js"), "utf8"),
-      css: readFileSync4(join5(assets, "app.css"), "utf8"),
-      terminal: { html: readFileSync4(join5(assets, "terminal.html"), "utf8"), javascript: readFileSync4(join5(assets, "terminal.js"), "utf8"), css: readFileSync4(join5(assets, "terminal.css"), "utf8"), xtermCss: readFileSync4(join5(assets, "xterm.css"), "utf8") }
-    }, { terminalWorker: join5(dirname7(entry), "terminal-worker.mjs"), onClose: () => {
+      html: readFileSync5(join6(assets, "index.html"), "utf8"),
+      javascript: readFileSync5(join6(assets, "app.js"), "utf8"),
+      css: readFileSync5(join6(assets, "app.css"), "utf8"),
+      terminal: { html: readFileSync5(join6(assets, "terminal.html"), "utf8"), javascript: readFileSync5(join6(assets, "terminal.js"), "utf8"), css: readFileSync5(join6(assets, "terminal.css"), "utf8"), xtermCss: readFileSync5(join6(assets, "xterm.css"), "utf8") }
+    }, { terminalWorker: join6(dirname8(entry), "terminal-worker.mjs"), onClose: () => {
       try {
-        if (JSON.parse(readFileSync4(webRuntimeFile(file2), "utf8")).token === service.token) rmSync3(webRuntimeFile(file2));
+        if (JSON.parse(readFileSync5(webRuntimeFile(file2), "utf8")).token === service.token) rmSync4(webRuntimeFile(file2));
       } catch {
       }
     } });
@@ -5515,7 +5626,7 @@ async function runWeb(args) {
   }
   const project = resolve2(args[0]);
   if (!existsSync4(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
-  const file = join5(project, STATE_FILE_RELATIVE_PATH);
+  const file = join6(project, STATE_FILE_RELATIVE_PATH);
   if (stop) {
     const url = await runningWebUrl(file);
     if (url) await fetch(`${url}api/stop`, { method: "POST", signal: AbortSignal.timeout(2e3) });
