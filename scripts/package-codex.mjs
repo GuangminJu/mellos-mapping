@@ -34,6 +34,7 @@ export const CODEX_FILES = [
   'scripts/tmux-session.mjs',
   'scripts/watcher-command.mjs',
   'docs/codex.md',
+  'docs/map-api.md',
   'LICENSE',
 ];
 

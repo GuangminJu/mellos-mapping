@@ -16,10 +16,13 @@
  * The concurrency model P2 buys, stated plainly:
  *   - Several writers may target one project at once. Each save is atomic and
  *     lands whole, so a reader never sees half a map — but there is NO
- *     lost-update protection: two saves of the same page race, and the last
+ *     lost-update protection in this low-level save API: two saves race, and the last
  *     rename wins, silently discarding what the other writer computed from an
  *     older read. Pages are the isolation unit (one effort = one page); two
  *     sessions that must not clobber each other belong on two pages.
+ *     Current MCP/viewer writers additionally use transaction.ts to lock the
+ *     complete read/modify/write operation, with optional revision checks.
+ *     Direct library saves and older processes do not acquire that lock.
  *   - The temp file carries the writer's pid and a random suffix, so
  *     concurrent writers never share one and never install each other's
  *     half-written content.
@@ -58,3 +61,5 @@ export { VIEWERS_DIR_NAME, VIEWER_FILE_VERSION, VIEWER_HEARTBEAT_MS, VIEWER_STAL
 export { CONFIG_FILE_NAME, CONFIG_FILE_VERSION, configFilePath, userConfigFilePath, MAPPING_POLICIES, type MappingPolicy, type InvalidPolicy, makeMappingPolicy, describeMappingPolicy, loadMappingPolicy, saveMappingPolicy, POLICY_SCOPES, type PolicyScope, type MappingPolicyScopes, effectiveMappingPolicy } from './policy.js';
 export { LEGACY_STATE_FILE_RELATIVE_PATH, migrateLegacyStore } from './migration.js';
 export { loadMapFile, saveMapFile } from './maps.js';
+export { withStoreLock, revisionOf, assertRevision, LedgerError } from './transaction.js';
+export { resolveProjectDirectory } from './project.js';

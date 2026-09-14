@@ -62,7 +62,7 @@ Clone the branch for your host, then run one command. No build is required.
 | `chatgpt-app` | ChatGPT desktop, Codex mode | `node install.mjs` |
 
 Requires Node.js 18+ and the corresponding host CLI on PATH. The installer checks
-release integrity and all six MCP tools, retains the runtime outside the clone,
+release integrity and all eight MCP tools, retains the runtime outside the clone,
 and configures the host. Start a new conversation after installation.
 See [release and branch instructions](docs/releasing.md).
 
@@ -158,7 +158,7 @@ directory they resolved at startup.
 
 This is Codex mode in the ChatGPT desktop app (also called Codex App).
 From the source branch run the following command; on `chatgpt-app`, omit the
-host argument. It configures the desktop skill, marketplace and six MCP tools.
+host argument. It configures the desktop skill, marketplace and eight MCP tools.
 
 ```
 node install.mjs chatgpt-app
@@ -239,7 +239,7 @@ servers), then the server process's own working directory. Set
 somewhere other than the project you are working in.
 
 The skill/discipline layer is Claude Code + Codex specific; other clients
-get the six `mmap_*` tools and the pane, and bring their own prompting.
+get the eight `mmap_*` tools and the pane, and bring their own prompting.
 
 ## Use
 
@@ -494,12 +494,19 @@ When a hidden sub-map changes in the background, the footer says so.
 
 ## MCP tools
 
+Start with `mmap_read` to resume an existing page; a new conversation is not a
+new effort. Use stable IDs, filtered reads and revision-checked writes. The
+[persistent-map API guide](docs/map-api.md) covers complete CRUD, atomic mixed
+batches, context checkpoints, source hashes and worktree boundaries.
+
 | Tool | Purpose |
 | --- | --- |
 | `mmap_declare` | Grow the map: title (`null` removes it), diagram kind, layer bands, lanes, groups (subsystems), nodes — with `status`, `evidence`, `detail`, `kind`, `group`, `lane`, `submap` — and edges, optionally labeled (all-or-nothing batch) |
 | `mmap_update` | Record progress **and revise**: status (`planned → in-progress → done` +evidence, `regressed`), relabel a node, move it to another band (`layer`), join/leave a group or lane, set a node kind or a `submap`; rename and re-rank bands (`layers`), relabel groups (`groups`) and lanes (`lanes`); `null` clears any clearable field |
 | `mmap_remove` | Revise: drop edges, nodes, groups, lanes, empty bands — and, with `pages`, whole pages, file and all (permanent; applied after this call's map edits) |
 | `mmap_view` | Render the current map as text inline (optional `zoom`, `-4`…`2`), ending with a `pages:` line naming every page the project has and which one you are looking at |
+| `mmap_read` | Structured page discovery, precise IDs, filtered/paginated reads, context and source changes |
+| `mmap_batch` | One-page mixed create/update/remove transaction with a revision check |
 | `mmap_setup` | Get/set the project's mapping policy — when maps open |
 | `mmap_open` | Put the map on your screen: open the pane, or retarget an open one to a `page` (`window: true` for the dedicated window). It answers with whether a pane actually reported in afterwards, not merely that a command ran — and it can never close one |
 
@@ -624,7 +631,7 @@ The repo is itself layered bottom-up, and each layer has its spec:
 | 1 store | `src/store/store.ts` | `store.test.ts`, `atomic-save.test.ts` | atomic state-file persistence on Node |
 | 1 semantics | `src/semantics/` | `semantics.test.ts` | medium-neutral view semantics: zoom ladder, group aggregation, page-set rules, sequence flip, the shared glyph vocabulary |
 | 2 apply | `src/server/apply.ts` | `apply.test.ts` | tool inputs → transactional op sequences |
-| 3 server | `src/server/server.ts` | `server.test.ts`, `save-failure.test.ts` | the six MCP tools over stdio |
+| 3 server | `src/server/server.ts` | `server.test.ts`, `save-failure.test.ts` | the eight MCP tools over stdio |
 | 4 render | `src/render/` | `render.test.ts`, `routing.test.ts` | the ASCII renderer and its wire routing |
 | 4 pane | `src/watch/` | `watch.test.ts`, `pane-state.test.ts`, `input.test.ts` | the polling pane: page set, input parsing, panel and chrome |
 | — launchers | `scripts/` | `open-pane.test.mjs`, `codex-register.test.mjs` | plain-node entry points |

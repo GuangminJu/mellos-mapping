@@ -19,15 +19,15 @@ export async function runningWebUrl(defaultFile: string): Promise<string | undef
 export async function openWebPreview(defaultFile: string, entry: string, page?: string, terminal = false): Promise<string> {
   if (page !== undefined && (!ID_RULE.test(page) || !readWebSnapshot(defaultFile).value.pages.some(p => p.id === page))) throw new Error(`No map page named "${page}".`);
   let url = await runningWebUrl(defaultFile);
-  if (url && terminal) {
+  if (url) {
     const health = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(2000) });
-    const info = await health.json() as { surfaces?: string[] };
-    if (!info.surfaces?.includes('web-terminal')) {
+    const info = await health.json() as { surfaces?: string[]; formats?: number[] };
+    if (!info.formats?.includes(2) || (terminal && !info.surfaces?.includes('web-terminal'))) {
       // A verified same-project service from an older install cannot serve this mode.
       await fetch(`${url}api/stop`, { method: 'POST', signal: AbortSignal.timeout(2000) });
       const deadline = Date.now() + 3000;
       while (await runningWebUrl(defaultFile)) {
-        if (Date.now() > deadline) throw new Error('Old web viewer is still stopping. Retry opening the terminal.');
+        if (Date.now() > deadline) throw new Error('Old web viewer is still stopping. Retry opening the map.');
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       url = undefined;

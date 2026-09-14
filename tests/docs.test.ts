@@ -26,6 +26,8 @@ const DOCS = [
   'README.zh-CN.md',
   'CHANGELOG.md',
   'skills/mellos-mapping/SKILL.md',
+  'integrations/codex/skills/mellos-mapping/SKILL.md',
+  'docs/map-api.md',
   'commands/mmap.md',
 ];
 
@@ -58,10 +60,12 @@ describe('the tool names in the docs', () => {
     [...read('src/server/server.ts').matchAll(/registerTool\(\s*'(mmap_[a-z_]+)'/g)].map((m) => m[1]!),
   );
 
-  it('the server registers the six tools the docs are checked against', () => {
+  it('the server registers the eight tools the docs are checked against', () => {
     expect([...registered].sort()).toEqual([
+      'mmap_batch',
       'mmap_declare',
       'mmap_open',
+      'mmap_read',
       'mmap_remove',
       'mmap_setup',
       'mmap_update',

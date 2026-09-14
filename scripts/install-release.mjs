@@ -47,7 +47,7 @@ export async function installRelease(source, argv, {
   delete checkEnv.CLAUDE_PROJECT_DIR;
   try { await verify(join(source, prefix, 'dist/server.mjs'), scratch, checkEnv); }
   finally { rmSync(scratch, { recursive: true, force: true }); }
-  log(`Verified ${edition} ${manifest.version}: ${cliVersion}; all six MCP tools available.`);
+  log(`Verified ${edition} ${manifest.version}: ${cliVersion}; all eight MCP tools available.`);
   if (argv.includes('--check')) return { edition, checked: true };
   const target = join(installHome, edition);
   const transaction = stageRelease(source, target, manifest);

@@ -5,11 +5,34 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { packageEdition } from './release-layout.mjs';
 import { copyRelease, installRelease, validateRelease } from './install-release.mjs';
 import { hostRunner, requireSuccess } from './host-cli.mjs';
 import { verifyRuntime } from './verify-runtime.mjs';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+
+/** Read installed skills using an optional actual desktop engine, without model turns. */
+async function checkDesktopSkills(engine, env, cwd) {
+  const child = spawn(engine, ['app-server', '--listen', 'stdio://'], { env, cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const ended = new Promise(resolve => child.once('close', resolve));
+  child.stderr.resume();
+  const input = createInterface({ input: child.stdout });
+  let id = 0;
+  const pending = new Map();
+  input.on('line', line => { let message; try { message = JSON.parse(line); } catch { return; } const waiter = pending.get(message.id); if (!waiter) return; pending.delete(message.id); clearTimeout(waiter.timer); message.error ? waiter.reject(new Error(JSON.stringify(message.error))) : waiter.resolve(message.result); });
+  const request = (method, params) => new Promise((resolve, reject) => { const key = ++id; const timer = setTimeout(() => { pending.delete(key); reject(new Error(`Timed out: ${method}`)); }, 25000); pending.set(key, { resolve, reject, timer }); child.stdin.write(JSON.stringify({ id: key, method, params }) + '\n'); });
+  try {
+    const hello = await request('initialize', { clientInfo: { name: 'mellos-install-check', version: '1' }, capabilities: { experimentalApi: true } });
+    child.stdin.write(JSON.stringify({ method: 'initialized' }) + '\n');
+    const response = await request('skills/list', { cwds: [cwd], forceReload: true });
+    const skills = response.data.flatMap(entry => entry.skills).filter(skill => skill.name.includes('mellos-mapping'));
+    assert.equal(skills.length, 1); assert.equal(skills[0].enabled, true);
+    assert.match(skills[0].description, /resume persistent/);
+    return { engine: hello.userAgent, skills };
+  } finally { for (const waiter of pending.values()) clearTimeout(waiter.timer); child.stdin.end(); const stop = setTimeout(() => child.kill(), 1500); await ended; clearTimeout(stop); input.close(); }
+}
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const edition = process.argv[2];
@@ -49,7 +72,9 @@ try {
     }
     writeFileSync(join(old, 'release.json'), JSON.stringify(oldManifest));
   }
-  const previous = await installRelease(old, [], options);
+  // Verify actual older releases against their own protocol contract (six vs eight tools).
+  const { verifyRuntime: verifyPrevious } = await import(pathToFileURL(join(old, 'scripts/verify-runtime.mjs')).href);
+  const previous = await installRelease(old, [], { ...options, verify: verifyPrevious });
   let checks = 0;
   await assert.rejects(installRelease(clone, [], { ...options, verify: async (...args) => {
     if (++checks === 2) throw new Error('Injected post-install failure');
@@ -68,10 +93,11 @@ try {
     ? ['plugin', 'list', '--marketplace', first.market, '--json']
     : ['plugin', 'list', '--json']), 'List installed plugins');
   assert.ok(installed.includes('mellos-mapping'));
+  const desktop = edition === 'chatgpt-app' && process.argv[5] ? await checkDesktopSkills(process.argv[5], env, profile) : undefined;
   console.log(JSON.stringify({ edition, previousVersion: oldManifest.version, version: validateRelease(first.target).version,
     previousRelease: previousRelease ?? 'synthetic previous release fixture',
     firstInstall: true, upgrade: true, failedUpgradeRestored: true, repeatedInstall: true,
-    cloneRemoved: true, runtimeHandshake: true, installation: JSON.parse(installed) }, null, 2));
+    cloneRemoved: true, runtimeHandshake: true, installation: JSON.parse(installed), ...(desktop ? { desktop } : {}) }, null, 2));
 } finally {
   // Solely the generated test profile and configuration, never the real profile.
   rmSync(temporary, { recursive: true, force: true });

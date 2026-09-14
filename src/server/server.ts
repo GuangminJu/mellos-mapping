@@ -1,11 +1,13 @@
 /**
- * Layer 3 — the MCP server: six tools over one state file.
+ * Layer 3 — the MCP server: eight tools over a persistent project store.
  *
  *   mmap_declare  grow the map (title, bands, lanes, groups, nodes, edges)
  *   mmap_update   record progress AND revise (status, evidence, moves, renames)
  *   mmap_remove   take things off the map (edges, nodes, groups, lanes, bands)
  *                 — and whole PAGES, file and all
  *   mmap_view     render the map as text, and name the project's pages
+ *   mmap_read     bounded structured reads, revisions and source checks
+ *   mmap_batch    one-page mixed transactions validated against the final graph
  *   mmap_setup    get/set the mapping policy (when maps open), user-wide by
  *                 default and per-project where a project must differ
  *   mmap_open     put the map on the user's screen — the one tool that reaches
@@ -16,7 +18,7 @@
  * whether its terminal pane is visible at the time of an explicit open.
  *
  * Every mutating call is load -> apply (all-or-nothing, Layer 2) -> save
- * (atomic, Layer 1). The server holds no map state between calls: the file
+ * (atomic, Layer 1), inside a cross-process project lock. The server holds no map state between calls: the file
  * is the single source of truth, so several sessions against one project
  * stay consistent per call. A save that does not land changes nothing and is
  * reported as such — see saveFailed — so a refused write never leaves the
@@ -30,8 +32,7 @@
  *
  * The state file lives in the project the CLIENT is working in, resolved in
  * this order: MELLOS_MAPPING_CWD (explicit override for manual runs),
- * CLAUDE_PROJECT_DIR (set by Claude Code for plugin MCP servers — the
- * documented contract), then this process's cwd as the last resort.
+ * CLAUDE_PROJECT_DIR, then the nearest store or Git root discovered from cwd.
  *
  * The mapping policy is the one piece of state that also lives OUTSIDE the
  * project, in the user's own configuration. Both paths are resolved at the
@@ -76,14 +77,18 @@ import { createPreviewPublisher, previewFile } from '../preview/publisher.js';
 import { openWebPreview, webRuntimeFile } from '../web/launcher.js';
 import { terminalHandoff } from './terminal-handoff.js';
 
-import { declareTool, updateTool, removeTool, setupTool, viewTool, openTool } from './tool-definitions.js';
+import { declareTool, updateTool, removeTool, setupTool, viewTool, openTool, readTool, batchTool } from './tool-definitions.js';
+import { readMaps, requireMap } from './read.js';
+import { applyBatch } from './mutations.js';
+import { LedgerError, withStoreLock, revisionOf, assertRevision } from '../store/transaction.js';
+import { resolveProjectDirectory } from '../store/project.js';
 import { pagesLine, paneLine } from './presence.js';
 import { loadOrEmpty, mutateMap } from './map-service.js';
 import { type LauncherRun, launchPane, awaitPane, paneShows, launcherViewerPid, PANE_REPORT_TIMEOUT_MS, launcherArgs, projectDirOf, openOutcome } from './pane-launcher.js';
 export { type LauncherRun, launcherPath, launcherArgs, projectDirOf, openOutcome } from './pane-launcher.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.22.1';
+export const SERVER_VERSION = '0.23.0';
 
 interface ToolText {
   [key: string]: unknown;
@@ -93,6 +98,16 @@ interface ToolText {
 
 function text(s: string, isError = false): ToolText {
   return { content: [{ type: 'text', text: s }], ...(isError ? { isError: true } : {}) };
+}
+function structured(value: Record<string, unknown>): ToolText {
+  return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
+}
+function guard(action: () => ToolText): ToolText {
+  try { return action(); }
+  catch (error) {
+    const failure = error instanceof LedgerError ? error : new LedgerError('IO_ERROR', String(error));
+    return { ...structured({ error: { code: failure.code, message: failure.message, ...failure.details } }), isError: true };
+  }
 }
 
 /**
@@ -115,7 +130,7 @@ function saveFailed(error: StoreError): ToolText {
  * Exported for tests.
  */
 export function buildServer(stateFile: string, userConfigFile: string, launch: (args: readonly string[]) => Promise<LauncherRun> = launchPane): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: 'Maps persist across conversations. Before mapping or resuming work, use mmap_read to discover pages, then read the relevant records and revision. A new conversation is not a new effort. Reuse verified nodes; submit only necessary changes with expectedRevision. mmap_view is a picture, not the editable data. Read mmap_setup for the user mapping policy.' });
   // Session-local failure feedback prevents each map write from re-requesting
   // the same unavailable terminal. An explicit successful retry clears it.
   let paneOpenFailure: string | undefined;
@@ -134,15 +149,17 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
   // this boundary cannot smuggle in an invalid slug.
   const fileOf = (page: string | undefined): string => pageFilePath(stateFile, page as PageId | undefined);
 
-  const mutate = (page: string | undefined, apply: (map: MellosMap) => Result<MellosMap, string>): ToolText => {
-    const result = mutateMap(fileOf(page), apply);
+  const mutateUnlocked = (page: string | undefined, apply: (map: MellosMap) => Result<MellosMap, string>, expectedRevision?: string): ToolText => {
+    const result = mutateMap(fileOf(page), apply, expectedRevision);
     if (!result.ok) {
       const failure = result.error;
-      if (failure.kind === 'save') return saveFailed(failure.error);
-      return text(failure.kind === 'refused' ? `refused (nothing changed): ${failure.detail}` : failure.detail, true);
+      if (failure.kind === 'save') return { ...saveFailed(failure.error), structuredContent: { error: { code: 'SAVE_FAILED', message: describeStoreError(failure.error) } } };
+      return { ...text(failure.kind === 'refused' ? `refused (nothing changed): ${failure.detail}` : failure.detail, true), structuredContent: { error: { code: failure.kind === 'refused' ? 'REFUSED' : 'INVALID_STORE', message: failure.detail } } };
     }
-    return text(summarize(result.value) + (page !== undefined ? ` [page: ${page}]` : '') + refreshPreview(page));
+    const revision = revisionOf(result.value);
+    return { ...text(summarize(result.value) + (page !== undefined ? ` [page: ${page}]` : '') + `\nrevision: ${revision}` + refreshPreview(page)), structuredContent: { page: page ?? null, revision, counts: { nodes: result.value.nodes.length, edges: result.value.edges.length } } };
   };
+  const mutate = (page: string | undefined, apply: (map: MellosMap) => Result<MellosMap, string>, expectedRevision?: string): ToolText => guard(() => withStoreLock(stateFile, () => mutateUnlocked(page, apply, expectedRevision)));
 
 
   /**
@@ -153,7 +170,7 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
    * bury the reason it did not.
    */
   const withPane = (result: ToolText, page: string | undefined): ToolText =>
-    result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ''}\n${existsSync(webRuntimeFile(stateFile)) ? 'web: configured — the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page)}`);
+    result.isError === true || previews.enabled() ? result : { ...result, ...text(`${result.content[0]?.text ?? ''}\n${existsSync(webRuntimeFile(stateFile)) ? 'web: configured — the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page)}`) };
   /** The named pages this project has right now, read from the store. */
   const knownPages = (): PageId[] =>
     listPageFiles(stateFile)
@@ -254,24 +271,44 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
     'mmap_declare',
     declareTool(),
     (input) => {
-      const result = withPane(mutate(input.page, (map) => applyDeclare(map, input)), input.page);
+      const result = withPane(mutate(input.page, (map) => applyDeclare(map, input), input.expectedRevision), input.page);
       if (result.isError === true) return result;
       const nudge = setupNudge();
-      return nudge === '' ? result : text((result.content[0]?.text ?? '') + nudge);
+      return nudge === '' ? result : { ...result, ...text((result.content[0]?.text ?? '') + nudge) };
     },
   );
 
   server.registerTool(
     'mmap_update',
     updateTool(),
-    (input) => withPane(mutate(input.page, (map) => applyUpdate(map, input)), input.page),
+    (input) => withPane(mutate(input.page, (map) => { requireMap(fileOf(input.page)); return applyUpdate(map, input); }, input.expectedRevision), input.page),
   );
+
+  server.registerTool('mmap_read', readTool(), input => guard(() => structured(readMaps(stateFile, input))));
+  server.registerTool('mmap_batch', batchTool(), input => withPane(mutate(input.page, map => {
+    if (!existsSync(fileOf(input.page)) && !input.operations.some(op => op.op === 'declare')) throw new LedgerError('NOT_FOUND', 'Create the page before updating it.');
+    return applyBatch(map, input.operations, input.page);
+  }, input.expectedRevision), input.page));
 
   server.registerTool(
     'mmap_remove',
     removeTool(),
-    (input) => {
-      if (input.pages === undefined) return withPane(mutate(input.page, (map) => applyRemove(map, input)), input.page);
+    (input) => guard(() => withStoreLock(stateFile, () => {
+      if (input.deletePage) {
+        if (input.pages !== undefined || [input.nodes, input.edges, input.layers, input.groups, input.lanes].some(items => items !== undefined)) throw new LedgerError('INVALID_ARGUMENT', 'deletePage cannot be combined with other edits.');
+        const map = requireMap(fileOf(input.page));
+        const revision = revisionOf(map);
+        assertRevision(revision, input.expectedRevision);
+        const references = input.page === undefined ? [] : listPageFiles(stateFile).filter(file => file !== fileOf(input.page)).flatMap(file => requireMap(file).nodes.filter(node => node.submap === input.page).map(node => ({ page: pageIdOfFile(stateFile, file) ?? null, node: node.id })));
+        if (references.length && input.references !== 'keep') throw new LedgerError('REFERENCED', 'Page has inbound submap references; unlink them or explicitly choose references: keep.', { references });
+        const deleted = deletePageFile(fileOf(input.page));
+        if (!deleted.ok) throw new LedgerError('DELETE_FAILED', describeStoreError(deleted.error));
+        const preview = refreshPreview(undefined);
+        return structured({ deleted: true, page: input.page ?? null, revision: 'absent', previousRevision: revision, references, ...(preview ? { preview } : {}) });
+      }
+      if (input.references !== undefined) throw new LedgerError('INVALID_ARGUMENT', 'references requires deletePage: true');
+      if (input.pages === undefined) return withPane(mutateUnlocked(input.page, (map) => applyRemove(map, input), input.expectedRevision), input.page);
+      if (input.expectedRevision !== undefined) throw new LedgerError('INVALID_ARGUMENT', 'Use deletePage for a version-checked page deletion. Legacy pages batches report partial success.');
       // validate → prepare → commit: everything refusable is refused before
       // the first file is touched, because a deletion has no rollback.
       const refusal = refusePageDeletion(input.pages, input.page);
@@ -288,12 +325,12 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
         // A call that only deletes pages must touch no map at all: mutate
         // would load a missing default page as EMPTY_MAP and save it, so a
         // bare `{pages: [...]}` would create the very file it never named.
-        const edited = mutate(input.page, (map) => applyRemove(map, input));
+        const edited = mutateUnlocked(input.page, (map) => applyRemove(map, input));
         if (edited.isError === true) return edited; // edits refused: nothing deleted either
         summary = `${edited.content[0]?.text ?? ''}\n`;
       }
       return withPane(deletePages(input.pages, summary), input.page);
-    },
+    })),
   );
 
   server.registerTool(
@@ -394,7 +431,7 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
 
 /** Resolve where the map file lives; see module header for the precedence contract. */
 export function resolveStateFile(env: NodeJS.ProcessEnv, cwd: string): string {
-  const projectDir = env['MELLOS_MAPPING_CWD'] ?? env['CLAUDE_PROJECT_DIR'] ?? cwd;
+  const projectDir = env['MELLOS_MAPPING_CWD'] ?? env['CLAUDE_PROJECT_DIR'] ?? resolveProjectDirectory(cwd);
   return join(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 

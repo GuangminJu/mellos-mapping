@@ -1,8 +1,8 @@
 ---
 name: mellos-mapping
 description: >-
-  Display a live layered plan beside the current conversation in ChatGPT desktop
-  Codex mode (Codex App), and update it as implementation is verified. Use for
+  Create and resume persistent layered maps in Codex CLI and Codex App,
+  and update them as implementation is verified. Use for
   Mellos maps, /mmap, dependency diagrams, visual plans and development progress.
   For proactive use, respect the user's mmap_setup policy.
 ---
@@ -10,10 +10,15 @@ description: >-
 # Mellos Mapping for ChatGPT desktop · Codex mode
 
 Create a useful layered plan and keep it visible beside this conversation.
-The six MCP tools use the `mmap_` prefix; the host may add a server namespace.
+The eight MCP tools use the `mmap_` prefix; the host may add a server namespace.
 Maps belong to the current project: `.mellos/map.json` and named pages under
 `.mellos/pages/`. A named page can exist without the default map file.
-Use `mmap_view` to discover pages and reuse the page for this effort.
+Use `mmap_read {resource: "pages"}` to discover saved pages and their summaries.
+A new conversation or context compaction is not a new effort. Match the current
+work to an existing page, read its context and relevant nodes, and keep that slug.
+Use `mmap_view` for the picture; use `mmap_read` for editable IDs and revisions.
+For older servers without mmap_read, use mmap_view's page list and read that
+page's JSON when precise IDs are needed. Never infer IDs from display labels.
 
 ## Plan and progress
 
@@ -24,11 +29,21 @@ wants; an explicit request for a map can proceed while that preference is pendin
 Never choose or persist a policy on the user's behalf. Existing consent for a map
 covers opening its panel; do not ask for the same permission again.
 
-Declare the intended structure with `mmap_declare` before implementation. One
+Declare missing structure with `mmap_declare` after checking existing pages. One
 effort gets one stable page slug, supplied to subsequent calls. Nodes represent
 buildable responsibilities with short labels and useful `detail`, not individual
 files or generic checklist steps. Rank 0 is the foundation; edges point from a
 consumer to a strictly lower dependency. Layers describe dependency direction.
+
+Read relevant resources using ID/status/layer filters, fields and cursors;
+detail and evidence are opt-in node fields. Pass the returned revision as
+expectedRevision when writing. On CONFLICT, read the changed records and revise
+the edit; on BUSY, retry after the other write completes. Use mmap_batch for
+one-page create/update/remove changes that must succeed together.
+Store the effort's summary and next actions in map context with mmap_update.
+When source files are linked, mmap_read changes checks only those files. Record
+their currentSha256 as sources[].sha256 only after relevant verification; unknown
+or changed sources require inspection, not an automatic status reset or full rebuild.
 
 Use `planned` for the design, `in-progress` for active work, and `done` only with
 actual verification recorded in `evidence`. Revise the map as the design changes.
@@ -44,9 +59,10 @@ use `dev` for progress. Cyclic state machines are unsupported.
 
 ## Open the map in this conversation
 
-Preserve a surface the user explicitly chose. For automatic display beside this
-conversation, default to **web-terminal**: the mmap terminal inside a local web
+Preserve a surface the user explicitly chose. When a desktop browser panel tool
+is available, default to **web-terminal**: the mmap terminal inside a local web
 page, opened in the app's right browser panel. It starts without a pasted command.
+In Codex CLI without a desktop panel, use the terminal route below directly.
 
 1. Declare or reuse the page for this effort, then call
    `mmap_open {surface: "web-terminal", page: "<effort-slug>"}`.
@@ -110,7 +126,7 @@ then reopen. A service without web-terminal support is upgraded on next open.
 
 ## Installation and recovery
 
-The release installer installs this skill and registers all six MCP tools for
+The release installer installs this skill and registers all eight MCP tools for
 each session's working directory. Start a new conversation after installing or
 updating. If tools are missing, explain that boundary and continue useful work.
 Repair host configuration only as part of authorized installation/repair work.

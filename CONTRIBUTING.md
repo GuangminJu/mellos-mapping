@@ -12,8 +12,22 @@ npm run verify
 ```
 
 Use Node.js 22.12+ for development. `verify` runs `typecheck`, `test`, `build`,
-`check:package`, `check:codex`, and `check:release`, in that order. CI runs
+`check:reuse`, `check:package`, `check:codex`, and `check:release`, in that order. CI runs
 the same command on Linux, macOS and Windows against Node 22.
+
+For model-driven map reuse acceptance, first build the release editions with
+`npm run check:release`, then run `node scripts/check-codex-dialogue.mjs cli`.
+An absolute Codex engine path and an optional result label can replace `cli`.
+Append `proactive` after the label to test an ordinary repair request that does
+not mention maps or progress, with the fixture's mapping policy set to `always`.
+This opt-in check uses the current signed-in account and configured model, so it
+consumes model usage and is not part of CI. It installs the candidate into a
+temporary profile, verifies the host's effective MCP configuration and eight
+tools, and tests fresh conversations, real context compaction, and a new process
+starting in a subdirectory. It waits for task-specific completion events.
+Results and tool traces go to `artifacts/audit/codex-reuse/dialogue/`; temporary
+credentials, host sessions and fixtures are removed afterward. The user's
+installed plugin and configuration are not replaced.
 
 ## The constraint that surprises people
 

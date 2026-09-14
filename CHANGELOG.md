@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.23.0
+
+- Added structured page/resource reads with stable IDs, filters, field projection,
+  pagination and revision-bound cursors, plus bounded dependency neighborhoods.
+- Added atomic single-page mixed transactions, edge revisions, map metadata,
+  group moves, lane ordering and version-checked default/named page deletion.
+- Serialized current MCP/viewer writers with a cross-process lock; stale MCP
+  revisions return conflicts instead of overwriting newer work.
+- Added portable context checkpoints and optional source-file SHA256 baselines.
+  Format 2 protects these fields from older writers; classic maps retain format 1.
+- Unified project discovery for MCP, mmap and the watcher, with nested Git,
+  worktree, home and temporary-directory boundaries.
+- Updated Codex CLI/App and Claude guidance to resume saved maps before declaring
+  new structure, including after context compaction. Added independent-process
+  acceptance to the full verification pipeline.
+
 ## 0.22.1
 
 - Fixed Claude Code installation on hosts with strict manifest validation by

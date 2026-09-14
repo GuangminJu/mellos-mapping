@@ -5,7 +5,7 @@
  * watcher-visible file actually changes.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -62,9 +62,9 @@ async function callText(name: string, args: Record<string, unknown>): Promise<{ 
 }
 
 describe('mellos-mapping MCP server', () => {
-  it('exposes exactly the six mmap tools', async () => {
+  it('exposes the eight mmap tools including structured reads and transactions', async () => {
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(['mmap_declare', 'mmap_open', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
+    expect(tools).toEqual(['mmap_batch', 'mmap_declare', 'mmap_open', 'mmap_read', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
   });
 
   it('declares a ghost design and persists it to the project state file', async () => {
@@ -957,13 +957,16 @@ describe('mmap_open — the assistant putting the map on screen', () => {
 
 describe('resolveStateFile', () => {
   it('resolves MELLOS_MAPPING_CWD, then CLAUDE_PROJECT_DIR, then the process cwd', () => {
+    const cwd = realpathSync(dir);
+    const override = join(cwd, 'override');
+    const project = join(cwd, 'project');
     expect(
-      resolveStateFile({ MELLOS_MAPPING_CWD: 'D:\\override', CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere'),
-    ).toBe(join('D:\\override', '.mellos', 'map.json'));
-    expect(resolveStateFile({ CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere')).toBe(
-      join('D:\\proj', '.mellos', 'map.json'),
+      resolveStateFile({ MELLOS_MAPPING_CWD: override, CLAUDE_PROJECT_DIR: project }, cwd),
+    ).toBe(join(override, '.mellos', 'map.json'));
+    expect(resolveStateFile({ CLAUDE_PROJECT_DIR: project }, cwd)).toBe(
+      join(project, '.mellos', 'map.json'),
     );
-    expect(resolveStateFile({}, 'C:\\elsewhere')).toBe(join('C:\\elsewhere', '.mellos', 'map.json'));
+    expect(resolveStateFile({}, cwd)).toBe(join(cwd, '.mellos', 'map.json'));
   });
 });
 

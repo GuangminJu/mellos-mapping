@@ -23,6 +23,7 @@
 
 import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
 import { mapTextError } from '../domain/text.js';
+import { sourceError, contextError, type SourceRef, type MapContext } from '../domain/context.js';
 import {
   EMPTY_MAP,
   ID_RULE,
@@ -150,8 +151,8 @@ function optionalString(
  */
 export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreError> {
   if (!isRecord(raw)) return err({ kind: 'bad-shape', path, detail: 'root is not an object' });
-  if (raw['version'] !== STATE_FILE_VERSION) {
-    return err({ kind: 'bad-shape', path, detail: `version is ${String(raw['version'])}, expected ${STATE_FILE_VERSION}` });
+  if (raw['version'] !== STATE_FILE_VERSION && raw['version'] !== 2) {
+    return err({ kind: 'bad-shape', path, detail: `version is ${String(raw['version'])}, expected ${STATE_FILE_VERSION} or 2` });
   }
 
   const layers = arrayField(raw, 'layers', path, 'required');
@@ -166,6 +167,11 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
   if (!groups.ok) return groups;
 
   let map = EMPTY_MAP;
+  if (raw['context'] !== undefined) {
+    const error = contextError(raw['context']);
+    if (error) return err({ kind: 'bad-shape', path, detail: error });
+    map = { ...map, context: raw['context'] as MapContext };
+  }
   const title = optionalString(raw, 'title', 'map', path);
   if (!title.ok) return title;
   if (title.value !== undefined) map = setTitle(map, title.value);
@@ -303,6 +309,11 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
       if (!updated.ok) return err({ kind: 'invariant-violation', path, violation: updated.error });
       map = updated.value;
     }
+    if (rawNode['sources'] !== undefined) {
+      const error = sourceError(rawNode['sources']);
+      if (error) return err({ kind: 'bad-shape', path, detail: `${where}: ${error}` });
+      map = { ...map, nodes: map.nodes.map(n => n.id === id.value ? { ...n, sources: rawNode['sources'] as SourceRef[] } : n) };
+    }
   }
 
   for (const [i, rawEdge] of edges.value.entries()) {
@@ -330,7 +341,9 @@ export function parseMap(raw: unknown, path: string): Result<MellosMap, StoreErr
 /** Serialize a map into the on-disk shape. Inverse of parseMap for valid maps (F1). */
 export function serializeMap(map: MellosMap): string {
   const body = {
-    version: STATE_FILE_VERSION,
+    // Older runtimes must refuse maps with provenance rather than silently erasing it.
+    version: map.context !== undefined || map.nodes.some(n => n.sources !== undefined) ? 2 : STATE_FILE_VERSION,
+    ...(map.context !== undefined ? { context: map.context } : {}),
     ...(map.title !== undefined ? { title: map.title } : {}),
     ...(map.kind !== undefined ? { kind: map.kind } : {}),
     layers: map.layers,
