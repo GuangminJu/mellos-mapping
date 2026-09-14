@@ -15,9 +15,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -166,15 +166,15 @@ var require_code = __commonJS({
       return JSON.stringify(x).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
     }
     exports.safeStringify = safeStringify;
-    function getProperty(key) {
-      return typeof key == "string" && exports.IDENTIFIER.test(key) ? new _Code(`.${key}`) : _`[${key}]`;
+    function getProperty(key2) {
+      return typeof key2 == "string" && exports.IDENTIFIER.test(key2) ? new _Code(`.${key2}`) : _`[${key2}]`;
     }
     exports.getProperty = getProperty;
-    function getEsmExportName(key) {
-      if (typeof key == "string" && exports.IDENTIFIER.test(key)) {
-        return new _Code(`${key}`);
+    function getEsmExportName(key2) {
+      if (typeof key2 == "string" && exports.IDENTIFIER.test(key2)) {
+        return new _Code(`${key2}`);
       }
-      throw new Error(`CodeGen: invalid export name: ${key}, use explicit $id name mapping`);
+      throw new Error(`CodeGen: invalid export name: ${key2}, use explicit $id name mapping`);
     }
     exports.getEsmExportName = getEsmExportName;
     function regexpCode(rx) {
@@ -801,11 +801,11 @@ var require_codegen = __commonJS({
       // returns code for object literal for the passed argument list of key-value pairs
       object(...keyValues) {
         const code = ["{"];
-        for (const [key, value] of keyValues) {
+        for (const [key2, value] of keyValues) {
           if (code.length > 1)
             code.push(",");
-          code.push(key);
-          if (key !== value || this.opts.es5) {
+          code.push(key2);
+          if (key2 !== value || this.opts.es5) {
             code.push(":");
             (0, code_1.addCodeArg)(code, value);
           }
@@ -1058,10 +1058,10 @@ var require_util = __commonJS({
     var codegen_1 = require_codegen();
     var code_1 = require_code();
     function toHash(arr) {
-      const hash = {};
+      const hash2 = {};
       for (const item of arr)
-        hash[item] = true;
-      return hash;
+        hash2[item] = true;
+      return hash2;
     }
     exports.toHash = toHash;
     function alwaysValidSchema(it, schema) {
@@ -1080,17 +1080,17 @@ var require_util = __commonJS({
       if (typeof schema === "boolean")
         return;
       const rules = self.RULES.keywords;
-      for (const key in schema) {
-        if (!rules[key])
-          checkStrictMode(it, `unknown keyword: "${key}"`);
+      for (const key2 in schema) {
+        if (!rules[key2])
+          checkStrictMode(it, `unknown keyword: "${key2}"`);
       }
     }
     exports.checkUnknownRules = checkUnknownRules;
     function schemaHasRules(schema, rules) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key in schema)
-        if (rules[key])
+      for (const key2 in schema)
+        if (rules[key2])
           return true;
       return false;
     }
@@ -1098,8 +1098,8 @@ var require_util = __commonJS({
     function schemaHasRulesButRef(schema, RULES) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key in schema)
-        if (key !== "$ref" && RULES.all[key])
+      for (const key2 in schema)
+        if (key2 !== "$ref" && RULES.all[key2])
           return true;
       return false;
     }
@@ -1677,8 +1677,8 @@ var require_defaults = __commonJS({
     function assignDefaults(it, ty) {
       const { properties, items } = it.schema;
       if (ty === "object" && properties) {
-        for (const key in properties) {
-          assignDefault(it, key, properties[key].default);
+        for (const key2 in properties) {
+          assignDefault(it, key2, properties[key2].default);
         }
       } else if (ty === "array" && Array.isArray(items)) {
         items.forEach((sch, i) => assignDefault(it, i, sch.default));
@@ -1760,7 +1760,7 @@ var require_code2 = __commonJS({
       return allSchemaProperties(schemaMap).filter((p) => !(0, util_1.alwaysValidSchema)(it, schemaMap[p]));
     }
     exports.schemaProperties = schemaProperties;
-    function callValidateCode({ schemaCode, data, it: { gen, topSchemaRef, schemaPath, errorPath }, it }, func, context, passSchema) {
+    function callValidateCode({ schemaCode, data, it: { gen, topSchemaRef, schemaPath, errorPath }, it }, func, context2, passSchema) {
       const dataAndSchema = passSchema ? (0, codegen_1._)`${schemaCode}, ${data}, ${topSchemaRef}${schemaPath}` : data;
       const valCxt = [
         [names_1.default.instancePath, (0, codegen_1.strConcat)(names_1.default.instancePath, errorPath)],
@@ -1771,7 +1771,7 @@ var require_code2 = __commonJS({
       if (it.opts.dynamicRef)
         valCxt.push([names_1.default.dynamicAnchors, names_1.default.dynamicAnchors]);
       const args = (0, codegen_1._)`${dataAndSchema}, ${gen.object(...valCxt)}`;
-      return context !== codegen_1.nil ? (0, codegen_1._)`${func}.call(${context}, ${args})` : (0, codegen_1._)`${func}(${args})`;
+      return context2 !== codegen_1.nil ? (0, codegen_1._)`${func}.call(${context2}, ${args})` : (0, codegen_1._)`${func}(${args})`;
     }
     exports.callValidateCode = callValidateCode;
     var newRegExp = (0, codegen_1._)`new RegExp`;
@@ -2062,8 +2062,8 @@ var require_fast_deep_equal = __commonJS({
         for (i = length; i-- !== 0; )
           if (!Object.prototype.hasOwnProperty.call(b, keys[i])) return false;
         for (i = length; i-- !== 0; ) {
-          var key = keys[i];
-          if (!equal(a[key], b[key])) return false;
+          var key2 = keys[i];
+          if (!equal(a[key2], b[key2])) return false;
         }
         return true;
       }
@@ -2135,20 +2135,20 @@ var require_json_schema_traverse = __commonJS({
     function _traverse(opts, pre, post, schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex) {
       if (schema && typeof schema == "object" && !Array.isArray(schema)) {
         pre(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
-        for (var key in schema) {
-          var sch = schema[key];
+        for (var key2 in schema) {
+          var sch = schema[key2];
           if (Array.isArray(sch)) {
-            if (key in traverse.arrayKeywords) {
+            if (key2 in traverse.arrayKeywords) {
               for (var i = 0; i < sch.length; i++)
-                _traverse(opts, pre, post, sch[i], jsonPtr + "/" + key + "/" + i, rootSchema, jsonPtr, key, schema, i);
+                _traverse(opts, pre, post, sch[i], jsonPtr + "/" + key2 + "/" + i, rootSchema, jsonPtr, key2, schema, i);
             }
-          } else if (key in traverse.propsKeywords) {
+          } else if (key2 in traverse.propsKeywords) {
             if (sch && typeof sch == "object") {
               for (var prop in sch)
-                _traverse(opts, pre, post, sch[prop], jsonPtr + "/" + key + "/" + escapeJsonPtr(prop), rootSchema, jsonPtr, key, schema, prop);
+                _traverse(opts, pre, post, sch[prop], jsonPtr + "/" + key2 + "/" + escapeJsonPtr(prop), rootSchema, jsonPtr, key2, schema, prop);
             }
-          } else if (key in traverse.keywords || opts.allKeys && !(key in traverse.skipKeywords)) {
-            _traverse(opts, pre, post, sch, jsonPtr + "/" + key, rootSchema, jsonPtr, key, schema);
+          } else if (key2 in traverse.keywords || opts.allKeys && !(key2 in traverse.skipKeywords)) {
+            _traverse(opts, pre, post, sch, jsonPtr + "/" + key2, rootSchema, jsonPtr, key2, schema);
           }
         }
         post(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
@@ -2205,10 +2205,10 @@ var require_resolve = __commonJS({
       "$dynamicAnchor"
     ]);
     function hasRef(schema) {
-      for (const key in schema) {
-        if (REF_KEYWORDS.has(key))
+      for (const key2 in schema) {
+        if (REF_KEYWORDS.has(key2))
           return true;
-        const sch = schema[key];
+        const sch = schema[key2];
         if (Array.isArray(sch) && sch.some(hasRef))
           return true;
         if (typeof sch == "object" && hasRef(sch))
@@ -2218,14 +2218,14 @@ var require_resolve = __commonJS({
     }
     function countKeys(schema) {
       let count = 0;
-      for (const key in schema) {
-        if (key === "$ref")
+      for (const key2 in schema) {
+        if (key2 === "$ref")
           return Infinity;
         count++;
-        if (SIMPLE_INLINED.has(key))
+        if (SIMPLE_INLINED.has(key2))
           continue;
-        if (typeof schema[key] == "object") {
-          (0, util_1.eachItem)(schema[key], (sch) => count += countKeys(sch));
+        if (typeof schema[key2] == "object") {
+          (0, util_1.eachItem)(schema[key2], (sch) => count += countKeys(sch));
         }
         if (count === Infinity)
           return Infinity;
@@ -2414,8 +2414,8 @@ var require_validate = __commonJS({
     function schemaCxtHasRules({ schema, self }) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key in schema)
-        if (self.RULES.all[key])
+      for (const key2 in schema)
+        if (self.RULES.all[key2])
           return true;
       return false;
     }
@@ -2981,7 +2981,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3008,7 +3008,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3838,7 +3838,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve4(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3871,49 +3871,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative, options, skipNormalization) {
+    function resolveComponent(base, relative2, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize(base, options), options);
-        relative = parse3(serialize(relative, options), options);
+        relative2 = parse3(serialize(relative2, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative.scheme) {
-        target.scheme = relative.scheme;
-        target.userinfo = relative.userinfo;
-        target.host = relative.host;
-        target.port = relative.port;
-        target.path = removeDotSegments(relative.path || "");
-        target.query = relative.query;
+      if (!options.tolerant && relative2.scheme) {
+        target.scheme = relative2.scheme;
+        target.userinfo = relative2.userinfo;
+        target.host = relative2.host;
+        target.port = relative2.port;
+        target.path = removeDotSegments(relative2.path || "");
+        target.query = relative2.query;
       } else {
-        if (relative.userinfo !== void 0 || relative.host !== void 0 || relative.port !== void 0) {
-          target.userinfo = relative.userinfo;
-          target.host = relative.host;
-          target.port = relative.port;
-          target.path = removeDotSegments(relative.path || "");
-          target.query = relative.query;
+        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
+          target.userinfo = relative2.userinfo;
+          target.host = relative2.host;
+          target.port = relative2.port;
+          target.path = removeDotSegments(relative2.path || "");
+          target.query = relative2.query;
         } else {
-          if (!relative.path) {
+          if (!relative2.path) {
             target.path = base.path;
-            if (relative.query !== void 0) {
-              target.query = relative.query;
+            if (relative2.query !== void 0) {
+              target.query = relative2.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative.path[0] === "/") {
-              target.path = removeDotSegments(relative.path);
+            if (relative2.path[0] === "/") {
+              target.path = removeDotSegments(relative2.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative.path;
+                target.path = "/" + relative2.path;
               } else if (!base.path) {
-                target.path = relative.path;
+                target.path = relative2.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative.query;
+            target.query = relative2.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3921,7 +3921,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative.fragment;
+      target.fragment = relative2.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4206,7 +4206,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve4,
       resolveComponent,
       equal,
       serialize,
@@ -4453,7 +4453,7 @@ var require_core = __commonJS({
         }
       }
       // Adds schema to the instance
-      addSchema(schema, key, _meta, _validateSchema = this.opts.validateSchema) {
+      addSchema(schema, key2, _meta, _validateSchema = this.opts.validateSchema) {
         if (Array.isArray(schema)) {
           for (const sch of schema)
             this.addSchema(sch, void 0, _meta, _validateSchema);
@@ -4467,15 +4467,15 @@ var require_core = __commonJS({
             throw new Error(`schema ${schemaId} must be string`);
           }
         }
-        key = (0, resolve_1.normalizeId)(key || id2);
-        this._checkUnique(key);
-        this.schemas[key] = this._addSchema(schema, _meta, key, _validateSchema, true);
+        key2 = (0, resolve_1.normalizeId)(key2 || id2);
+        this._checkUnique(key2);
+        this.schemas[key2] = this._addSchema(schema, _meta, key2, _validateSchema, true);
         return this;
       }
       // Add schema that will be used to validate other schemas
       // options in META_IGNORE_OPTIONS are alway set to false
-      addMetaSchema(schema, key, _validateSchema = this.opts.validateSchema) {
-        this.addSchema(schema, key, true, _validateSchema);
+      addMetaSchema(schema, key2, _validateSchema = this.opts.validateSchema) {
+        this.addSchema(schema, key2, true, _validateSchema);
         return this;
       }
       //  Validate schema against its meta-schema
@@ -4631,14 +4631,14 @@ var require_core = __commonJS({
           let keywords = metaSchema;
           for (const seg of segments)
             keywords = keywords[seg];
-          for (const key in rules) {
-            const rule = rules[key];
+          for (const key2 in rules) {
+            const rule = rules[key2];
             if (typeof rule != "object")
               continue;
             const { $data } = rule.definition;
-            const schema = keywords[key];
+            const schema = keywords[key2];
             if ($data && schema)
-              keywords[key] = schemaOrData(schema);
+              keywords[key2] = schemaOrData(schema);
           }
         }
         return metaSchema;
@@ -4711,10 +4711,10 @@ var require_core = __commonJS({
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
     function checkOptions(checkOpts, options, msg, log = "error") {
-      for (const key in checkOpts) {
-        const opt = key;
+      for (const key2 in checkOpts) {
+        const opt = key2;
         if (opt in options)
-          this.logger[log](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log](`${msg}: option ${key2}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -4728,8 +4728,8 @@ var require_core = __commonJS({
       if (Array.isArray(optsSchemas))
         this.addSchema(optsSchemas);
       else
-        for (const key in optsSchemas)
-          this.addSchema(optsSchemas[key], key);
+        for (const key2 in optsSchemas)
+          this.addSchema(optsSchemas[key2], key2);
     }
     function addInitialFormats() {
       for (const name in this.opts.formats) {
@@ -5777,11 +5777,11 @@ var require_dependencies = __commonJS({
     function splitDependencies({ schema }) {
       const propertyDeps = {};
       const schemaDeps = {};
-      for (const key in schema) {
-        if (key === "__proto__")
+      for (const key2 in schema) {
+        if (key2 === "__proto__")
           continue;
-        const deps = Array.isArray(schema[key]) ? propertyDeps : schemaDeps;
-        deps[key] = schema[key];
+        const deps = Array.isArray(schema[key2]) ? propertyDeps : schemaDeps;
+        deps[key2] = schema[key2];
       }
       return [propertyDeps, schemaDeps];
     }
@@ -5858,13 +5858,13 @@ var require_propertyNames = __commonJS({
         if ((0, util_1.alwaysValidSchema)(it, schema))
           return;
         const valid = gen.name("valid");
-        gen.forIn("key", data, (key) => {
-          cxt.setParams({ propertyName: key });
+        gen.forIn("key", data, (key2) => {
+          cxt.setParams({ propertyName: key2 });
           cxt.subschema({
             keyword: "propertyNames",
-            data: key,
+            data: key2,
             dataTypes: ["string"],
-            propertyName: key,
+            propertyName: key2,
             compositeRule: true
           }, valid);
           gen.if((0, codegen_1.not)(valid), () => {
@@ -5913,38 +5913,38 @@ var require_additionalProperties = __commonJS({
         checkAdditionalProperties();
         cxt.ok((0, codegen_1._)`${errsCount} === ${names_1.default.errors}`);
         function checkAdditionalProperties() {
-          gen.forIn("key", data, (key) => {
+          gen.forIn("key", data, (key2) => {
             if (!props.length && !patProps.length)
-              additionalPropertyCode(key);
+              additionalPropertyCode(key2);
             else
-              gen.if(isAdditional(key), () => additionalPropertyCode(key));
+              gen.if(isAdditional(key2), () => additionalPropertyCode(key2));
           });
         }
-        function isAdditional(key) {
+        function isAdditional(key2) {
           let definedProp;
           if (props.length > 8) {
             const propsSchema = (0, util_1.schemaRefOrVal)(it, parentSchema.properties, "properties");
-            definedProp = (0, code_1.isOwnProperty)(gen, propsSchema, key);
+            definedProp = (0, code_1.isOwnProperty)(gen, propsSchema, key2);
           } else if (props.length) {
-            definedProp = (0, codegen_1.or)(...props.map((p) => (0, codegen_1._)`${key} === ${p}`));
+            definedProp = (0, codegen_1.or)(...props.map((p) => (0, codegen_1._)`${key2} === ${p}`));
           } else {
             definedProp = codegen_1.nil;
           }
           if (patProps.length) {
-            definedProp = (0, codegen_1.or)(definedProp, ...patProps.map((p) => (0, codegen_1._)`${(0, code_1.usePattern)(cxt, p)}.test(${key})`));
+            definedProp = (0, codegen_1.or)(definedProp, ...patProps.map((p) => (0, codegen_1._)`${(0, code_1.usePattern)(cxt, p)}.test(${key2})`));
           }
           return (0, codegen_1.not)(definedProp);
         }
-        function deleteAdditional(key) {
-          gen.code((0, codegen_1._)`delete ${data}[${key}]`);
+        function deleteAdditional(key2) {
+          gen.code((0, codegen_1._)`delete ${data}[${key2}]`);
         }
-        function additionalPropertyCode(key) {
+        function additionalPropertyCode(key2) {
           if (opts.removeAdditional === "all" || opts.removeAdditional && schema === false) {
-            deleteAdditional(key);
+            deleteAdditional(key2);
             return;
           }
           if (schema === false) {
-            cxt.setParams({ additionalProperty: key });
+            cxt.setParams({ additionalProperty: key2 });
             cxt.error();
             if (!allErrors)
               gen.break();
@@ -5953,22 +5953,22 @@ var require_additionalProperties = __commonJS({
           if (typeof schema == "object" && !(0, util_1.alwaysValidSchema)(it, schema)) {
             const valid = gen.name("valid");
             if (opts.removeAdditional === "failing") {
-              applyAdditionalSchema(key, valid, false);
+              applyAdditionalSchema(key2, valid, false);
               gen.if((0, codegen_1.not)(valid), () => {
                 cxt.reset();
-                deleteAdditional(key);
+                deleteAdditional(key2);
               });
             } else {
-              applyAdditionalSchema(key, valid);
+              applyAdditionalSchema(key2, valid);
               if (!allErrors)
                 gen.if((0, codegen_1.not)(valid), () => gen.break());
             }
           }
         }
-        function applyAdditionalSchema(key, valid, errors) {
+        function applyAdditionalSchema(key2, valid, errors) {
           const subschema = {
             keyword: "additionalProperties",
-            dataProp: key,
+            dataProp: key2,
             dataPropType: util_1.Type.Str
           };
           if (errors === false) {
@@ -6093,19 +6093,19 @@ var require_patternProperties = __commonJS({
           }
         }
         function validateProperties(pat) {
-          gen.forIn("key", data, (key) => {
-            gen.if((0, codegen_1._)`${(0, code_1.usePattern)(cxt, pat)}.test(${key})`, () => {
+          gen.forIn("key", data, (key2) => {
+            gen.if((0, codegen_1._)`${(0, code_1.usePattern)(cxt, pat)}.test(${key2})`, () => {
               const alwaysValid = alwaysValidPatterns.includes(pat);
               if (!alwaysValid) {
                 cxt.subschema({
                   keyword: "patternProperties",
                   schemaProp: pat,
-                  dataProp: key,
+                  dataProp: key2,
                   dataPropType: util_2.Type.Str
                 }, valid);
               }
               if (it.opts.unevaluated && props !== true) {
-                gen.assign((0, codegen_1._)`${props}[${key}]`, true);
+                gen.assign((0, codegen_1._)`${props}[${key2}]`, true);
               } else if (!alwaysValid && !it.allErrors) {
                 gen.if((0, codegen_1.not)(valid), () => gen.break());
               }
@@ -7196,9 +7196,9 @@ var require_dist = __commonJS({
 });
 
 // src/server/server.ts
-import { existsSync as existsSync6, realpathSync as realpathSync2 } from "node:fs";
-import { homedir } from "node:os";
-import { join as join8 } from "node:path";
+import { existsSync as existsSync8, realpathSync as realpathSync4 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/external.js
@@ -7347,9 +7347,9 @@ var util;
   };
   util2.objectKeys = typeof Object.keys === "function" ? (obj) => Object.keys(obj) : (object3) => {
     const keys = [];
-    for (const key in object3) {
-      if (Object.prototype.hasOwnProperty.call(object3, key)) {
-        keys.push(key);
+    for (const key2 in object3) {
+      if (Object.prototype.hasOwnProperty.call(object3, key2)) {
+        keys.push(key2);
       }
     }
     return keys;
@@ -7749,10 +7749,10 @@ var ParseStatus = class _ParseStatus {
   static async mergeObjectAsync(status2, pairs) {
     const syncPairs = [];
     for (const pair of pairs) {
-      const key = await pair.key;
+      const key2 = await pair.key;
       const value = await pair.value;
       syncPairs.push({
-        key,
+        key: key2,
         value
       });
     }
@@ -7761,17 +7761,17 @@ var ParseStatus = class _ParseStatus {
   static mergeObjectSync(status2, pairs) {
     const finalObject = {};
     for (const pair of pairs) {
-      const { key, value } = pair;
-      if (key.status === "aborted")
+      const { key: key2, value } = pair;
+      if (key2.status === "aborted")
         return INVALID;
       if (value.status === "aborted")
         return INVALID;
-      if (key.status === "dirty")
+      if (key2.status === "dirty")
         status2.dirty();
       if (value.status === "dirty")
         status2.dirty();
-      if (key.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
-        finalObject[key.value] = value.value;
+      if (key2.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
+        finalObject[key2.value] = value.value;
       }
     }
     return { status: status2.value, value: finalObject };
@@ -7796,12 +7796,12 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path, key) {
+  constructor(parent, value, path, key2) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
     this._path = path;
-    this._key = key;
+    this._key = key2;
   }
   get path() {
     if (!this._cachedPath.length) {
@@ -9546,9 +9546,9 @@ ZodArray.create = (schema, params) => {
 function deepPartialify(schema) {
   if (schema instanceof ZodObject) {
     const newShape = {};
-    for (const key in schema.shape) {
-      const fieldSchema = schema.shape[key];
-      newShape[key] = ZodOptional.create(deepPartialify(fieldSchema));
+    for (const key2 in schema.shape) {
+      const fieldSchema = schema.shape[key2];
+      newShape[key2] = ZodOptional.create(deepPartialify(fieldSchema));
     }
     return new ZodObject({
       ...schema._def,
@@ -9599,29 +9599,29 @@ var ZodObject = class _ZodObject extends ZodType {
     const { shape, keys: shapeKeys } = this._getCached();
     const extraKeys = [];
     if (!(this._def.catchall instanceof ZodNever && this._def.unknownKeys === "strip")) {
-      for (const key in ctx.data) {
-        if (!shapeKeys.includes(key)) {
-          extraKeys.push(key);
+      for (const key2 in ctx.data) {
+        if (!shapeKeys.includes(key2)) {
+          extraKeys.push(key2);
         }
       }
     }
     const pairs = [];
-    for (const key of shapeKeys) {
-      const keyValidator = shape[key];
-      const value = ctx.data[key];
+    for (const key2 of shapeKeys) {
+      const keyValidator = shape[key2];
+      const value = ctx.data[key2];
       pairs.push({
-        key: { status: "valid", value: key },
-        value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key)),
-        alwaysSet: key in ctx.data
+        key: { status: "valid", value: key2 },
+        value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key2)),
+        alwaysSet: key2 in ctx.data
       });
     }
     if (this._def.catchall instanceof ZodNever) {
       const unknownKeys = this._def.unknownKeys;
       if (unknownKeys === "passthrough") {
-        for (const key of extraKeys) {
+        for (const key2 of extraKeys) {
           pairs.push({
-            key: { status: "valid", value: key },
-            value: { status: "valid", value: ctx.data[key] }
+            key: { status: "valid", value: key2 },
+            value: { status: "valid", value: ctx.data[key2] }
           });
         }
       } else if (unknownKeys === "strict") {
@@ -9638,15 +9638,15 @@ var ZodObject = class _ZodObject extends ZodType {
       }
     } else {
       const catchall = this._def.catchall;
-      for (const key of extraKeys) {
-        const value = ctx.data[key];
+      for (const key2 of extraKeys) {
+        const value = ctx.data[key2];
         pairs.push({
-          key: { status: "valid", value: key },
+          key: { status: "valid", value: key2 },
           value: catchall._parse(
-            new ParseInputLazyPath(ctx, value, ctx.path, key)
+            new ParseInputLazyPath(ctx, value, ctx.path, key2)
             //, ctx.child(key), value, getParsedType(value)
           ),
-          alwaysSet: key in ctx.data
+          alwaysSet: key2 in ctx.data
         });
       }
     }
@@ -9654,10 +9654,10 @@ var ZodObject = class _ZodObject extends ZodType {
       return Promise.resolve().then(async () => {
         const syncPairs = [];
         for (const pair of pairs) {
-          const key = await pair.key;
+          const key2 = await pair.key;
           const value = await pair.value;
           syncPairs.push({
-            key,
+            key: key2,
             value,
             alwaysSet: pair.alwaysSet
           });
@@ -9782,8 +9782,8 @@ var ZodObject = class _ZodObject extends ZodType {
   //   }) as any;
   //   return merged;
   // }
-  setKey(key, schema) {
-    return this.augment({ [key]: schema });
+  setKey(key2, schema) {
+    return this.augment({ [key2]: schema });
   }
   // merge<Incoming extends AnyZodObject>(
   //   merging: Incoming
@@ -9814,9 +9814,9 @@ var ZodObject = class _ZodObject extends ZodType {
   }
   pick(mask) {
     const shape = {};
-    for (const key of util.objectKeys(mask)) {
-      if (mask[key] && this.shape[key]) {
-        shape[key] = this.shape[key];
+    for (const key2 of util.objectKeys(mask)) {
+      if (mask[key2] && this.shape[key2]) {
+        shape[key2] = this.shape[key2];
       }
     }
     return new _ZodObject({
@@ -9826,9 +9826,9 @@ var ZodObject = class _ZodObject extends ZodType {
   }
   omit(mask) {
     const shape = {};
-    for (const key of util.objectKeys(this.shape)) {
-      if (!mask[key]) {
-        shape[key] = this.shape[key];
+    for (const key2 of util.objectKeys(this.shape)) {
+      if (!mask[key2]) {
+        shape[key2] = this.shape[key2];
       }
     }
     return new _ZodObject({
@@ -9844,12 +9844,12 @@ var ZodObject = class _ZodObject extends ZodType {
   }
   partial(mask) {
     const newShape = {};
-    for (const key of util.objectKeys(this.shape)) {
-      const fieldSchema = this.shape[key];
-      if (mask && !mask[key]) {
-        newShape[key] = fieldSchema;
+    for (const key2 of util.objectKeys(this.shape)) {
+      const fieldSchema = this.shape[key2];
+      if (mask && !mask[key2]) {
+        newShape[key2] = fieldSchema;
       } else {
-        newShape[key] = fieldSchema.optional();
+        newShape[key2] = fieldSchema.optional();
       }
     }
     return new _ZodObject({
@@ -9859,16 +9859,16 @@ var ZodObject = class _ZodObject extends ZodType {
   }
   required(mask) {
     const newShape = {};
-    for (const key of util.objectKeys(this.shape)) {
-      if (mask && !mask[key]) {
-        newShape[key] = this.shape[key];
+    for (const key2 of util.objectKeys(this.shape)) {
+      if (mask && !mask[key2]) {
+        newShape[key2] = this.shape[key2];
       } else {
-        const fieldSchema = this.shape[key];
+        const fieldSchema = this.shape[key2];
         let newField = fieldSchema;
         while (newField instanceof ZodOptional) {
           newField = newField._def.innerType;
         }
-        newShape[key] = newField;
+        newShape[key2] = newField;
       }
     }
     return new _ZodObject({
@@ -10112,14 +10112,14 @@ function mergeValues(a, b) {
     return { valid: true, data: a };
   } else if (aType === ZodParsedType.object && bType === ZodParsedType.object) {
     const bKeys = util.objectKeys(b);
-    const sharedKeys = util.objectKeys(a).filter((key) => bKeys.indexOf(key) !== -1);
+    const sharedKeys = util.objectKeys(a).filter((key2) => bKeys.indexOf(key2) !== -1);
     const newObj = { ...a, ...b };
-    for (const key of sharedKeys) {
-      const sharedValue = mergeValues(a[key], b[key]);
+    for (const key2 of sharedKeys) {
+      const sharedValue = mergeValues(a[key2], b[key2]);
       if (!sharedValue.valid) {
         return { valid: false };
       }
-      newObj[key] = sharedValue.data;
+      newObj[key2] = sharedValue.data;
     }
     return { valid: true, data: newObj };
   } else if (aType === ZodParsedType.array && bType === ZodParsedType.array) {
@@ -10283,11 +10283,11 @@ var ZodRecord = class _ZodRecord extends ZodType {
     const pairs = [];
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
-    for (const key in ctx.data) {
+    for (const key2 in ctx.data) {
       pairs.push({
-        key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, key)),
-        value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key], ctx.path, key)),
-        alwaysSet: key in ctx.data
+        key: keyType._parse(new ParseInputLazyPath(ctx, key2, ctx.path, key2)),
+        value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key2], ctx.path, key2)),
+        alwaysSet: key2 in ctx.data
       });
     }
     if (ctx.common.async) {
@@ -10335,9 +10335,9 @@ var ZodMap = class extends ZodType {
     }
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
-    const pairs = [...ctx.data.entries()].map(([key, value], index) => {
+    const pairs = [...ctx.data.entries()].map(([key2, value], index) => {
       return {
-        key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, [index, "key"])),
+        key: keyType._parse(new ParseInputLazyPath(ctx, key2, ctx.path, [index, "key"])),
         value: valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"]))
       };
     });
@@ -10345,30 +10345,30 @@ var ZodMap = class extends ZodType {
       const finalMap = /* @__PURE__ */ new Map();
       return Promise.resolve().then(async () => {
         for (const pair of pairs) {
-          const key = await pair.key;
+          const key2 = await pair.key;
           const value = await pair.value;
-          if (key.status === "aborted" || value.status === "aborted") {
+          if (key2.status === "aborted" || value.status === "aborted") {
             return INVALID;
           }
-          if (key.status === "dirty" || value.status === "dirty") {
+          if (key2.status === "dirty" || value.status === "dirty") {
             status2.dirty();
           }
-          finalMap.set(key.value, value.value);
+          finalMap.set(key2.value, value.value);
         }
         return { status: status2.value, value: finalMap };
       });
     } else {
       const finalMap = /* @__PURE__ */ new Map();
       for (const pair of pairs) {
-        const key = pair.key;
+        const key2 = pair.key;
         const value = pair.value;
-        if (key.status === "aborted" || value.status === "aborted") {
+        if (key2.status === "aborted" || value.status === "aborted") {
           return INVALID;
         }
-        if (key.status === "dirty" || value.status === "dirty") {
+        if (key2.status === "dirty" || value.status === "dirty") {
           status2.dirty();
         }
-        finalMap.set(key.value, value.value);
+        finalMap.set(key2.value, value.value);
       }
       return { status: status2.value, value: finalMap };
     }
@@ -11410,19 +11410,19 @@ function floatSafeRemainder2(val, step) {
   const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
   return valInt % stepInt / 10 ** decCount;
 }
-function defineLazy(object3, key, getter) {
+function defineLazy(object3, key2, getter) {
   const set = false;
-  Object.defineProperty(object3, key, {
+  Object.defineProperty(object3, key2, {
     get() {
       if (!set) {
         const value = getter();
-        object3[key] = value;
+        object3[key2] = value;
         return value;
       }
       throw new Error("cached value already set");
     },
     set(v) {
-      Object.defineProperty(object3, key, {
+      Object.defineProperty(object3, key2, {
         value: v
         // configurable: true,
       });
@@ -11441,11 +11441,11 @@ function assignProp(target, prop, value) {
 function getElementAtPath(obj, path) {
   if (!path)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path.reduce((acc, key2) => acc?.[key2], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
-  const promises = keys.map((key) => promisesObj[key]);
+  const promises = keys.map((key2) => promisesObj[key2]);
   return Promise.all(promises).then((results) => {
     const resolvedObj = {};
     for (let i = 0; i < keys.length; i++) {
@@ -11498,8 +11498,8 @@ function isPlainObject(o) {
 }
 function numKeys(data) {
   let keyCount = 0;
-  for (const key in data) {
-    if (Object.prototype.hasOwnProperty.call(data, key)) {
+  for (const key2 in data) {
+    if (Object.prototype.hasOwnProperty.call(data, key2)) {
       keyCount++;
     }
   }
@@ -11635,13 +11635,13 @@ var BIGINT_FORMAT_RANGES = {
 function pick(schema, mask) {
   const newShape = {};
   const currDef = schema._zod.def;
-  for (const key in mask) {
-    if (!(key in currDef.shape)) {
-      throw new Error(`Unrecognized key: "${key}"`);
+  for (const key2 in mask) {
+    if (!(key2 in currDef.shape)) {
+      throw new Error(`Unrecognized key: "${key2}"`);
     }
-    if (!mask[key])
+    if (!mask[key2])
       continue;
-    newShape[key] = currDef.shape[key];
+    newShape[key2] = currDef.shape[key2];
   }
   return clone(schema, {
     ...schema._zod.def,
@@ -11652,13 +11652,13 @@ function pick(schema, mask) {
 function omit(schema, mask) {
   const newShape = { ...schema._zod.def.shape };
   const currDef = schema._zod.def;
-  for (const key in mask) {
-    if (!(key in currDef.shape)) {
-      throw new Error(`Unrecognized key: "${key}"`);
+  for (const key2 in mask) {
+    if (!(key2 in currDef.shape)) {
+      throw new Error(`Unrecognized key: "${key2}"`);
     }
-    if (!mask[key])
+    if (!mask[key2])
       continue;
-    delete newShape[key];
+    delete newShape[key2];
   }
   return clone(schema, {
     ...schema._zod.def,
@@ -11699,23 +11699,23 @@ function partial(Class2, schema, mask) {
   const oldShape = schema._zod.def.shape;
   const shape = { ...oldShape };
   if (mask) {
-    for (const key in mask) {
-      if (!(key in oldShape)) {
-        throw new Error(`Unrecognized key: "${key}"`);
+    for (const key2 in mask) {
+      if (!(key2 in oldShape)) {
+        throw new Error(`Unrecognized key: "${key2}"`);
       }
-      if (!mask[key])
+      if (!mask[key2])
         continue;
-      shape[key] = Class2 ? new Class2({
+      shape[key2] = Class2 ? new Class2({
         type: "optional",
-        innerType: oldShape[key]
-      }) : oldShape[key];
+        innerType: oldShape[key2]
+      }) : oldShape[key2];
     }
   } else {
-    for (const key in oldShape) {
-      shape[key] = Class2 ? new Class2({
+    for (const key2 in oldShape) {
+      shape[key2] = Class2 ? new Class2({
         type: "optional",
-        innerType: oldShape[key]
-      }) : oldShape[key];
+        innerType: oldShape[key2]
+      }) : oldShape[key2];
     }
   }
   return clone(schema, {
@@ -11728,22 +11728,22 @@ function required(Class2, schema, mask) {
   const oldShape = schema._zod.def.shape;
   const shape = { ...oldShape };
   if (mask) {
-    for (const key in mask) {
-      if (!(key in shape)) {
-        throw new Error(`Unrecognized key: "${key}"`);
+    for (const key2 in mask) {
+      if (!(key2 in shape)) {
+        throw new Error(`Unrecognized key: "${key2}"`);
       }
-      if (!mask[key])
+      if (!mask[key2])
         continue;
-      shape[key] = new Class2({
+      shape[key2] = new Class2({
         type: "nonoptional",
-        innerType: oldShape[key]
+        innerType: oldShape[key2]
       });
     }
   } else {
-    for (const key in oldShape) {
-      shape[key] = new Class2({
+    for (const key2 in oldShape) {
+      shape[key2] = new Class2({
         type: "nonoptional",
-        innerType: oldShape[key]
+        innerType: oldShape[key2]
       });
     }
   }
@@ -12941,28 +12941,28 @@ var $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def) => {
     return payload;
   };
 });
-function handleObjectResult(result, final, key) {
+function handleObjectResult(result, final, key2) {
   if (result.issues.length) {
-    final.issues.push(...prefixIssues(key, result.issues));
+    final.issues.push(...prefixIssues(key2, result.issues));
   }
-  final.value[key] = result.value;
+  final.value[key2] = result.value;
 }
-function handleOptionalObjectResult(result, final, key, input) {
+function handleOptionalObjectResult(result, final, key2, input) {
   if (result.issues.length) {
-    if (input[key] === void 0) {
-      if (key in input) {
-        final.value[key] = void 0;
+    if (input[key2] === void 0) {
+      if (key2 in input) {
+        final.value[key2] = void 0;
       } else {
-        final.value[key] = result.value;
+        final.value[key2] = result.value;
       }
     } else {
-      final.issues.push(...prefixIssues(key, result.issues));
+      final.issues.push(...prefixIssues(key2, result.issues));
     }
   } else if (result.value === void 0) {
-    if (key in input)
-      final.value[key] = void 0;
+    if (key2 in input)
+      final.value[key2] = void 0;
   } else {
-    final.value[key] = result.value;
+    final.value[key2] = result.value;
   }
 }
 var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
@@ -12986,12 +12986,12 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   defineLazy(inst._zod, "propValues", () => {
     const shape = def.shape;
     const propValues = {};
-    for (const key in shape) {
-      const field = shape[key]._zod;
+    for (const key2 in shape) {
+      const field = shape[key2]._zod;
       if (field.values) {
-        propValues[key] ?? (propValues[key] = /* @__PURE__ */ new Set());
+        propValues[key2] ?? (propValues[key2] = /* @__PURE__ */ new Set());
         for (const v of field.values)
-          propValues[key].add(v);
+          propValues[key2].add(v);
       }
     }
     return propValues;
@@ -12999,22 +12999,22 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   const generateFastpass = (shape) => {
     const doc = new Doc(["shape", "payload", "ctx"]);
     const normalized = _normalized.value;
-    const parseStr = (key) => {
-      const k = esc(key);
+    const parseStr = (key2) => {
+      const k = esc(key2);
       return `shape[${k}]._zod.run({ value: input[${k}], issues: [] }, ctx)`;
     };
     doc.write(`const input = payload.value;`);
     const ids = /* @__PURE__ */ Object.create(null);
     let counter = 0;
-    for (const key of normalized.keys) {
-      ids[key] = `key_${counter++}`;
+    for (const key2 of normalized.keys) {
+      ids[key2] = `key_${counter++}`;
     }
     doc.write(`const newResult = {}`);
-    for (const key of normalized.keys) {
-      if (normalized.optionalKeys.has(key)) {
-        const id2 = ids[key];
-        doc.write(`const ${id2} = ${parseStr(key)};`);
-        const k = esc(key);
+    for (const key2 of normalized.keys) {
+      if (normalized.optionalKeys.has(key2)) {
+        const id2 = ids[key2];
+        doc.write(`const ${id2} = ${parseStr(key2)};`);
+        const k = esc(key2);
         doc.write(`
         if (${id2}.issues.length) {
           if (input[${k}] === undefined) {
@@ -13036,14 +13036,14 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
         }
         `);
       } else {
-        const id2 = ids[key];
-        doc.write(`const ${id2} = ${parseStr(key)};`);
+        const id2 = ids[key2];
+        doc.write(`const ${id2} = ${parseStr(key2)};`);
         doc.write(`
           if (${id2}.issues.length) payload.issues = payload.issues.concat(${id2}.issues.map(iss => ({
             ...iss,
-            path: iss.path ? [${esc(key)}, ...iss.path] : [${esc(key)}]
+            path: iss.path ? [${esc(key2)}, ...iss.path] : [${esc(key2)}]
           })));`);
-        doc.write(`newResult[${esc(key)}] = ${id2}.value`);
+        doc.write(`newResult[${esc(key2)}] = ${id2}.value`);
       }
     }
     doc.write(`payload.value = newResult;`);
@@ -13078,16 +13078,16 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     } else {
       payload.value = {};
       const shape = value.shape;
-      for (const key of value.keys) {
-        const el = shape[key];
-        const r = el._zod.run({ value: input[key], issues: [] }, ctx);
+      for (const key2 of value.keys) {
+        const el = shape[key2];
+        const r = el._zod.run({ value: input[key2], issues: [] }, ctx);
         const isOptional = el._zod.optin === "optional" && el._zod.optout === "optional";
         if (r instanceof Promise) {
-          proms.push(r.then((r2) => isOptional ? handleOptionalObjectResult(r2, payload, key, input) : handleObjectResult(r2, payload, key)));
+          proms.push(r.then((r2) => isOptional ? handleOptionalObjectResult(r2, payload, key2, input) : handleObjectResult(r2, payload, key2)));
         } else if (isOptional) {
-          handleOptionalObjectResult(r, payload, key, input);
+          handleOptionalObjectResult(r, payload, key2, input);
         } else {
-          handleObjectResult(r, payload, key);
+          handleObjectResult(r, payload, key2);
         }
       }
     }
@@ -13098,18 +13098,18 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const keySet = value.keySet;
     const _catchall = catchall._zod;
     const t = _catchall.def.type;
-    for (const key of Object.keys(input)) {
-      if (keySet.has(key))
+    for (const key2 of Object.keys(input)) {
+      if (keySet.has(key2))
         continue;
       if (t === "never") {
-        unrecognized.push(key);
+        unrecognized.push(key2);
         continue;
       }
-      const r = _catchall.run({ value: input[key], issues: [] }, ctx);
+      const r = _catchall.run({ value: input[key2], issues: [] }, ctx);
       if (r instanceof Promise) {
-        proms.push(r.then((r2) => handleObjectResult(r2, payload, key)));
+        proms.push(r.then((r2) => handleObjectResult(r2, payload, key2)));
       } else {
-        handleObjectResult(r, payload, key);
+        handleObjectResult(r, payload, key2);
       }
     }
     if (unrecognized.length) {
@@ -13271,17 +13271,17 @@ function mergeValues2(a, b) {
   }
   if (isPlainObject(a) && isPlainObject(b)) {
     const bKeys = Object.keys(b);
-    const sharedKeys = Object.keys(a).filter((key) => bKeys.indexOf(key) !== -1);
+    const sharedKeys = Object.keys(a).filter((key2) => bKeys.indexOf(key2) !== -1);
     const newObj = { ...a, ...b };
-    for (const key of sharedKeys) {
-      const sharedValue = mergeValues2(a[key], b[key]);
+    for (const key2 of sharedKeys) {
+      const sharedValue = mergeValues2(a[key2], b[key2]);
       if (!sharedValue.valid) {
         return {
           valid: false,
-          mergeErrorPath: [key, ...sharedValue.mergeErrorPath]
+          mergeErrorPath: [key2, ...sharedValue.mergeErrorPath]
         };
       }
-      newObj[key] = sharedValue.data;
+      newObj[key2] = sharedValue.data;
     }
     return { valid: true, data: newObj };
   }
@@ -13339,29 +13339,29 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
     if (def.keyType._zod.values) {
       const values = def.keyType._zod.values;
       payload.value = {};
-      for (const key of values) {
-        if (typeof key === "string" || typeof key === "number" || typeof key === "symbol") {
-          const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+      for (const key2 of values) {
+        if (typeof key2 === "string" || typeof key2 === "number" || typeof key2 === "symbol") {
+          const result = def.valueType._zod.run({ value: input[key2], issues: [] }, ctx);
           if (result instanceof Promise) {
             proms.push(result.then((result2) => {
               if (result2.issues.length) {
-                payload.issues.push(...prefixIssues(key, result2.issues));
+                payload.issues.push(...prefixIssues(key2, result2.issues));
               }
-              payload.value[key] = result2.value;
+              payload.value[key2] = result2.value;
             }));
           } else {
             if (result.issues.length) {
-              payload.issues.push(...prefixIssues(key, result.issues));
+              payload.issues.push(...prefixIssues(key2, result.issues));
             }
-            payload.value[key] = result.value;
+            payload.value[key2] = result.value;
           }
         }
       }
       let unrecognized;
-      for (const key in input) {
-        if (!values.has(key)) {
+      for (const key2 in input) {
+        if (!values.has(key2)) {
           unrecognized = unrecognized ?? [];
-          unrecognized.push(key);
+          unrecognized.push(key2);
         }
       }
       if (unrecognized && unrecognized.length > 0) {
@@ -13374,10 +13374,10 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
       }
     } else {
       payload.value = {};
-      for (const key of Reflect.ownKeys(input)) {
-        if (key === "__proto__")
+      for (const key2 of Reflect.ownKeys(input)) {
+        if (key2 === "__proto__")
           continue;
-        const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+        const keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
         if (keyResult instanceof Promise) {
           throw new Error("Async schemas not supported in object keys currently");
         }
@@ -13386,24 +13386,24 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
             origin: "record",
             code: "invalid_key",
             issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
-            input: key,
-            path: [key],
+            input: key2,
+            path: [key2],
             inst
           });
           payload.value[keyResult.value] = keyResult.value;
           continue;
         }
-        const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+        const result = def.valueType._zod.run({ value: input[key2], issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((result2) => {
             if (result2.issues.length) {
-              payload.issues.push(...prefixIssues(key, result2.issues));
+              payload.issues.push(...prefixIssues(key2, result2.issues));
             }
             payload.value[keyResult.value] = result2.value;
           }));
         } else {
           if (result.issues.length) {
-            payload.issues.push(...prefixIssues(key, result.issues));
+            payload.issues.push(...prefixIssues(key2, result.issues));
           }
           payload.value[keyResult.value] = result.value;
         }
@@ -14460,15 +14460,15 @@ var JSONSchemaGenerator = class {
             json.type = "object";
             json.properties = {};
             const shape = def.shape;
-            for (const key in shape) {
-              json.properties[key] = this.process(shape[key], {
+            for (const key2 in shape) {
+              json.properties[key2] = this.process(shape[key2], {
                 ...params,
-                path: [...params.path, "properties", key]
+                path: [...params.path, "properties", key2]
               });
             }
             const allKeys = new Set(Object.keys(shape));
-            const requiredKeys = new Set([...allKeys].filter((key) => {
-              const v = def.shape[key]._zod;
+            const requiredKeys = new Set([...allKeys].filter((key2) => {
+              const v = def.shape[key2]._zod;
               if (this.io === "input") {
                 return v.optin === void 0;
               } else {
@@ -14802,8 +14802,8 @@ var JSONSchemaGenerator = class {
       if (defId)
         seen.defId = defId;
       const schema2 = seen.schema;
-      for (const key in schema2) {
-        delete schema2[key];
+      for (const key2 in schema2) {
+        delete schema2[key2];
       }
       schema2.$ref = ref;
     };
@@ -14930,8 +14930,8 @@ function toJSONSchema(input, _params) {
       defs
     };
     for (const entry of input._idmap.entries()) {
-      const [key, schema] = entry;
-      schemas[key] = gen2.emit(schema, {
+      const [key2, schema] = entry;
+      schemas[key2] = gen2.emit(schema, {
         ..._params,
         external
       });
@@ -14978,8 +14978,8 @@ function isTransforming(_schema, _ctx) {
       return isTransforming(def.element, ctx);
     }
     case "object": {
-      for (const key in def.shape) {
-        if (isTransforming(def.shape[key], ctx))
+      for (const key2 in def.shape) {
+        if (isTransforming(def.shape[key2], ctx))
           return true;
       }
       return false;
@@ -17541,19 +17541,19 @@ var getRefs = (options) => {
 };
 
 // node_modules/zod-to-json-schema/dist/esm/errorMessages.js
-function addErrorMessage(res, key, errorMessage, refs) {
+function addErrorMessage(res, key2, errorMessage, refs) {
   if (!refs?.errorMessages)
     return;
   if (errorMessage) {
     res.errorMessage = {
       ...res.errorMessage,
-      [key]: errorMessage
+      [key2]: errorMessage
     };
   }
 }
-function setResponseValueAndErrors(res, key, value, errorMessage, refs) {
-  res[key] = value;
-  addErrorMessage(res, key, errorMessage, refs);
+function setResponseValueAndErrors(res, key2, value, errorMessage, refs) {
+  res[key2] = value;
+  addErrorMessage(res, key2, errorMessage, refs);
 }
 
 // node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
@@ -18145,11 +18145,11 @@ function parseRecordDef(def, refs) {
     return {
       type: "object",
       required: def.keyType._def.values,
-      properties: def.keyType._def.values.reduce((acc, key) => ({
+      properties: def.keyType._def.values.reduce((acc, key2) => ({
         ...acc,
-        [key]: parseDef(def.valueType._def, {
+        [key2]: parseDef(def.valueType._def, {
           ...refs,
-          currentPath: [...refs.currentPath, "properties", key]
+          currentPath: [...refs.currentPath, "properties", key2]
         }) ?? parseAnyDef(refs)
       }), {}),
       additionalProperties: refs.rejectedAdditionalProperties
@@ -18216,10 +18216,10 @@ function parseMapDef(def, refs) {
 // node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 function parseNativeEnumDef(def) {
   const object3 = def.values;
-  const actualKeys = Object.keys(def.values).filter((key) => {
-    return typeof object3[object3[key]] !== "number";
+  const actualKeys = Object.keys(def.values).filter((key2) => {
+    return typeof object3[object3[key2]] !== "number";
   });
-  const actualValues = actualKeys.map((key) => object3[key]);
+  const actualValues = actualKeys.map((key2) => object3[key2]);
   const parsedTypes = Array.from(new Set(actualValues.map((values) => typeof values)));
   return {
     type: parsedTypes.length === 1 ? parsedTypes[0] === "string" ? "string" : "number" : ["string", "number"],
@@ -19311,7 +19311,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -19328,7 +19328,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve4, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -19406,7 +19406,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve4(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -19667,12 +19667,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve4, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve4, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -19750,8 +19750,8 @@ function isPlainObject2(value) {
 }
 function mergeCapabilities(base, additional) {
   const result = { ...base };
-  for (const key in additional) {
-    const k = key;
+  for (const key2 in additional) {
+    const k = key2;
     const addValue = additional[k];
     if (addValue === void 0)
       continue;
@@ -20763,7 +20763,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -21427,12 +21427,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve4) => {
       const json = serializeMessage(message);
       if (this._stdout.write(json)) {
-        resolve2();
+        resolve4();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve4);
       }
     });
   }
@@ -21869,12 +21869,37 @@ function flipForSequence(map) {
   };
 }
 
+// src/domain/context.ts
+function sourceError(raw) {
+  if (!Array.isArray(raw) || raw.length > 100) return "sources must be an array of at most 100 file references";
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return "source must be an object";
+    const s = item;
+    if (Object.keys(s).some((k) => k !== "path" && k !== "sha256")) return "unknown source field";
+    if (typeof s.path !== "string" || s.path.length > 1024 || !s.path || /[\u0000-\u001f\u007f-\u009f\\:]/.test(s.path) || s.path.startsWith("/") || s.path.split("/").some((p) => !p || p === "." || p === "..")) return "source path must be relative to the project, with forward slashes and no traversal";
+    if (s.sha256 !== void 0 && (typeof s.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(s.sha256))) return "source sha256 must be a lowercase SHA256 hash";
+  }
+  return void 0;
+}
+function contextError(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "context must be an object";
+  for (const [key2, value] of Object.entries(raw)) {
+    if (key2 !== "summary" && key2 !== "next") return "unknown context field";
+    if (typeof value !== "string" || value.length > 2e3 || /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(value)) return "context fields must be text of at most 2000 characters";
+  }
+  return void 0;
+}
+
 // src/domain/text.ts
 var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
 var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
 var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
 var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
 function mapTextError(map) {
+  if (map.context !== void 0) {
+    const error3 = contextError(map.context);
+    if (error3) return error3;
+  }
   const check2 = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
   let error2 = check2("title", map.title);
   if (error2) return error2;
@@ -21889,6 +21914,10 @@ function mapTextError(map) {
     }
   }
   for (const [i, node] of map.nodes.entries()) {
+    if (node.sources !== void 0) {
+      const error3 = sourceError(node.sources);
+      if (error3) return `nodes[${i}]: ${error3}`;
+    }
     for (const name of ["label", "evidence", "detail"]) {
       error2 = check2(`nodes[${i}].${name}`, node[name], name !== "label");
       if (error2) return error2;
@@ -22792,25 +22821,25 @@ function describeValue(v) {
 function badShape(path, where, expected, got) {
   return err({ kind: "bad-shape", path, detail: `${where} is ${describeValue(got)}, expected ${expected}` });
 }
-function arrayField(raw, key, path, presence) {
-  const v = raw[key];
+function arrayField(raw, key2, path, presence) {
+  const v = raw[key2];
   if (Array.isArray(v)) return ok(v);
   if (v === void 0 && presence === "optional") return ok([]);
-  return badShape(path, `"${key}"`, "an array", v);
+  return badShape(path, `"${key2}"`, "an array", v);
 }
-function requiredString(rec, key, where, path) {
-  const v = rec[key];
-  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
+function requiredString(rec, key2, where, path) {
+  const v = rec[key2];
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key2}`, "a string", v);
 }
-function optionalString(rec, key, where, path) {
-  const v = rec[key];
+function optionalString(rec, key2, where, path) {
+  const v = rec[key2];
   if (v === void 0) return ok(void 0);
-  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key2}`, "a string", v);
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
-  if (raw["version"] !== STATE_FILE_VERSION) {
-    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION}` });
+  if (raw["version"] !== STATE_FILE_VERSION && raw["version"] !== 2) {
+    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION} or 2` });
   }
   const layers = arrayField(raw, "layers", path, "required");
   if (!layers.ok) return layers;
@@ -22823,6 +22852,11 @@ function parseMap(raw, path) {
   const groups = arrayField(raw, "groups", path, "optional");
   if (!groups.ok) return groups;
   let map = EMPTY_MAP;
+  if (raw["context"] !== void 0) {
+    const error2 = contextError(raw["context"]);
+    if (error2) return err({ kind: "bad-shape", path, detail: error2 });
+    map = { ...map, context: raw["context"] };
+  }
   const title = optionalString(raw, "title", "map", path);
   if (!title.ok) return title;
   if (title.value !== void 0) map = setTitle(map, title.value);
@@ -22951,6 +22985,11 @@ function parseMap(raw, path) {
       if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
       map = updated.value;
     }
+    if (rawNode["sources"] !== void 0) {
+      const error2 = sourceError(rawNode["sources"]);
+      if (error2) return err({ kind: "bad-shape", path, detail: `${where}: ${error2}` });
+      map = { ...map, nodes: map.nodes.map((n) => n.id === id2.value ? { ...n, sources: rawNode["sources"] } : n) };
+    }
   }
   for (const [i, rawEdge] of edges.value.entries()) {
     const where = `edges[${i}]`;
@@ -22974,7 +23013,9 @@ function parseMap(raw, path) {
 }
 function serializeMap(map) {
   const body = {
-    version: STATE_FILE_VERSION,
+    // Older runtimes must refuse maps with provenance rather than silently erasing it.
+    version: map.context !== void 0 || map.nodes.some((n) => n.sources !== void 0) ? 2 : STATE_FILE_VERSION,
+    ...map.context !== void 0 ? { context: map.context } : {},
     ...map.title !== void 0 ? { title: map.title } : {},
     ...map.kind !== void 0 ? { kind: map.kind } : {},
     layers: map.layers,
@@ -23253,11 +23294,201 @@ function saveMapFile(path, map) {
   return writeFileAtomic(path, serializeMap(map));
 }
 
+// src/store/transaction.ts
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, rmSync as rmSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname6, join as join5 } from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+var LedgerError = class extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.code = code;
+    this.details = details;
+  }
+};
+var revisionOf = (map) => createHash("sha256").update(serializeMap(map)).digest("hex");
+function assertRevision(actual, expected) {
+  if (expected !== void 0 && expected !== actual) throw new LedgerError("CONFLICT", "Map changed; read the current revision before retrying.", { expectedRevision: expected, actualRevision: actual });
+}
+function storeDirectory(file) {
+  const dir = dirname6(file);
+  return dir.endsWith("/pages") || dir.endsWith("\\pages") ? dirname6(dir) : dir;
+}
+function deadOwner(lock) {
+  try {
+    const owner = JSON.parse(readFileSync4(join5(lock, "owner.json"), "utf8"));
+    if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
+    try {
+      process.kill(owner.pid, 0);
+      return false;
+    } catch (e) {
+      return e.code === "ESRCH";
+    }
+  } catch {
+    return false;
+  }
+}
+function withStoreLock(file, action) {
+  const dir = storeDirectory(file);
+  mkdirSync3(dir, { recursive: true });
+  const lock = join5(dir, ".write-lock");
+  const owner = join5(lock, "owner.json");
+  const token = randomUUID();
+  try {
+    mkdirSync3(lock);
+  } catch (error2) {
+    if (error2.code !== "EEXIST") throw error2;
+    if (!deadOwner(lock)) throw new LedgerError("BUSY", `Another writer owns ${lock}; retry after it completes. An orphan without owner metadata needs manual inspection.`);
+    try {
+      mkdirSync3(join5(lock, ".reap"));
+    } catch {
+      throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
+    }
+    if (!deadOwner(lock)) {
+      rmSync4(join5(lock, ".reap"), { recursive: true, force: true });
+      throw new LedgerError("BUSY", "Writer ownership changed.");
+    }
+    rmSync4(lock, { recursive: true });
+    try {
+      mkdirSync3(lock);
+    } catch {
+      throw new LedgerError("BUSY", "Another writer acquired the recovered lock.");
+    }
+  }
+  let initialized = false;
+  try {
+    writeFileSync2(owner, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
+    initialized = true;
+    return action();
+  } finally {
+    try {
+      if (!initialized || JSON.parse(readFileSync4(owner, "utf8")).token === token) rmSync4(lock, { recursive: true });
+    } catch {
+    }
+  }
+}
+
+// src/store/project.ts
+import { existsSync as existsSync3, realpathSync } from "node:fs";
+import { dirname as dirname7, join as join6, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
+  let start = resolve(cwd);
+  try {
+    start = realpathSync(start);
+  } catch {
+  }
+  let dir = start;
+  const boundaries = new Set(stopAt.map((path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  }));
+  while (true) {
+    if (dir !== start && boundaries.has(dir)) return start;
+    if (existsSync3(join6(dir, ".git")) || existsSync3(join6(dir, ".mellos", "map.json")) || existsSync3(join6(dir, ".mellos", "pages"))) return dir;
+    const parent = dirname7(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
+
+// src/server/mutations.ts
+var key = (resource, row) => resource === "edges" ? `${String(row.from)}->${String(row.to)}` : row.id;
+function patch(row, values) {
+  const next = { ...row };
+  for (const [field, value] of Object.entries(values)) {
+    if (value === void 0 || field === "id") continue;
+    if (value === null) delete next[field];
+    else next[field] = value;
+  }
+  return next;
+}
+function update(draft, resource, locator, values) {
+  const index = draft[resource].findIndex((r) => key(resource, r) === locator);
+  if (index < 0) throw new Error(`unknown ${resource}: ${String(locator)}`);
+  draft[resource][index] = patch(draft[resource][index], values);
+}
+function applyBatch(map, operations, page2) {
+  if (!operations.length) return err("nothing to change: pass operations");
+  const draft = JSON.parse(serializeMap(map));
+  draft.groups ??= [];
+  draft.lanes ??= [];
+  try {
+    for (const [index, operation] of operations.entries()) {
+      try {
+        const input = operation.data;
+        if (operation.op === "declare") {
+          const data = input;
+          for (const resource of ["layers", "lanes", "groups", "nodes", "edges"]) {
+            for (const item of data[resource] ?? []) {
+              const row = { ...item };
+              if (draft[resource].some((r) => key(resource, r) === key(resource, row))) throw new Error(`${resource}: already exists ${String(key(resource, row))}`);
+              if (resource === "nodes") row.status ??= "planned";
+              draft[resource].push(row);
+            }
+          }
+          if (data.title !== void 0) {
+            if (data.title === null) delete draft.title;
+            else draft.title = data.title;
+          }
+          if (data.kind !== void 0) draft.kind = data.kind;
+          if (data.context !== void 0) draft.context = data.context;
+        } else if (operation.op === "update") {
+          const data = input;
+          if (data.title !== void 0) {
+            if (data.title === null) delete draft.title;
+            else draft.title = data.title;
+          }
+          if (data.kind !== void 0) draft.kind = data.kind;
+          if (data.context !== void 0) {
+            if (data.context === null) delete draft.context;
+            else draft.context = data.context;
+          }
+          for (const resource of ["layers", "groups", "lanes"]) for (const item of data[resource] ?? []) update(draft, resource, item.id, { ...item });
+          for (const item of data.updates ?? []) update(draft, "nodes", item.id, { ...item });
+          for (const item of data.edges ?? []) {
+            const { from, to, newFrom, newTo, ...fields } = item;
+            update(draft, "edges", `${from}->${to}`, { ...fields, ...newFrom !== void 0 ? { from: newFrom } : {}, ...newTo !== void 0 ? { to: newTo } : {} });
+          }
+          if (data.laneOrder !== void 0) {
+            if (data.laneOrder.length !== draft.lanes.length || new Set(data.laneOrder).size !== draft.lanes.length || data.laneOrder.some((id2) => !draft.lanes.some((l) => l.id === id2))) throw new Error("laneOrder must name every lane exactly once");
+            draft.lanes = data.laneOrder.map((id2) => draft.lanes.find((l) => l.id === id2));
+          }
+        } else {
+          const data = input;
+          for (const resource of ["edges", "nodes", "groups", "lanes", "layers"]) {
+            for (const item of data[resource] ?? []) {
+              const id2 = resource === "edges" ? key("edges", item) : item;
+              if (!draft[resource].some((r) => key(resource, r) === id2)) throw new Error(`unknown ${resource}: ${String(id2)}`);
+              draft[resource] = draft[resource].filter((r) => key(resource, r) !== id2);
+              if (resource === "nodes") draft.edges = draft.edges.filter((e) => e.from !== id2 && e.to !== id2);
+              if (resource === "groups" || resource === "lanes") {
+                const field = resource === "groups" ? "group" : "lane";
+                draft.nodes = draft.nodes.map((n) => n[field] === id2 ? patch(n, { [field]: null }) : n);
+              }
+            }
+          }
+        }
+      } catch (error2) {
+        throw new Error(`operations[${index}]: ${error2.message}`);
+      }
+    }
+    if (page2 !== void 0 && draft.nodes.some((n) => n.submap === page2)) return err("a node cannot dive into its own page");
+    const parsed = parseMap(draft, "transaction");
+    return parsed.ok ? ok(parsed.value) : err(describeStoreError(parsed.error));
+  } catch (error2) {
+    return err(error2.message);
+  }
+}
+
 // src/server/apply.ts
 function refuseSelfDive(where, submap, page2) {
   return submap === page2 ? `${where}: a node cannot dive into its own page ("${submap}"); a submap links a CHILD page` : void 0;
 }
 function applyDeclare(map, input) {
+  if (input.context !== void 0 || input.nodes?.some((n) => n.sources !== void 0)) return applyBatch(map, [{ op: "declare", data: input }], input.page);
   let next = input.title !== void 0 ? setTitle(map, input.title) : map;
   if (input.kind !== void 0) {
     const kind = makeMapKind(input.kind);
@@ -23353,6 +23584,7 @@ function applyDeclare(map, input) {
   return ok(next);
 }
 function applyUpdate(map, input) {
+  if (input.title !== void 0 || input.kind !== void 0 || input.context !== void 0 || input.edges !== void 0 || input.laneOrder !== void 0 || input.groups?.some((g) => g.layer !== void 0) || input.updates?.some((n) => n.sources !== void 0)) return applyBatch(map, [{ op: "update", data: input }], input.page);
   let next = map;
   const items = (input.updates?.length ?? 0) + (input.layers?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0);
   if (items === 0) return err("nothing to revise: pass updates, layers, groups or lanes");
@@ -23378,6 +23610,7 @@ function applyUpdate(map, input) {
   for (const [i, g] of (input.groups ?? []).entries()) {
     const id2 = makeGroupId(g.id);
     if (!id2.ok) return err(`groups[${i}]: ${describeMapError(id2.error)}`);
+    if (g.label === void 0) return err(`groups[${i}]: nothing to change; give a label or layer`);
     const updated = updateGroup(next, id2.value, g.label);
     if (!updated.ok) return err(`groups[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
@@ -23500,9 +23733,9 @@ function summarize(map) {
 }
 
 // src/preview/publisher.ts
-import { createHash } from "node:crypto";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync3, realpathSync, rmdirSync } from "node:fs";
-import { dirname as dirname6, join as join5, resolve } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync5, readdirSync as readdirSync3, realpathSync as realpathSync2, rmdirSync } from "node:fs";
+import { dirname as dirname8, join as join7, resolve as resolve2 } from "node:path";
 
 // src/preview/presentation.ts
 var LABELS = { planned: "\u5F85\u5F00\u53D1", "in-progress": "\u5F00\u53D1\u4E2D", done: "\u5DF2\u9A8C\u8BC1", regressed: "\u51FA\u73B0\u56DE\u5F52" };
@@ -23660,15 +23893,15 @@ var PREVIEW_DIR_NAME = "previews";
 var ENABLED = ".enabled";
 var PUBLISH_LOCK = ".publish-lock";
 function previewDirectory(defaultFile) {
-  return join5(dirname6(defaultFile), PREVIEW_DIR_NAME);
+  return join7(dirname8(defaultFile), PREVIEW_DIR_NAME);
 }
 function previewFile(defaultFile, page2) {
   if (page2 !== void 0 && !ID_RULE.test(page2)) throw new Error("Invalid preview page id.");
-  return join5(previewDirectory(defaultFile), documentName(page2));
+  return join7(previewDirectory(defaultFile), documentName(page2));
 }
 function save(path, contents) {
   try {
-    if (readFileSync4(path, "utf8") === contents) return;
+    if (readFileSync5(path, "utf8") === contents) return;
   } catch (error2) {
     if (error2.code !== "ENOENT") throw error2;
   }
@@ -23676,19 +23909,19 @@ function save(path, contents) {
   if (!result.ok) throw new Error(describeStoreError(result.error));
 }
 function ownedDirectory(path) {
-  mkdirSync3(path, { recursive: true });
-  const expected = join5(realpathSync(dirname6(path)), path.slice(dirname6(path).length + 1));
-  const actual = realpathSync(path);
+  mkdirSync4(path, { recursive: true });
+  const expected = join7(realpathSync2(dirname8(path)), path.slice(dirname8(path).length + 1));
+  const actual = realpathSync2(path);
   if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
     throw new Error(`Preview directory redirects outside its parent: ${path}`);
   }
 }
 function acquireLock(directory) {
-  const path = join5(directory, PUBLISH_LOCK);
+  const path = join7(directory, PUBLISH_LOCK);
   const deadline = Date.now() + 2e3;
   while (true) {
     try {
-      mkdirSync3(path);
+      mkdirSync4(path);
       return () => rmdirSync(path);
     } catch (error2) {
       if (error2.code !== "EEXIST") throw error2;
@@ -23699,8 +23932,8 @@ function acquireLock(directory) {
 }
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
-  const enabledFile = join5(directory, ENABLED);
-  const enabled = () => existsSync3(enabledFile);
+  const enabledFile = join7(directory, ENABLED);
+  const enabled = () => existsSync4(enabledFile);
   const refresh = (page2) => {
     try {
       const path = previewFile(defaultFile, page2);
@@ -23717,26 +23950,26 @@ function createPreviewPublisher(defaultFile) {
         }
         if (page2 !== void 0 && !pages.some((p) => p.page === page2)) return err(`No map page named "${page2}".`);
         if (page2 === void 0 && !pages.some((p) => p.page === void 0)) pages.unshift({ page: void 0, map: EMPTY_MAP });
-        const images = join5(directory, "images");
+        const images = join7(directory, "images");
         ownedDirectory(images);
         const present = /* @__PURE__ */ new Set();
         for (const item of pages) {
           const svg = renderMapSvg(item.map);
-          const digest = createHash("sha256").update(svg).digest("hex");
+          const digest = createHash2("sha256").update(svg).digest("hex");
           const image = `images/${digest}.svg`;
-          save(join5(images, `${digest}.svg`), svg);
+          save(join7(images, `${digest}.svg`), svg);
           const filename = documentName(item.page);
-          save(join5(directory, filename), renderMapMarkdown(item.map, image, pages));
+          save(join7(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
         for (const filename of readdirSync3(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
-            save(join5(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
+            save(join7(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
         }
-        const index = join5(directory, "index.md");
+        const index = join7(directory, "index.md");
         save(index, renderPreviewIndex(pages));
-        return ok({ path: resolve(path), index: resolve(index), pages: pages.length });
+        return ok({ path: resolve2(path), index: resolve2(index), pages: pages.length });
       } finally {
         release();
       }
@@ -23759,13 +23992,13 @@ function createPreviewPublisher(defaultFile) {
 
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync4, readFileSync as readFileSync5 } from "node:fs";
-import { dirname as dirname8, join as join6 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync6 } from "node:fs";
+import { dirname as dirname10, join as join8 } from "node:path";
 
 // src/web/source.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { statSync as statSync2 } from "node:fs";
-import { basename as basename2, dirname as dirname7 } from "node:path";
+import { basename as basename2, dirname as dirname9 } from "node:path";
 function readWebSnapshot(defaultFile) {
   const pages = listPageFiles(defaultFile).map((file) => {
     const id2 = pageIdOfFile(defaultFile, file) ?? "";
@@ -23780,15 +24013,15 @@ function readWebSnapshot(defaultFile) {
     }
   });
   if (pages.length === 0) pages.push({ id: "", title: "\u7B49\u5F85\u7B2C\u4E00\u5F20\u5730\u56FE", modified: 0, map: EMPTY_MAP });
-  const value = { project: basename2(dirname7(dirname7(defaultFile))), pages };
-  return { revision: createHash2("sha256").update(JSON.stringify(value)).digest("hex"), value };
+  const value = { project: basename2(dirname9(dirname9(defaultFile))), pages };
+  return { revision: createHash3("sha256").update(JSON.stringify(value)).digest("hex"), value };
 }
 
 // src/web/launcher.ts
-var webRuntimeFile = (defaultFile) => join6(dirname8(defaultFile), "web", "server.json");
+var webRuntimeFile = (defaultFile) => join8(dirname10(defaultFile), "web", "server.json");
 async function runningWebUrl(defaultFile) {
   try {
-    const info = JSON.parse(readFileSync5(webRuntimeFile(defaultFile), "utf8"));
+    const info = JSON.parse(readFileSync6(webRuntimeFile(defaultFile), "utf8"));
     if (!Number.isInteger(info.port) || info.port < 1 || info.port > 65535 || !/^[a-f0-9]{48}$/.test(info.token)) return void 0;
     const url = `http://127.0.0.1:${info.port}/${info.token}/`;
     const response = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(700) });
@@ -23800,21 +24033,21 @@ async function runningWebUrl(defaultFile) {
 async function openWebPreview(defaultFile, entry, page2, terminal = false) {
   if (page2 !== void 0 && (!ID_RULE.test(page2) || !readWebSnapshot(defaultFile).value.pages.some((p) => p.id === page2))) throw new Error(`No map page named "${page2}".`);
   let url = await runningWebUrl(defaultFile);
-  if (url && terminal) {
+  if (url) {
     const health = await fetch(`${url}api/health`, { signal: AbortSignal.timeout(2e3) });
     const info = await health.json();
-    if (!info.surfaces?.includes("web-terminal")) {
+    if (!info.formats?.includes(2) || terminal && !info.surfaces?.includes("web-terminal")) {
       await fetch(`${url}api/stop`, { method: "POST", signal: AbortSignal.timeout(2e3) });
       const deadline = Date.now() + 3e3;
       while (await runningWebUrl(defaultFile)) {
-        if (Date.now() > deadline) throw new Error("Old web viewer is still stopping. Retry opening the terminal.");
-        await new Promise((resolve2) => setTimeout(resolve2, 100));
+        if (Date.now() > deadline) throw new Error("Old web viewer is still stopping. Retry opening the map.");
+        await new Promise((resolve4) => setTimeout(resolve4, 100));
       }
       url = void 0;
     }
   }
   if (!url) {
-    if (!existsSync4(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
+    if (!existsSync5(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
     const child = spawn(process.execPath, [entry, "--serve", defaultFile], { detached: true, windowsHide: true, stdio: "ignore" });
     let failure;
     child.on("error", (error2) => {
@@ -23824,7 +24057,7 @@ async function openWebPreview(defaultFile, entry, page2, terminal = false) {
     const deadline = Date.now() + 8e3;
     while (!url && Date.now() < deadline) {
       if (failure) throw failure;
-      await new Promise((resolve2) => setTimeout(resolve2, 100));
+      await new Promise((resolve4) => setTimeout(resolve4, 100));
       url = await runningWebUrl(defaultFile);
     }
     if (!url) throw new Error("Web preview did not start. Run the web CLI directly to inspect the error.");
@@ -23860,7 +24093,7 @@ var EDGE_LABEL_MAX = 80;
 function id(description) {
   return external_exports.string().regex(ID_RULE, ID_RULE_TEXT).describe(description);
 }
-var PAGE_DESCRIPTION = "page (parallel map) this call targets; omit for the default page. One effort = one page: start a NEW effort on its own page named after the effort, so concurrent sessions never write over each other and the pane can switch between pages.";
+var PAGE_DESCRIPTION = "page (parallel map) this call targets; omit for the default page. A new conversation is not a new effort. Read existing pages with mmap_read first; reuse the same page for continued work. Create a new page only for a distinct effort.";
 function page() {
   return id(PAGE_DESCRIPTION).optional();
 }
@@ -23896,12 +24129,17 @@ function note(max, description) {
 function closed(shape) {
   return external_exports.object(shape).strict();
 }
+var expectedRevision = () => external_exports.string().regex(/^(?:[a-f0-9]{64}|absent)$/).optional().describe("Revision from mmap_read; absent requires a new page. A stale revision returns CONFLICT.");
+var context = () => closed({ summary: note(2e3, "Concise purpose and confirmed decisions").optional(), next: note(2e3, "Next actions for resuming this effort").optional() });
+var sources = () => external_exports.array(closed({ path: external_exports.string().max(1024), sha256: external_exports.string().regex(/^[a-f0-9]{64}$/).optional() })).max(100).refine((value) => sourceError(value) === void 0, "Use project-relative file paths without traversal.").describe("Optional source files and verified SHA256 baselines. mmap_read changes checks them without rescanning the repository.");
 function declareTool() {
   return {
     title: "Declare map structure",
-    description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the whole ghost design up front, then grow it as understanding deepens. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. The title lives here and only here: pass it again to replace it, or null to remove it. Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.",
+    description: "Grow the Mellos map: set the title and diagram kind, add layer bands, lanes and groups (labeled subsystems within ONE band \u2014 declare them when a single band grows crowded, roughly five or more nodes in that band; a group must be a strict subset of its band, and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the missing design after reading existing pages with mmap_read; reuse verified nodes. Edges must point strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. Title and kind can also be changed with mmap_update; this legacy form remains supported. Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.",
     inputSchema: closed({
       page: page(),
+      expectedRevision: expectedRevision(),
+      context: context().optional(),
       title: line(TITLE_MAX, "map title, e.g. the feature being built; null removes it").nullable().optional(),
       kind: mapKind().optional(),
       lanes: external_exports.array(
@@ -23927,6 +24165,7 @@ function declareTool() {
       nodes: external_exports.array(
         closed({
           id: id("stable kebab-case identifier of the node"),
+          sources: sources().optional(),
           label: line(LABEL_MAX, "display label inside the box"),
           layer: id("id of the band this node lives in"),
           status: status("defaults to planned").optional(),
@@ -23961,9 +24200,16 @@ function updateTool() {
     description: "The revision tool, all-or-nothing. Record progress on nodes: in-progress when starting a node (the pane spins), done with evidence when its verification passes, regressed with evidence when a done node breaks. Revise what the ghost design got wrong: move a node to another band, join or leave a group or lane, rename a band (or re-rank it, which reorders the whole map), relabel a group or a lane. Every clearable field takes null to empty it \u2014 that is how a field is cleared, never an empty string. Bands, groups and lanes are applied before the node updates, and within one node update `layer` moves the node before its other fields. The map is a ledger: report honestly, it never blocks you.",
     inputSchema: closed({
       page: page(),
+      expectedRevision: expectedRevision(),
+      title: line(TITLE_MAX, "Map title; null clears").nullable().optional(),
+      kind: mapKind().optional(),
+      context: context().nullable().optional(),
+      laneOrder: external_exports.array(id("existing lane id")).max(100).optional().describe("Every lane exactly once, in display order."),
+      edges: external_exports.array(closed({ ...edgeEnds(), label: line(EDGE_LABEL_MAX, "New edge label; null clears").nullable().optional(), newFrom: id("replacement consumer").optional(), newTo: id("replacement dependency").optional() })).min(1).optional(),
       updates: external_exports.array(
         closed({
           id: id("id of the node to update"),
+          sources: sources().nullable().optional(),
           status: status("the status to record").optional(),
           label: line(LABEL_MAX, "new display label inside the box").optional(),
           evidence: line(EVIDENCE_MAX, "for done: how it was verified; for regressed: what broke; null clears it").nullable().optional(),
@@ -23987,7 +24233,7 @@ function updateTool() {
           rank: rank().optional()
         })
       ).min(1).optional().describe("rename and/or re-rank existing bands; an item must carry a name, a rank, or both"),
-      groups: external_exports.array(closed({ id: id("id of the group to relabel"), label: line(LABEL_MAX, "new subsystem name") })).min(1).optional().describe("relabel existing groups; membership and band are untouched"),
+      groups: external_exports.array(closed({ id: id("id of the group to revise"), label: line(LABEL_MAX, "new subsystem name").optional(), layer: id("new layer; move members in the same batch").optional() })).min(1).optional().describe("relabel or move a group; final membership must match its layer"),
       lanes: external_exports.array(closed({ id: id("id of the lane to relabel"), label: line(LABEL_MAX, "new column name") })).min(1).optional().describe("relabel existing lanes; order and membership are untouched")
     })
   };
@@ -23998,6 +24244,9 @@ function removeTool() {
     description: 'Remove edges, nodes, groups and empty layer bands (in that order, all-or-nothing). Removing a node also removes every edge touching it; removing a group merely ungroups its members. Use when the ghost design turns out wrong \u2014 the map is a hypothesis, revising it is honest work. `pages` is the other scale: it DELETES whole page files, so a finished effort can be cleaned up instead of accumulating tabs forever. A bare `{pages: ["slug"]}` with no other field is the normal form; combined with map edits, the edits are applied first and the pages are deleted after. The deletion is permanent and cannot be undone, so delete only pages whose effort is over \u2014 and only ever with the user behind it. An unknown slug is refused with the project\'s real page list (naming a page that does not exist is a typo, not a request). The default page has no slug and is not deletable here. A node elsewhere still pointing at a deleted page with `submap` stays legal \u2014 a submap reference has no existence invariant \u2014 but it has nowhere to dive until the page comes back.',
     inputSchema: closed({
       page: page(),
+      expectedRevision: expectedRevision(),
+      deletePage: external_exports.boolean().optional().describe("Delete the page targeted by page, including the default page; cannot be combined with other edits."),
+      references: external_exports.enum(["reject", "keep"]).optional().describe("For deletePage: reject inbound submap references by default, or explicitly keep them."),
       edges: external_exports.array(closed(edgeEnds())).optional(),
       nodes: external_exports.array(id("id of the node to remove, with every edge touching it")).optional(),
       groups: external_exports.array(id("id of the group to remove; members stay, merely ungrouped")).optional(),
@@ -24020,6 +24269,44 @@ function setupTool() {
       scope: external_exports.enum(POLICY_SCOPES).optional().describe(
         'where to record the choice: "user" (default) applies to every project this user opens; "project" overrides that for this project alone. Ignored when reading.'
       )
+    })
+  };
+}
+function readTool() {
+  return {
+    title: "Read and resume saved maps",
+    description: "Read existing pages before creating a map. Returns structured IDs, revisions and bounded results. pages lists summaries; map reads page metadata/context; nodes/edges/layers/groups/lanes read editable records; neighborhood reads related nodes; changes compares saved source hashes with local files. New conversations and compacted context should resume the existing effort. mmap_view remains the picture.",
+    inputSchema: closed({
+      resource: external_exports.enum(["pages", "map", "nodes", "edges", "layers", "groups", "lanes", "neighborhood", "changes"]).optional(),
+      page: page(),
+      id: external_exports.string().min(1).max(200).optional().describe("Exact ID; missing returns NOT_FOUND. Edge IDs use from->to; default page ID is _default."),
+      ids: external_exports.array(external_exports.string().min(1).max(200)).max(100).optional(),
+      query: external_exports.string().max(200).optional(),
+      status: external_exports.enum(NODE_STATUSES).optional(),
+      layer: id("filter by layer").optional(),
+      group: id("filter by group").optional(),
+      lane: id("filter by lane").optional(),
+      fields: external_exports.array(external_exports.enum(["id", "label", "name", "rank", "status", "layer", "group", "lane", "kind", "submap", "detail", "evidence", "sources", "from", "to", "title", "context", "counts", "revision", "error", "state", "affectedConsumers"])).min(1).max(30).optional(),
+      limit: external_exports.number().int().min(1).max(100).optional(),
+      cursor: external_exports.string().max(2048).optional().describe("Opaque cursor; reuse the same query. Changes return CONFLICT instead of skipping records."),
+      ifRevision: expectedRevision(),
+      depth: external_exports.number().int().min(0).max(4).optional(),
+      direction: external_exports.enum(["dependencies", "consumers", "both"]).optional()
+    })
+  };
+}
+function batchTool() {
+  return {
+    title: "Commit a single-page transaction",
+    description: "Atomically combine additions, updates and removals on ONE page. Checks the final graph, so a coordinated move or edge replacement needs no intermediate saves. Read IDs and revision with mmap_read first. Cross-page deletion is excluded.",
+    inputSchema: closed({
+      page: page(),
+      expectedRevision: expectedRevision(),
+      operations: external_exports.array(external_exports.discriminatedUnion("op", [
+        closed({ op: external_exports.literal("declare"), data: declareTool().inputSchema.omit({ page: true, expectedRevision: true }) }),
+        closed({ op: external_exports.literal("update"), data: updateTool().inputSchema.omit({ page: true, expectedRevision: true }) }),
+        closed({ op: external_exports.literal("remove"), data: removeTool().inputSchema.omit({ page: true, expectedRevision: true, pages: true, deletePage: true, references: true }) })
+      ])).min(1).max(100)
     })
   };
 }
@@ -24047,6 +24334,126 @@ function openTool() {
       )
     })
   };
+}
+
+// src/server/read.ts
+import { createHash as createHash4 } from "node:crypto";
+import { readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
+import { dirname as dirname11, isAbsolute, relative, resolve as resolve3 } from "node:path";
+var hash = (value) => createHash4("sha256").update(JSON.stringify(value)).digest("hex");
+function requireMap(file) {
+  const result = loadMapFile(file);
+  if (!result.ok) throw new LedgerError(result.error.kind === "not-found" ? "NOT_FOUND" : "INVALID_STORE", describeStoreError(result.error));
+  return result.value;
+}
+function summary(map, page2) {
+  return { id: page2 ?? "_default", title: map.title ?? page2 ?? "Default map", kind: map.kind ?? "dev", context: map.context ?? null, revision: revisionOf(map), counts: { nodes: map.nodes.length, edges: map.edges.length, layers: map.layers.length, groups: map.groups.length, lanes: map.lanes.length, ...Object.fromEntries(["planned", "in-progress", "done", "regressed"].map((s) => [s, map.nodes.filter((n) => n.status === s).length])) } };
+}
+function related(map, seeds, direction, depth) {
+  const adjacency = /* @__PURE__ */ new Map();
+  const add = (from, to) => {
+    const row = adjacency.get(from) ?? [];
+    row.push(to);
+    adjacency.set(from, row);
+  };
+  for (const edge of map.edges) {
+    if (direction !== "consumers") add(edge.from, edge.to);
+    if (direction !== "dependencies") add(edge.to, edge.from);
+  }
+  const found = new Set(seeds);
+  let frontier = seeds;
+  for (let step = 0; step < depth; step++) {
+    const next = /* @__PURE__ */ new Set();
+    for (const id2 of frontier) for (const neighbor of adjacency.get(id2) ?? []) if (!found.has(neighbor)) next.add(neighbor);
+    for (const id2 of next) found.add(id2);
+    frontier = [...next];
+    if (!frontier.length) break;
+  }
+  return found;
+}
+function changes(node, project, map) {
+  const sources2 = (node.sources ?? []).map((source) => {
+    try {
+      const root = realpathSync3(project), target = realpathSync3(resolve3(root, source.path));
+      const rel = relative(root, target);
+      if (isAbsolute(rel) || rel === ".." || rel.startsWith("..\\") || rel.startsWith("../")) return { ...source, state: "outside-project" };
+      const stat = statSync3(target);
+      if (!stat.isFile() || stat.size > 8 * 1024 * 1024) return { ...source, state: "unreadable" };
+      const currentSha256 = createHash4("sha256").update(readFileSync7(target)).digest("hex");
+      return { ...source, currentSha256, state: source.sha256 === void 0 ? "unverified" : source.sha256 === currentSha256 ? "unchanged" : "changed" };
+    } catch (e) {
+      return { ...source, state: e.code === "ENOENT" ? "missing" : "unreadable" };
+    }
+  });
+  const changed = sources2.some((s) => s.state === "changed" || s.state === "missing");
+  const affected = changed ? [...related(map, [node.id], "consumers", map.nodes.length)].filter((id2) => id2 !== node.id) : [];
+  return { id: node.id, label: node.label, state: changed ? "changed" : sources2.length && sources2.every((s) => s.state === "unchanged") ? "unchanged" : "unknown", sources: sources2, affectedConsumers: affected.slice(0, 100), affectedConsumersTruncated: affected.length > 100 };
+}
+function readMaps(stateFile, input) {
+  const resource = input.resource ?? "pages";
+  const project = dirname11(dirname11(stateFile));
+  let records;
+  let revision;
+  let map;
+  if (resource === "pages") {
+    records = listPageFiles(stateFile).map((file) => {
+      const page2 = pageIdOfFile(stateFile, file);
+      try {
+        return summary(requireMap(file), page2);
+      } catch (error2) {
+        return { id: page2 ?? "_default", error: error2.message };
+      }
+    });
+    revision = hash(records);
+  } else {
+    map = requireMap(pageFilePath(stateFile, input.page));
+    revision = revisionOf(map);
+    if (resource === "map") records = [summary(map, input.page)];
+    else if (resource === "neighborhood") {
+      const seeds = input.id !== void 0 ? [input.id] : input.ids ?? [];
+      if (!seeds.length) throw new LedgerError("INVALID_QUERY", "neighborhood requires id or ids");
+      const missing = seeds.filter((id2) => !map.nodes.some((n) => n.id === id2));
+      if (missing.length) throw new LedgerError("NOT_FOUND", "Unknown neighborhood roots", { ids: missing });
+      const selected = related(map, seeds, input.direction ?? "both", input.depth ?? 1);
+      records = map.nodes.filter((n) => selected.has(n.id)).map((n) => ({ ...n }));
+    } else if (resource === "changes") records = map.nodes.map((n) => ({ ...n }));
+    else records = map[resource].map((row) => ({ ...row, ...resource === "edges" ? { id: `${"from" in row ? row.from : ""}->${"to" in row ? row.to : ""}` } : {} }));
+  }
+  if (resource !== "neighborhood") {
+    if (input.id !== void 0) {
+      records = records.filter((r) => r.id === input.id);
+      if (!records.length) throw new LedgerError("NOT_FOUND", `No ${resource} record with ID ${input.id}`);
+    }
+    if (input.ids !== void 0) records = records.filter((r) => input.ids.includes(String(r.id)));
+  }
+  for (const field of ["status", "layer", "group", "lane"]) if (input[field] !== void 0) records = records.filter((r) => r[field] === input[field]);
+  if (input.query) {
+    const query2 = input.query.toLowerCase();
+    records = records.filter((r) => JSON.stringify(r).toLowerCase().includes(query2));
+  }
+  const { cursor: _cursor, ifRevision: _ifRevision, ...query } = input;
+  const queryHash = hash(query);
+  let offset = 0;
+  if (input.cursor !== void 0) {
+    let cursor;
+    try {
+      cursor = JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8"));
+    } catch {
+      throw new LedgerError("INVALID_CURSOR", "Malformed cursor");
+    }
+    if (!cursor || cursor.query !== queryHash || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw new LedgerError("INVALID_CURSOR", "Cursor does not belong to this query");
+    if (cursor.revision !== revision) throw new LedgerError("CONFLICT", "Map changed during pagination; restart this query.", { actualRevision: revision });
+    offset = cursor.offset;
+  }
+  if (input.ifRevision === revision && resource !== "changes") return { resource, project, page: input.page ?? null, revision, notModified: true };
+  const limit = input.limit ?? 30, total = records.length;
+  records = records.slice(offset, offset + limit);
+  if (resource === "changes") records = records.map((r) => changes(r, project, map));
+  records = records.map((r) => {
+    const fields = input.fields ?? (resource === "nodes" || resource === "neighborhood" ? ["id", "label", "layer", "status", "group", "lane", "kind", "submap"] : Object.keys(r));
+    return Object.fromEntries([.../* @__PURE__ */ new Set(["id", ..."from" in r ? ["from", "to"] : [], ...fields])].filter((f) => f in r).map((f) => [f, r[f]]));
+  });
+  return { resource, project, page: input.page ?? null, revision, total, items: records, nextCursor: offset + limit < total ? Buffer.from(JSON.stringify({ revision, query: queryHash, offset: offset + limit })).toString("base64url") : null };
 }
 
 // src/server/presence.ts
@@ -24077,14 +24484,16 @@ function paneLine(stateFile, touched, openFailure) {
 }
 
 // src/server/map-service.ts
+import { existsSync as existsSync6 } from "node:fs";
 function loadOrEmpty(file) {
   const loaded = loadMapFile(file);
   if (loaded.ok) return loaded;
   return loaded.error.kind === "not-found" ? { ok: true, value: EMPTY_MAP } : { ok: false, error: describeStoreError(loaded.error) };
 }
-function mutateMap(file, apply) {
+function mutateMap(file, apply, expectedRevision2) {
   const current = loadOrEmpty(file);
   if (!current.ok) return { ok: false, error: { kind: "load", detail: current.error } };
+  assertRevision(existsSync6(file) ? revisionOf(current.value) : "absent", expectedRevision2);
   const applied = apply(current.value);
   if (!applied.ok) return { ok: false, error: { kind: "refused", detail: applied.error } };
   const saved = saveMapFile(file, applied.value);
@@ -24093,18 +24502,18 @@ function mutateMap(file, apply) {
 
 // src/server/pane-launcher.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync5 } from "node:fs";
-import { dirname as dirname9, join as join7 } from "node:path";
+import { existsSync as existsSync7 } from "node:fs";
+import { dirname as dirname12, join as join9 } from "node:path";
 import { fileURLToPath } from "node:url";
 var pageName2 = (page2) => page2 ?? "(default)";
 var LAUNCH_TIMEOUT_MS = 6e4;
 var PANE_REPORT_TIMEOUT_MS = 8e3;
 var PANE_REPORT_POLL_MS = 250;
 function launcherPath(moduleUrl) {
-  return join7(dirname9(dirname9(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
+  return join9(dirname12(dirname12(fileURLToPath(moduleUrl))), "scripts", "open-pane.mjs");
 }
 function projectDirOf(stateFile) {
-  return dirname9(dirname9(stateFile));
+  return dirname12(dirname12(stateFile));
 }
 function launcherArgs(projectDir, page2, window) {
   const args = [projectDir];
@@ -24113,7 +24522,7 @@ function launcherArgs(projectDir, page2, window) {
   return args;
 }
 function runLauncher(script, args) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve4) => {
     const child = spawn2(process.execPath, [script, ...args], {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
@@ -24127,17 +24536,17 @@ function runLauncher(script, args) {
     const abandon = setTimeout(() => child.kill(), LAUNCH_TIMEOUT_MS);
     child.on("error", (e) => {
       clearTimeout(abandon);
-      resolve2({ ok: false, output: e.message });
+      resolve4({ ok: false, output: e.message });
     });
     child.on("close", (code) => {
       clearTimeout(abandon);
-      resolve2({ ok: code === 0, output: output.trim() });
+      resolve4({ ok: code === 0, output: output.trim() });
     });
   });
 }
 function launchPane(args) {
   const script = launcherPath(import.meta.url);
-  if (!existsSync5(script)) return Promise.resolve({
+  if (!existsSync7(script)) return Promise.resolve({
     ok: false,
     output: `the launcher is missing at ${script}. This install is incomplete \u2014 reinstall the plugin (a source checkout needs "npm run build").`
   });
@@ -24181,15 +24590,26 @@ function launcherViewerPid(run) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.22.1";
+var SERVER_VERSION = "0.23.0";
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
+}
+function structured(value) {
+  return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+}
+function guard(action) {
+  try {
+    return action();
+  } catch (error2) {
+    const failure = error2 instanceof LedgerError ? error2 : new LedgerError("IO_ERROR", String(error2));
+    return { ...structured({ error: { code: failure.code, message: failure.message, ...failure.details } }), isError: true };
+  }
 }
 function saveFailed(error2) {
   return text(`save failed, nothing changed (retry): ${describeStoreError(error2)}`, true);
 }
 function buildServer(stateFile, userConfigFile, launch = launchPane) {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: "Maps persist across conversations. Before mapping or resuming work, use mmap_read to discover pages, then read the relevant records and revision. A new conversation is not a new effort. Reuse verified nodes; submit only necessary changes with expectedRevision. mmap_view is a picture, not the editable data. Read mmap_setup for the user mapping policy." });
   let paneOpenFailure;
   const currentPaneLine = (page2) => paneLine(stateFile, page2, paneOpenFailure);
   const projectConfigFile = configFilePath(stateFile);
@@ -24204,17 +24624,20 @@ File generated; desktop visibility is not tracked.` : `
 preview: STALE \u2014 map changes were saved, but preview generation failed: ${published.error}. Retry mmap_open {surface: "markdown"}; do not repeat the map mutation.`;
   };
   const fileOf = (page2) => pageFilePath(stateFile, page2);
-  const mutate = (page2, apply) => {
-    const result = mutateMap(fileOf(page2), apply);
+  const mutateUnlocked = (page2, apply, expectedRevision2) => {
+    const result = mutateMap(fileOf(page2), apply, expectedRevision2);
     if (!result.ok) {
       const failure = result.error;
-      if (failure.kind === "save") return saveFailed(failure.error);
-      return text(failure.kind === "refused" ? `refused (nothing changed): ${failure.detail}` : failure.detail, true);
+      if (failure.kind === "save") return { ...saveFailed(failure.error), structuredContent: { error: { code: "SAVE_FAILED", message: describeStoreError(failure.error) } } };
+      return { ...text(failure.kind === "refused" ? `refused (nothing changed): ${failure.detail}` : failure.detail, true), structuredContent: { error: { code: failure.kind === "refused" ? "REFUSED" : "INVALID_STORE", message: failure.detail } } };
     }
-    return text(summarize(result.value) + (page2 !== void 0 ? ` [page: ${page2}]` : "") + refreshPreview(page2));
+    const revision = revisionOf(result.value);
+    return { ...text(summarize(result.value) + (page2 !== void 0 ? ` [page: ${page2}]` : "") + `
+revision: ${revision}` + refreshPreview(page2)), structuredContent: { page: page2 ?? null, revision, counts: { nodes: result.value.nodes.length, edges: result.value.edges.length } } };
   };
-  const withPane = (result, page2) => result.isError === true || previews.enabled() ? result : text(`${result.content[0]?.text ?? ""}
-${existsSync6(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page2)}`);
+  const mutate = (page2, apply, expectedRevision2) => guard(() => withStoreLock(stateFile, () => mutateUnlocked(page2, apply, expectedRevision2)));
+  const withPane = (result, page2) => result.isError === true || previews.enabled() ? result : { ...result, ...text(`${result.content[0]?.text ?? ""}
+${existsSync8(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page2)}`) };
   const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
   const refusePageDeletion = (pages, target) => {
     if (target !== void 0 && pages.includes(target)) {
@@ -24233,7 +24656,7 @@ ${existsSync6(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser r
     }
     return void 0;
   };
-  const deletePages = (pages, summary) => {
+  const deletePages = (pages, summary2) => {
     const deleted = [];
     const failed = [];
     for (const p of pages) {
@@ -24242,9 +24665,9 @@ ${existsSync6(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser r
       else failed.push(`${p} (${describeStoreError(removed.error)})`);
     }
     const gone = `deleted page(s): ${deleted.length > 0 ? deleted.join(", ") : "(none)"}` + (deleted.length ? refreshPreview(void 0) : "");
-    if (failed.length === 0) return text(`${summary}${gone}`);
+    if (failed.length === 0) return text(`${summary2}${gone}`);
     return text(
-      `${summary}${gone}; could NOT delete: ${failed.join("; ")}. Deleting files is not a transaction: what is named deleted above is gone for good, and only the failures are worth retrying.`,
+      `${summary2}${gone}; could NOT delete: ${failed.join("; ")}. Deleting files is not a transaction: what is named deleted above is gone for good, and only the failures are worth retrying.`,
       true
     );
   };
@@ -24259,34 +24682,56 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
     "mmap_declare",
     declareTool(),
     (input) => {
-      const result = withPane(mutate(input.page, (map) => applyDeclare(map, input)), input.page);
+      const result = withPane(mutate(input.page, (map) => applyDeclare(map, input), input.expectedRevision), input.page);
       if (result.isError === true) return result;
       const nudge = setupNudge();
-      return nudge === "" ? result : text((result.content[0]?.text ?? "") + nudge);
+      return nudge === "" ? result : { ...result, ...text((result.content[0]?.text ?? "") + nudge) };
     }
   );
   server.registerTool(
     "mmap_update",
     updateTool(),
-    (input) => withPane(mutate(input.page, (map) => applyUpdate(map, input)), input.page)
+    (input) => withPane(mutate(input.page, (map) => {
+      requireMap(fileOf(input.page));
+      return applyUpdate(map, input);
+    }, input.expectedRevision), input.page)
   );
+  server.registerTool("mmap_read", readTool(), (input) => guard(() => structured(readMaps(stateFile, input))));
+  server.registerTool("mmap_batch", batchTool(), (input) => withPane(mutate(input.page, (map) => {
+    if (!existsSync8(fileOf(input.page)) && !input.operations.some((op) => op.op === "declare")) throw new LedgerError("NOT_FOUND", "Create the page before updating it.");
+    return applyBatch(map, input.operations, input.page);
+  }, input.expectedRevision), input.page));
   server.registerTool(
     "mmap_remove",
     removeTool(),
-    (input) => {
-      if (input.pages === void 0) return withPane(mutate(input.page, (map) => applyRemove(map, input)), input.page);
+    (input) => guard(() => withStoreLock(stateFile, () => {
+      if (input.deletePage) {
+        if (input.pages !== void 0 || [input.nodes, input.edges, input.layers, input.groups, input.lanes].some((items) => items !== void 0)) throw new LedgerError("INVALID_ARGUMENT", "deletePage cannot be combined with other edits.");
+        const map = requireMap(fileOf(input.page));
+        const revision = revisionOf(map);
+        assertRevision(revision, input.expectedRevision);
+        const references = input.page === void 0 ? [] : listPageFiles(stateFile).filter((file) => file !== fileOf(input.page)).flatMap((file) => requireMap(file).nodes.filter((node) => node.submap === input.page).map((node) => ({ page: pageIdOfFile(stateFile, file) ?? null, node: node.id })));
+        if (references.length && input.references !== "keep") throw new LedgerError("REFERENCED", "Page has inbound submap references; unlink them or explicitly choose references: keep.", { references });
+        const deleted = deletePageFile(fileOf(input.page));
+        if (!deleted.ok) throw new LedgerError("DELETE_FAILED", describeStoreError(deleted.error));
+        const preview = refreshPreview(void 0);
+        return structured({ deleted: true, page: input.page ?? null, revision: "absent", previousRevision: revision, references, ...preview ? { preview } : {} });
+      }
+      if (input.references !== void 0) throw new LedgerError("INVALID_ARGUMENT", "references requires deletePage: true");
+      if (input.pages === void 0) return withPane(mutateUnlocked(input.page, (map) => applyRemove(map, input), input.expectedRevision), input.page);
+      if (input.expectedRevision !== void 0) throw new LedgerError("INVALID_ARGUMENT", "Use deletePage for a version-checked page deletion. Legacy pages batches report partial success.");
       const refusal = refusePageDeletion(input.pages, input.page);
       if (refusal !== void 0) return refusal;
       const editsAnything = (input.edges?.length ?? 0) + (input.nodes?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0) + (input.layers?.length ?? 0) > 0;
-      let summary = "";
+      let summary2 = "";
       if (editsAnything) {
-        const edited = mutate(input.page, (map) => applyRemove(map, input));
+        const edited = mutateUnlocked(input.page, (map) => applyRemove(map, input));
         if (edited.isError === true) return edited;
-        summary = `${edited.content[0]?.text ?? ""}
+        summary2 = `${edited.content[0]?.text ?? ""}
 `;
       }
-      return withPane(deletePages(input.pages, summary), input.page);
-    }
+      return withPane(deletePages(input.pages, summary2), input.page);
+    }))
   );
   server.registerTool(
     "mmap_setup",
@@ -24325,7 +24770,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
       const surface = previews.enabled() ? `markdown: ${previewFile(stateFile, input.page)}
-Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync6(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
+Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync8(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
       return text(`${picture}
 ${pagesLine(stateFile, input.page)}
 ${surface}`);
@@ -24376,15 +24821,15 @@ Automatic preview updates are enabled for this project. Open the Markdown file i
   return server;
 }
 function resolveStateFile(env, cwd) {
-  const projectDir = env["MELLOS_MAPPING_CWD"] ?? env["CLAUDE_PROJECT_DIR"] ?? cwd;
-  return join8(projectDir, STATE_FILE_RELATIVE_PATH);
+  const projectDir = env["MELLOS_MAPPING_CWD"] ?? env["CLAUDE_PROJECT_DIR"] ?? resolveProjectDirectory(cwd);
+  return join10(projectDir, STATE_FILE_RELATIVE_PATH);
 }
 function resolveUserConfigFile(home) {
   return userConfigFilePath(home);
 }
 async function main() {
   const stateFile = resolveStateFile(process.env, process.cwd());
-  const userConfigFile = resolveUserConfigFile(homedir());
+  const userConfigFile = resolveUserConfigFile(homedir2());
   if (migrateLegacyStore(stateFile)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
   const server = buildServer(stateFile, userConfigFile);
   await server.connect(new StdioServerTransport());
@@ -24392,7 +24837,7 @@ async function main() {
 function launchedAsEntry(argv1, moduleUrl) {
   if (argv1 === void 0) return false;
   try {
-    return realpathSync2(argv1) === realpathSync2(fileURLToPath2(moduleUrl));
+    return realpathSync4(argv1) === realpathSync4(fileURLToPath2(moduleUrl));
   } catch {
     return pathToFileURL(argv1).href === moduleUrl;
   }

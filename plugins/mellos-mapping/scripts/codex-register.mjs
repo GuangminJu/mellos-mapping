@@ -42,7 +42,7 @@ if (launchedAsEntry(import.meta.url)) {
     const installed = registerServer(dirname(dirname(fileURLToPath(import.meta.url))));
     console.log(`mellos-mapping MCP registered with Codex: ${installed.nodePath} ${installed.serverPath}`);
     console.log('State files resolve to each session’s working directory (.mellos/map.json).');
-    console.log('Start a new Codex conversation to load the skills and six mmap tools.');
+    console.log('Start a new Codex conversation to load the skills and eight mmap tools.');
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

@@ -20,7 +20,7 @@ node install.mjs
 No `npm install`, build, Python or manual JSON/TOML editing is needed. The command
 checks package hashes and the real MCP handshake, copies the runtime into
 `~/.mellos/installations/chatgpt-app/`, registers the dedicated marketplace,
-installs the skill and registers all six MCP tools. It preserves other plugins,
+installs the skill and registers all eight MCP tools. It preserves other plugins,
 project maps and mapping preferences. The clone is no longer needed afterwards.
 If a prerequisite is missing, the installer stops with the missing requirement.
 
