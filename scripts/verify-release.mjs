@@ -16,5 +16,5 @@ try {
   const prefix = manifest.edition === 'chatgpt-app' ? 'plugins/mellos-mapping' : '';
   await verifyRuntime(join(root, prefix, 'dist/server.mjs'), temporary, env);
   await verifyWebTerminal(join(root, prefix, 'dist/server.mjs'), temporary, env);
-  console.log(`${manifest.edition} ${manifest.version}: file integrity, six MCP tools, bundled browser assets and terminal worker verified.`);
+  console.log(`${manifest.edition} ${manifest.version}: file integrity, eight MCP tools, bundled browser assets and terminal worker verified.`);
 } finally { rmSync(temporary, { recursive: true, force: true }); }

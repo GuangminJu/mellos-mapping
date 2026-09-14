@@ -113,6 +113,33 @@ function quitFilePath(defaultFile, pid) {
 // src/store/migration.ts
 import { dirname as dirname4, join as join4 } from "node:path";
 var LEGACY_STATE_FILE_RELATIVE_PATH = join4(".claude", "mellos-mapping.json");
+
+// src/store/project.ts
+import { existsSync, realpathSync } from "node:fs";
+import { dirname as dirname5, join as join5, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
+  let start = resolve(cwd);
+  try {
+    start = realpathSync(start);
+  } catch {
+  }
+  let dir = start;
+  const boundaries = new Set(stopAt.map((path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  }));
+  while (true) {
+    if (dir !== start && boundaries.has(dir)) return start;
+    if (existsSync(join5(dir, ".git")) || existsSync(join5(dir, ".mellos", "map.json")) || existsSync(join5(dir, ".mellos", "pages"))) return dir;
+    const parent = dirname5(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
 export {
   FOCUS_FILE_NAME,
   ID_RULE,
@@ -122,5 +149,6 @@ export {
   VIEWERS_DIR_NAME,
   focusFilePath,
   quitFilePath,
-  readLiveViewers
+  readLiveViewers,
+  resolveProjectDirectory
 };

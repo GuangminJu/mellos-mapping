@@ -14,7 +14,7 @@ node install.mjs
 ```
 
 The prebuilt package needs no npm dependencies or build. The installer verifies
-its hashes and six-tool MCP handshake, retains a copy in
+its hashes and eight-tool MCP handshake, retains a copy in
 `~/.mellos/installations/claude/`, and installs through Claude's plugin CLI.
 Start a new Claude Code conversation, then use `/mellos-mapping:mmap` or ask
 Claude to display a layered plan. On first use, choose when maps should open.

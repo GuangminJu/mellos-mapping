@@ -170,7 +170,7 @@ async function main() {
     console.error(parsed.error);
     process.exit(1);
   }
-  const candidates = storeSearchPath(process.cwd());
+  const candidates = [store.resolveProjectDirectory(process.cwd())];
   const marker = storeMarkerOf(store.STATE_FILE_RELATIVE_PATH);
   const project = nearestProject(candidates, candidates.map((dir) => existsSync(join(dir, marker))));
   const cfg = { ...parsed.value, projectDir: project.root };
