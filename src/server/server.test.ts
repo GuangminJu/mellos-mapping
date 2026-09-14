@@ -5,7 +5,7 @@
  * watcher-visible file actually changes.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -957,13 +957,16 @@ describe('mmap_open — the assistant putting the map on screen', () => {
 
 describe('resolveStateFile', () => {
   it('resolves MELLOS_MAPPING_CWD, then CLAUDE_PROJECT_DIR, then the process cwd', () => {
+    const cwd = realpathSync(dir);
+    const override = join(cwd, 'override');
+    const project = join(cwd, 'project');
     expect(
-      resolveStateFile({ MELLOS_MAPPING_CWD: 'D:\\override', CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere'),
-    ).toBe(join('D:\\override', '.mellos', 'map.json'));
-    expect(resolveStateFile({ CLAUDE_PROJECT_DIR: 'D:\\proj' }, 'C:\\elsewhere')).toBe(
-      join('D:\\proj', '.mellos', 'map.json'),
+      resolveStateFile({ MELLOS_MAPPING_CWD: override, CLAUDE_PROJECT_DIR: project }, cwd),
+    ).toBe(join(override, '.mellos', 'map.json'));
+    expect(resolveStateFile({ CLAUDE_PROJECT_DIR: project }, cwd)).toBe(
+      join(project, '.mellos', 'map.json'),
     );
-    expect(resolveStateFile({}, 'C:\\elsewhere')).toBe(join('C:\\elsewhere', '.mellos', 'map.json'));
+    expect(resolveStateFile({}, cwd)).toBe(join(cwd, '.mellos', 'map.json'));
   });
 });
 

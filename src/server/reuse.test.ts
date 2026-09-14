@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -16,7 +16,7 @@ async function connect() {
   client = new Client({ name: 'reuse-spec', version: '1' });
   await Promise.all([client.connect(a), server.connect(b)]);
 }
-beforeEach(async () => { dir = mkdtempSync(join(tmpdir(), 'mellos-reuse-')); file = join(dir, '.mellos/map.json'); await connect(); });
+beforeEach(async () => { dir = realpathSync(mkdtempSync(join(tmpdir(), 'mellos-reuse-'))); file = join(dir, '.mellos/map.json'); await connect(); });
 afterEach(async () => { await client.close(); rmSync(dir, { recursive: true, force: true }); });
 const design = { page: 'architecture', title: 'Persistent services', layers: [{ id: 'base', name: 'Base', rank: 0 }, { id: 'top', name: 'Top', rank: 1 }], lanes: [{ id: 'server', label: 'Server' }, { id: 'client', label: 'Client' }], groups: [{ id: 'storage', label: 'Storage', layer: 'base' }], nodes: [{ id: 'store', label: 'Database', layer: 'base', group: 'storage', status: 'done', evidence: 'tests passed', detail: 'Storage contract' }, { id: 'codec', label: 'Encoder', layer: 'base' }, { id: 'api', label: 'Public API', layer: 'top' }], edges: [{ from: 'api', to: 'store', label: 'reads' }] };
 async function call(name: string, args: Record<string, unknown> = {}) { return client.callTool({ name, arguments: args }); }
