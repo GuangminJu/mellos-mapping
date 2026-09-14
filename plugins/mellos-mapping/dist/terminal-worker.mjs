@@ -2,8 +2,8 @@
 import { PassThrough, Writable } from "node:stream";
 
 // src/watch/watch.ts
-import { realpathSync, statSync as statSync2 } from "node:fs";
-import { dirname as dirname7, join as join6 } from "node:path";
+import { realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
+import { dirname as dirname9, join as join8 } from "node:path";
 
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
@@ -232,6 +232,392 @@ function updateNode(map, input2) {
     ...input2.label !== void 0 ? { label: input2.label } : {}
   };
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input2.id ? updated : n) });
+}
+
+// src/store/project.ts
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
+  let start = resolve(cwd);
+  try {
+    start = realpathSync(start);
+  } catch {
+  }
+  let dir = start;
+  const boundaries = new Set(stopAt.map((path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  }));
+  while (true) {
+    if (dir !== start && boundaries.has(dir)) return start;
+    if (existsSync(join(dir, ".git")) || existsSync(join(dir, ".mellos", "map.json")) || existsSync(join(dir, ".mellos", "pages"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
+
+// src/store/transaction.ts
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname as dirname2, join as join2 } from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+
+// src/domain/context.ts
+function sourceError(raw) {
+  if (!Array.isArray(raw) || raw.length > 100) return "sources must be an array of at most 100 file references";
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return "source must be an object";
+    const s = item;
+    if (Object.keys(s).some((k) => k !== "path" && k !== "sha256")) return "unknown source field";
+    if (typeof s.path !== "string" || s.path.length > 1024 || !s.path || /[\u0000-\u001f\u007f-\u009f\\:]/.test(s.path) || s.path.startsWith("/") || s.path.split("/").some((p) => !p || p === "." || p === "..")) return "source path must be relative to the project, with forward slashes and no traversal";
+    if (s.sha256 !== void 0 && (typeof s.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(s.sha256))) return "source sha256 must be a lowercase SHA256 hash";
+  }
+  return void 0;
+}
+function contextError(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "context must be an object";
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== "summary" && key !== "next") return "unknown context field";
+    if (typeof value !== "string" || value.length > 2e3 || /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(value)) return "context fields must be text of at most 2000 characters";
+  }
+  return void 0;
+}
+
+// src/domain/text.ts
+var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
+var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
+var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
+function mapTextError(map) {
+  if (map.context !== void 0) {
+    const error2 = contextError(map.context);
+    if (error2) return error2;
+  }
+  const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
+  let error = check("title", map.title);
+  if (error) return error;
+  for (const [i, layer] of map.layers.entries()) {
+    error = check(`layers[${i}].name`, layer.name);
+    if (error) return error;
+  }
+  for (const name of ["lanes", "groups"]) {
+    for (const [i, item] of map[name].entries()) {
+      error = check(`${name}[${i}].label`, item.label);
+      if (error) return error;
+    }
+  }
+  for (const [i, node] of map.nodes.entries()) {
+    if (node.sources !== void 0) {
+      const error2 = sourceError(node.sources);
+      if (error2) return `nodes[${i}]: ${error2}`;
+    }
+    for (const name of ["label", "evidence", "detail"]) {
+      error = check(`nodes[${i}].${name}`, node[name], name !== "label");
+      if (error) return error;
+    }
+  }
+  for (const [i, edge] of map.edges.entries()) {
+    error = check(`edges[${i}].label`, edge.label);
+    if (error) return error;
+  }
+  return void 0;
+}
+function terminalText(text, multiline = false) {
+  return text.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
+}
+
+// src/store/format.ts
+var STATE_FILE_VERSION = 1;
+function makePageId(raw) {
+  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
+}
+function describeStoreError(e) {
+  switch (e.kind) {
+    case "not-found":
+      return `no map file at ${e.path}`;
+    case "malformed-json":
+      return `map file ${e.path} is not valid JSON: ${e.detail}`;
+    case "bad-shape":
+      return `map file ${e.path} has an unexpected shape: ${e.detail}`;
+    case "invariant-violation":
+      return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
+    case "save-failed":
+      return `could not write ${e.path}: ${e.detail}`;
+    case "delete-failed":
+      return `could not delete ${e.path}: ${e.detail}`;
+  }
+}
+function isRecord(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function describeValue(v) {
+  if (v === void 0) return "missing";
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "an array";
+  return `a ${typeof v}`;
+}
+function badShape(path, where, expected, got) {
+  return err({ kind: "bad-shape", path, detail: `${where} is ${describeValue(got)}, expected ${expected}` });
+}
+function arrayField(raw, key, path, presence) {
+  const v = raw[key];
+  if (Array.isArray(v)) return ok(v);
+  if (v === void 0 && presence === "optional") return ok([]);
+  return badShape(path, `"${key}"`, "an array", v);
+}
+function requiredString(rec, key, where, path) {
+  const v = rec[key];
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
+}
+function optionalString(rec, key, where, path) {
+  const v = rec[key];
+  if (v === void 0) return ok(void 0);
+  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
+}
+function parseMap(raw, path) {
+  if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
+  if (raw["version"] !== STATE_FILE_VERSION && raw["version"] !== 2) {
+    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION} or 2` });
+  }
+  const layers = arrayField(raw, "layers", path, "required");
+  if (!layers.ok) return layers;
+  const nodes = arrayField(raw, "nodes", path, "required");
+  if (!nodes.ok) return nodes;
+  const edges = arrayField(raw, "edges", path, "required");
+  if (!edges.ok) return edges;
+  const lanes = arrayField(raw, "lanes", path, "optional");
+  if (!lanes.ok) return lanes;
+  const groups = arrayField(raw, "groups", path, "optional");
+  if (!groups.ok) return groups;
+  let map = EMPTY_MAP;
+  if (raw["context"] !== void 0) {
+    const error = contextError(raw["context"]);
+    if (error) return err({ kind: "bad-shape", path, detail: error });
+    map = { ...map, context: raw["context"] };
+  }
+  const title = optionalString(raw, "title", "map", path);
+  if (!title.ok) return title;
+  if (title.value !== void 0) map = setTitle(map, title.value);
+  const rawKind = optionalString(raw, "kind", "map", path);
+  if (!rawKind.ok) return rawKind;
+  if (rawKind.value !== void 0) {
+    const kind = makeMapKind(rawKind.value);
+    if (!kind.ok) return err({ kind: "invariant-violation", path, violation: kind.error });
+    map = setKind(map, kind.value);
+  }
+  for (const [i, rawLayer] of layers.value.entries()) {
+    const where = `layers[${i}]`;
+    if (!isRecord(rawLayer)) return badShape(path, where, "an object", rawLayer);
+    const rawId = requiredString(rawLayer, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeLayerId(rawId.value);
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const name = requiredString(rawLayer, "name", where, path);
+    if (!name.ok) return name;
+    const rawRank = rawLayer["rank"];
+    if (typeof rawRank !== "number") return badShape(path, `${where}.rank`, "a number", rawRank);
+    const rank = makeRank(rawRank);
+    if (!rank.ok) return err({ kind: "invariant-violation", path, violation: rank.error });
+    const next = declareLayer(map, { id: id.value, name: name.value, rank: rank.value });
+    if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
+    map = next.value;
+  }
+  for (const [i, rawLane] of lanes.value.entries()) {
+    const where = `lanes[${i}]`;
+    if (!isRecord(rawLane)) return badShape(path, where, "an object", rawLane);
+    const rawId = requiredString(rawLane, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeLaneId(rawId.value);
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const label = requiredString(rawLane, "label", where, path);
+    if (!label.ok) return label;
+    const declared = declareLane(map, { id: id.value, label: label.value });
+    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
+    map = declared.value;
+  }
+  for (const [i, rawGroup] of groups.value.entries()) {
+    const where = `groups[${i}]`;
+    if (!isRecord(rawGroup)) return badShape(path, where, "an object", rawGroup);
+    const rawId = requiredString(rawGroup, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeGroupId(rawId.value);
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const rawLayer = requiredString(rawGroup, "layer", where, path);
+    if (!rawLayer.ok) return rawLayer;
+    const layer = makeLayerId(rawLayer.value);
+    if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
+    const label = requiredString(rawGroup, "label", where, path);
+    if (!label.ok) return label;
+    const declared = declareGroup(map, { id: id.value, label: label.value, layer: layer.value });
+    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
+    map = declared.value;
+  }
+  for (const [i, rawNode] of nodes.value.entries()) {
+    const where = `nodes[${i}]`;
+    if (!isRecord(rawNode)) return badShape(path, where, "an object", rawNode);
+    const rawId = requiredString(rawNode, "id", where, path);
+    if (!rawId.ok) return rawId;
+    const id = makeNodeId(rawId.value);
+    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
+    const rawLayer = requiredString(rawNode, "layer", where, path);
+    if (!rawLayer.ok) return rawLayer;
+    const layer = makeLayerId(rawLayer.value);
+    if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
+    const rawStatus = requiredString(rawNode, "status", where, path);
+    if (!rawStatus.ok) return rawStatus;
+    const status = makeNodeStatus(rawStatus.value);
+    if (!status.ok) return err({ kind: "invariant-violation", path, violation: status.error });
+    const label = requiredString(rawNode, "label", where, path);
+    if (!label.ok) return label;
+    const detail = optionalString(rawNode, "detail", where, path);
+    if (!detail.ok) return detail;
+    const rawGroup = optionalString(rawNode, "group", where, path);
+    if (!rawGroup.ok) return rawGroup;
+    let group;
+    if (rawGroup.value !== void 0) {
+      const made = makeGroupId(rawGroup.value);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      group = made.value;
+    }
+    const rawNodeKind = optionalString(rawNode, "kind", where, path);
+    if (!rawNodeKind.ok) return rawNodeKind;
+    let nodeKind;
+    if (rawNodeKind.value !== void 0) {
+      const made = makeNodeKind(rawNodeKind.value);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      nodeKind = made.value;
+    }
+    const rawLane = optionalString(rawNode, "lane", where, path);
+    if (!rawLane.ok) return rawLane;
+    let lane;
+    if (rawLane.value !== void 0) {
+      const made = makeLaneId(rawLane.value);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      lane = made.value;
+    }
+    const rawSubmap = optionalString(rawNode, "submap", where, path);
+    if (!rawSubmap.ok) return rawSubmap;
+    let submap;
+    if (rawSubmap.value !== void 0) {
+      const made = makeSubmapRef(rawSubmap.value);
+      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
+      submap = made.value;
+    }
+    const declared = declareNode(map, {
+      id: id.value,
+      label: label.value,
+      layer: layer.value,
+      status: status.value,
+      ...detail.value !== void 0 ? { detail: detail.value } : {},
+      ...group !== void 0 ? { group } : {},
+      ...nodeKind !== void 0 ? { kind: nodeKind } : {},
+      ...lane !== void 0 ? { lane } : {},
+      ...submap !== void 0 ? { submap } : {}
+    });
+    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
+    map = declared.value;
+    const evidence = optionalString(rawNode, "evidence", where, path);
+    if (!evidence.ok) return evidence;
+    if (evidence.value !== void 0) {
+      const updated = updateNode(map, { id: id.value, evidence: evidence.value });
+      if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
+      map = updated.value;
+    }
+    if (rawNode["sources"] !== void 0) {
+      const error = sourceError(rawNode["sources"]);
+      if (error) return err({ kind: "bad-shape", path, detail: `${where}: ${error}` });
+      map = { ...map, nodes: map.nodes.map((n) => n.id === id.value ? { ...n, sources: rawNode["sources"] } : n) };
+    }
+  }
+  for (const [i, rawEdge] of edges.value.entries()) {
+    const where = `edges[${i}]`;
+    if (!isRecord(rawEdge)) return badShape(path, where, "an object", rawEdge);
+    const rawFrom = requiredString(rawEdge, "from", where, path);
+    if (!rawFrom.ok) return rawFrom;
+    const from = makeNodeId(rawFrom.value);
+    if (!from.ok) return err({ kind: "invariant-violation", path, violation: from.error });
+    const rawTo = requiredString(rawEdge, "to", where, path);
+    if (!rawTo.ok) return rawTo;
+    const to = makeNodeId(rawTo.value);
+    if (!to.ok) return err({ kind: "invariant-violation", path, violation: to.error });
+    const label = optionalString(rawEdge, "label", where, path);
+    if (!label.ok) return label;
+    const linked = linkNodes(map, from.value, to.value, label.value);
+    if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
+    map = linked.value;
+  }
+  const textError = mapTextError(map);
+  return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
+}
+
+// src/store/transaction.ts
+var LedgerError = class extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.code = code;
+    this.details = details;
+  }
+};
+function storeDirectory(file) {
+  const dir = dirname2(file);
+  return dir.endsWith("/pages") || dir.endsWith("\\pages") ? dirname2(dir) : dir;
+}
+function deadOwner(lock) {
+  try {
+    const owner = JSON.parse(readFileSync(join2(lock, "owner.json"), "utf8"));
+    if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
+    try {
+      process.kill(owner.pid, 0);
+      return false;
+    } catch (e) {
+      return e.code === "ESRCH";
+    }
+  } catch {
+    return false;
+  }
+}
+function withStoreLock(file, action) {
+  const dir = storeDirectory(file);
+  mkdirSync(dir, { recursive: true });
+  const lock = join2(dir, ".write-lock");
+  const owner = join2(lock, "owner.json");
+  const token = randomUUID();
+  try {
+    mkdirSync(lock);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (!deadOwner(lock)) throw new LedgerError("BUSY", `Another writer owns ${lock}; retry after it completes. An orphan without owner metadata needs manual inspection.`);
+    try {
+      mkdirSync(join2(lock, ".reap"));
+    } catch {
+      throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
+    }
+    if (!deadOwner(lock)) {
+      rmSync(join2(lock, ".reap"), { recursive: true, force: true });
+      throw new LedgerError("BUSY", "Writer ownership changed.");
+    }
+    rmSync(lock, { recursive: true });
+    try {
+      mkdirSync(lock);
+    } catch {
+      throw new LedgerError("BUSY", "Another writer acquired the recovered lock.");
+    }
+  }
+  let initialized = false;
+  try {
+    writeFileSync(owner, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
+    initialized = true;
+    return action();
+  } finally {
+    try {
+      if (!initialized || JSON.parse(readFileSync(owner, "utf8")).token === token) rmSync(lock, { recursive: true });
+    } catch {
+    }
+  }
 }
 
 // src/semantics/vocabulary.ts
@@ -476,41 +862,6 @@ function flipForSequence(map) {
     layers: map.layers.map((l) => ({ ...l, rank: -l.rank })),
     edges: map.edges.map((e) => ({ from: e.to, to: e.from, ...e.label !== void 0 ? { label: e.label } : {} }))
   };
-}
-
-// src/domain/text.ts
-var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
-var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
-var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
-function mapTextError(map) {
-  const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
-  let error = check("title", map.title);
-  if (error) return error;
-  for (const [i, layer] of map.layers.entries()) {
-    error = check(`layers[${i}].name`, layer.name);
-    if (error) return error;
-  }
-  for (const name of ["lanes", "groups"]) {
-    for (const [i, item] of map[name].entries()) {
-      error = check(`${name}[${i}].label`, item.label);
-      if (error) return error;
-    }
-  }
-  for (const [i, node] of map.nodes.entries()) {
-    for (const name of ["label", "evidence", "detail"]) {
-      error = check(`nodes[${i}].${name}`, node[name], name !== "label");
-      if (error) return error;
-    }
-  }
-  for (const [i, edge] of map.edges.entries()) {
-    error = check(`edges[${i}].label`, edge.label);
-    if (error) return error;
-  }
-  return void 0;
-}
-function terminalText(text, multiline = false) {
-  return text.replace(multiline ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, "?");
 }
 
 // src/render/width.ts
@@ -1396,223 +1747,9 @@ function paint(scene, opts) {
   return { canvas, hits };
 }
 
-// src/store/format.ts
-var STATE_FILE_VERSION = 1;
-function makePageId(raw) {
-  return ID_RULE.test(raw) ? ok(raw) : err({ kind: "invalid-id", raw, rule: ID_RULE_TEXT });
-}
-function describeStoreError(e) {
-  switch (e.kind) {
-    case "not-found":
-      return `no map file at ${e.path}`;
-    case "malformed-json":
-      return `map file ${e.path} is not valid JSON: ${e.detail}`;
-    case "bad-shape":
-      return `map file ${e.path} has an unexpected shape: ${e.detail}`;
-    case "invariant-violation":
-      return `map file ${e.path} violates a structural invariant: ${describeMapError(e.violation)}`;
-    case "save-failed":
-      return `could not write ${e.path}: ${e.detail}`;
-    case "delete-failed":
-      return `could not delete ${e.path}: ${e.detail}`;
-  }
-}
-function isRecord(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function describeValue(v) {
-  if (v === void 0) return "missing";
-  if (v === null) return "null";
-  if (Array.isArray(v)) return "an array";
-  return `a ${typeof v}`;
-}
-function badShape(path, where, expected, got) {
-  return err({ kind: "bad-shape", path, detail: `${where} is ${describeValue(got)}, expected ${expected}` });
-}
-function arrayField(raw, key, path, presence) {
-  const v = raw[key];
-  if (Array.isArray(v)) return ok(v);
-  if (v === void 0 && presence === "optional") return ok([]);
-  return badShape(path, `"${key}"`, "an array", v);
-}
-function requiredString(rec, key, where, path) {
-  const v = rec[key];
-  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
-}
-function optionalString(rec, key, where, path) {
-  const v = rec[key];
-  if (v === void 0) return ok(void 0);
-  return typeof v === "string" ? ok(v) : badShape(path, `${where}.${key}`, "a string", v);
-}
-function parseMap(raw, path) {
-  if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
-  if (raw["version"] !== STATE_FILE_VERSION) {
-    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION}` });
-  }
-  const layers = arrayField(raw, "layers", path, "required");
-  if (!layers.ok) return layers;
-  const nodes = arrayField(raw, "nodes", path, "required");
-  if (!nodes.ok) return nodes;
-  const edges = arrayField(raw, "edges", path, "required");
-  if (!edges.ok) return edges;
-  const lanes = arrayField(raw, "lanes", path, "optional");
-  if (!lanes.ok) return lanes;
-  const groups = arrayField(raw, "groups", path, "optional");
-  if (!groups.ok) return groups;
-  let map = EMPTY_MAP;
-  const title = optionalString(raw, "title", "map", path);
-  if (!title.ok) return title;
-  if (title.value !== void 0) map = setTitle(map, title.value);
-  const rawKind = optionalString(raw, "kind", "map", path);
-  if (!rawKind.ok) return rawKind;
-  if (rawKind.value !== void 0) {
-    const kind = makeMapKind(rawKind.value);
-    if (!kind.ok) return err({ kind: "invariant-violation", path, violation: kind.error });
-    map = setKind(map, kind.value);
-  }
-  for (const [i, rawLayer] of layers.value.entries()) {
-    const where = `layers[${i}]`;
-    if (!isRecord(rawLayer)) return badShape(path, where, "an object", rawLayer);
-    const rawId = requiredString(rawLayer, "id", where, path);
-    if (!rawId.ok) return rawId;
-    const id = makeLayerId(rawId.value);
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const name = requiredString(rawLayer, "name", where, path);
-    if (!name.ok) return name;
-    const rawRank = rawLayer["rank"];
-    if (typeof rawRank !== "number") return badShape(path, `${where}.rank`, "a number", rawRank);
-    const rank = makeRank(rawRank);
-    if (!rank.ok) return err({ kind: "invariant-violation", path, violation: rank.error });
-    const next = declareLayer(map, { id: id.value, name: name.value, rank: rank.value });
-    if (!next.ok) return err({ kind: "invariant-violation", path, violation: next.error });
-    map = next.value;
-  }
-  for (const [i, rawLane] of lanes.value.entries()) {
-    const where = `lanes[${i}]`;
-    if (!isRecord(rawLane)) return badShape(path, where, "an object", rawLane);
-    const rawId = requiredString(rawLane, "id", where, path);
-    if (!rawId.ok) return rawId;
-    const id = makeLaneId(rawId.value);
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const label = requiredString(rawLane, "label", where, path);
-    if (!label.ok) return label;
-    const declared = declareLane(map, { id: id.value, label: label.value });
-    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
-    map = declared.value;
-  }
-  for (const [i, rawGroup] of groups.value.entries()) {
-    const where = `groups[${i}]`;
-    if (!isRecord(rawGroup)) return badShape(path, where, "an object", rawGroup);
-    const rawId = requiredString(rawGroup, "id", where, path);
-    if (!rawId.ok) return rawId;
-    const id = makeGroupId(rawId.value);
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const rawLayer = requiredString(rawGroup, "layer", where, path);
-    if (!rawLayer.ok) return rawLayer;
-    const layer = makeLayerId(rawLayer.value);
-    if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
-    const label = requiredString(rawGroup, "label", where, path);
-    if (!label.ok) return label;
-    const declared = declareGroup(map, { id: id.value, label: label.value, layer: layer.value });
-    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
-    map = declared.value;
-  }
-  for (const [i, rawNode] of nodes.value.entries()) {
-    const where = `nodes[${i}]`;
-    if (!isRecord(rawNode)) return badShape(path, where, "an object", rawNode);
-    const rawId = requiredString(rawNode, "id", where, path);
-    if (!rawId.ok) return rawId;
-    const id = makeNodeId(rawId.value);
-    if (!id.ok) return err({ kind: "invariant-violation", path, violation: id.error });
-    const rawLayer = requiredString(rawNode, "layer", where, path);
-    if (!rawLayer.ok) return rawLayer;
-    const layer = makeLayerId(rawLayer.value);
-    if (!layer.ok) return err({ kind: "invariant-violation", path, violation: layer.error });
-    const rawStatus = requiredString(rawNode, "status", where, path);
-    if (!rawStatus.ok) return rawStatus;
-    const status = makeNodeStatus(rawStatus.value);
-    if (!status.ok) return err({ kind: "invariant-violation", path, violation: status.error });
-    const label = requiredString(rawNode, "label", where, path);
-    if (!label.ok) return label;
-    const detail = optionalString(rawNode, "detail", where, path);
-    if (!detail.ok) return detail;
-    const rawGroup = optionalString(rawNode, "group", where, path);
-    if (!rawGroup.ok) return rawGroup;
-    let group;
-    if (rawGroup.value !== void 0) {
-      const made = makeGroupId(rawGroup.value);
-      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
-      group = made.value;
-    }
-    const rawNodeKind = optionalString(rawNode, "kind", where, path);
-    if (!rawNodeKind.ok) return rawNodeKind;
-    let nodeKind;
-    if (rawNodeKind.value !== void 0) {
-      const made = makeNodeKind(rawNodeKind.value);
-      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
-      nodeKind = made.value;
-    }
-    const rawLane = optionalString(rawNode, "lane", where, path);
-    if (!rawLane.ok) return rawLane;
-    let lane;
-    if (rawLane.value !== void 0) {
-      const made = makeLaneId(rawLane.value);
-      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
-      lane = made.value;
-    }
-    const rawSubmap = optionalString(rawNode, "submap", where, path);
-    if (!rawSubmap.ok) return rawSubmap;
-    let submap;
-    if (rawSubmap.value !== void 0) {
-      const made = makeSubmapRef(rawSubmap.value);
-      if (!made.ok) return err({ kind: "invariant-violation", path, violation: made.error });
-      submap = made.value;
-    }
-    const declared = declareNode(map, {
-      id: id.value,
-      label: label.value,
-      layer: layer.value,
-      status: status.value,
-      ...detail.value !== void 0 ? { detail: detail.value } : {},
-      ...group !== void 0 ? { group } : {},
-      ...nodeKind !== void 0 ? { kind: nodeKind } : {},
-      ...lane !== void 0 ? { lane } : {},
-      ...submap !== void 0 ? { submap } : {}
-    });
-    if (!declared.ok) return err({ kind: "invariant-violation", path, violation: declared.error });
-    map = declared.value;
-    const evidence = optionalString(rawNode, "evidence", where, path);
-    if (!evidence.ok) return evidence;
-    if (evidence.value !== void 0) {
-      const updated = updateNode(map, { id: id.value, evidence: evidence.value });
-      if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
-      map = updated.value;
-    }
-  }
-  for (const [i, rawEdge] of edges.value.entries()) {
-    const where = `edges[${i}]`;
-    if (!isRecord(rawEdge)) return badShape(path, where, "an object", rawEdge);
-    const rawFrom = requiredString(rawEdge, "from", where, path);
-    if (!rawFrom.ok) return rawFrom;
-    const from = makeNodeId(rawFrom.value);
-    if (!from.ok) return err({ kind: "invariant-violation", path, violation: from.error });
-    const rawTo = requiredString(rawEdge, "to", where, path);
-    if (!rawTo.ok) return rawTo;
-    const to = makeNodeId(rawTo.value);
-    if (!to.ok) return err({ kind: "invariant-violation", path, violation: to.error });
-    const label = optionalString(rawEdge, "label", where, path);
-    if (!label.ok) return label;
-    const linked = linkNodes(map, from.value, to.value, label.value);
-    if (!linked.ok) return err({ kind: "invariant-violation", path, violation: linked.error });
-    map = linked.value;
-  }
-  const textError = mapTextError(map);
-  return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
-}
-
 // src/store/atomic.ts
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync as mkdirSync2, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
 function sleepSync(ms) {
@@ -1620,7 +1757,7 @@ function sleepSync(ms) {
 }
 function discardTemp(tmp) {
   try {
-    rmSync(tmp, { force: true });
+    rmSync2(tmp, { force: true });
   } catch {
   }
 }
@@ -1630,8 +1767,8 @@ function errnoOf(e) {
 function writeAtomic(path, contents, maxAttempts) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(tmp, contents, "utf8");
+    mkdirSync2(dirname3(path), { recursive: true });
+    writeFileSync2(tmp, contents, "utf8");
   } catch (e) {
     discardTemp(tmp);
     return err({ kind: "save-failed", path, detail: `writing the temp file failed: ${errnoOf(e)}` });
@@ -1654,13 +1791,13 @@ function writeAtomic(path, contents, maxAttempts) {
 }
 
 // src/store/pages.ts
-import { existsSync, readdirSync, rmSync as rmSync2 } from "node:fs";
-import { basename, dirname as dirname2, join } from "node:path";
+import { existsSync as existsSync2, readdirSync, rmSync as rmSync3 } from "node:fs";
+import { basename, dirname as dirname4, join as join3 } from "node:path";
 var STORE_DIR_NAME = ".mellos";
-var STATE_FILE_RELATIVE_PATH = join(STORE_DIR_NAME, "map.json");
+var STATE_FILE_RELATIVE_PATH = join3(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
 function pageFilePath(defaultFile, page) {
-  return page === void 0 ? defaultFile : join(dirname2(defaultFile), PAGES_DIR_NAME, `${page}.json`);
+  return page === void 0 ? defaultFile : join3(dirname4(defaultFile), PAGES_DIR_NAME, `${page}.json`);
 }
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
@@ -1669,20 +1806,20 @@ function pageIdOfFile(defaultFile, path) {
 }
 function listPageFiles(defaultFile) {
   const out = [];
-  if (existsSync(defaultFile)) out.push(defaultFile);
+  if (existsSync2(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
-    entries = readdirSync(join(dirname2(defaultFile), PAGES_DIR_NAME));
+    entries = readdirSync(join3(dirname4(defaultFile), PAGES_DIR_NAME));
   } catch {
   }
   for (const e of entries.sort()) {
-    if (e.endsWith(".json")) out.push(join(dirname2(defaultFile), PAGES_DIR_NAME, e));
+    if (e.endsWith(".json")) out.push(join3(dirname4(defaultFile), PAGES_DIR_NAME, e));
   }
   return out;
 }
 function deletePageFile(path) {
   try {
-    rmSync2(path, { force: true });
+    rmSync3(path, { force: true });
     return ok(void 0);
   } catch (e) {
     return err({ kind: "delete-failed", path, detail: errnoOf(e) });
@@ -1690,8 +1827,8 @@ function deletePageFile(path) {
 }
 
 // src/store/channels.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2, rmSync as rmSync4 } from "node:fs";
-import { dirname as dirname4, join as join3 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync3, rmSync as rmSync5 } from "node:fs";
+import { dirname as dirname6, join as join5 } from "node:path";
 
 // src/store/json-text.ts
 function isRecord2(v) {
@@ -1702,16 +1839,16 @@ function stripBom(text) {
 }
 
 // src/store/viewers.ts
-import { readdirSync as readdirSync2, readFileSync, statSync, rmSync as rmSync3 } from "node:fs";
-import { dirname as dirname3, join as join2 } from "node:path";
+import { readdirSync as readdirSync2, readFileSync as readFileSync2, statSync, rmSync as rmSync4 } from "node:fs";
+import { dirname as dirname5, join as join4 } from "node:path";
 var VIEWERS_DIR_NAME = "viewers";
 var VIEWER_FILE_VERSION = 1;
 var VIEWER_HEARTBEAT_MS = 1e3;
 function viewersDirPath(defaultFile) {
-  return join2(dirname3(defaultFile), VIEWERS_DIR_NAME);
+  return join4(dirname5(defaultFile), VIEWERS_DIR_NAME);
 }
 function viewerFilePath(defaultFile, pid) {
-  return join2(viewersDirPath(defaultFile), `${pid}.json`);
+  return join4(viewersDirPath(defaultFile), `${pid}.json`);
 }
 function publishViewer(defaultFile, pid, report) {
   const body = { version: VIEWER_FILE_VERSION, page: report.page ?? null, follow: report.follow, owner: report.owner };
@@ -1720,7 +1857,7 @@ function publishViewer(defaultFile, pid, report) {
 }
 function retireViewer(defaultFile, pid) {
   try {
-    rmSync3(viewerFilePath(defaultFile, pid), { force: true });
+    rmSync4(viewerFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
@@ -1731,21 +1868,21 @@ function focusFilePath(defaultFile, pid) {
   return paneChannelPath(defaultFile, FOCUS_FILE_NAME, pid);
 }
 function paneChannelPath(defaultFile, channel, pid) {
-  if (pid === void 0) return join3(dirname4(defaultFile), channel);
+  if (pid === void 0) return join5(dirname6(defaultFile), channel);
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid pane process id");
-  return join3(viewersDirPath(defaultFile), `${pid}.${channel}`);
+  return join5(viewersDirPath(defaultFile), `${pid}.${channel}`);
 }
 function takeFocusRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : focusFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync2(targeted) ? targeted : focusFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync3(targeted) ? targeted : focusFilePath(defaultFile);
   let raw;
   try {
-    raw = readFileSync2(path, "utf8");
+    raw = readFileSync3(path, "utf8");
   } catch {
     return void 0;
   }
   try {
-    rmSync4(path, { force: true });
+    rmSync5(path, { force: true });
   } catch {
   }
   let parsed;
@@ -1767,10 +1904,10 @@ function quitFilePath(defaultFile, pid) {
 }
 function takeQuitRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : quitFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync2(targeted) ? targeted : quitFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync3(targeted) ? targeted : quitFilePath(defaultFile);
   let raw;
   try {
-    raw = readFileSync2(path, "utf8");
+    raw = readFileSync3(path, "utf8");
   } catch {
     return false;
   }
@@ -1785,45 +1922,45 @@ function takeQuitRequest(defaultFile, pid) {
 }
 function sweepQuitRequest(defaultFile, pid) {
   try {
-    rmSync4(quitFilePath(defaultFile, pid), { force: true });
+    rmSync5(quitFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
 
 // src/store/policy.ts
-import { dirname as dirname5, join as join4 } from "node:path";
+import { dirname as dirname7, join as join6 } from "node:path";
 var CONFIG_FILE_NAME = "config.json";
 function configFilePath(defaultFile) {
-  return join4(dirname5(defaultFile), CONFIG_FILE_NAME);
+  return join6(dirname7(defaultFile), CONFIG_FILE_NAME);
 }
 
 // src/store/migration.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, renameSync as renameSync2 } from "node:fs";
-import { dirname as dirname6, join as join5 } from "node:path";
-var LEGACY_STATE_FILE_RELATIVE_PATH = join5(".claude", "mellos-mapping.json");
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, renameSync as renameSync2 } from "node:fs";
+import { dirname as dirname8, join as join7 } from "node:path";
+var LEGACY_STATE_FILE_RELATIVE_PATH = join7(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
 var LEGACY_CONFIG_FILE_NAME = "mellos-mapping.config.json";
 function migrateLegacyStore(defaultFile) {
-  const projectRoot = dirname6(dirname6(defaultFile));
-  const legacyDefault = join5(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
-  const legacyPages = join5(dirname6(legacyDefault), LEGACY_PAGES_DIR_NAME);
-  const legacyConfig = join5(dirname6(legacyDefault), LEGACY_CONFIG_FILE_NAME);
-  const hasLegacy = existsSync3(legacyDefault) || existsSync3(legacyPages) || existsSync3(legacyConfig);
-  const hasCurrent = existsSync3(defaultFile) || existsSync3(join5(dirname6(defaultFile), PAGES_DIR_NAME)) || existsSync3(configFilePath(defaultFile));
+  const projectRoot = dirname8(dirname8(defaultFile));
+  const legacyDefault = join7(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
+  const legacyPages = join7(dirname8(legacyDefault), LEGACY_PAGES_DIR_NAME);
+  const legacyConfig = join7(dirname8(legacyDefault), LEGACY_CONFIG_FILE_NAME);
+  const hasLegacy = existsSync4(legacyDefault) || existsSync4(legacyPages) || existsSync4(legacyConfig);
+  const hasCurrent = existsSync4(defaultFile) || existsSync4(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync4(configFilePath(defaultFile));
   if (!hasLegacy || hasCurrent) return false;
-  mkdirSync2(dirname6(defaultFile), { recursive: true });
-  if (existsSync3(legacyDefault)) renameSync2(legacyDefault, defaultFile);
-  if (existsSync3(legacyPages)) renameSync2(legacyPages, join5(dirname6(defaultFile), PAGES_DIR_NAME));
-  if (existsSync3(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
+  mkdirSync3(dirname8(defaultFile), { recursive: true });
+  if (existsSync4(legacyDefault)) renameSync2(legacyDefault, defaultFile);
+  if (existsSync4(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
+  if (existsSync4(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
   return true;
 }
 
 // src/store/maps.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 function loadMapFile(path) {
   let text;
   try {
-    text = readFileSync3(path, "utf8");
+    text = readFileSync4(path, "utf8");
   } catch (e) {
     const code = e.code;
     if (code === "ENOENT") return err({ kind: "not-found", path });
@@ -2275,7 +2412,7 @@ function describeArgsError(e) {
   }
 }
 function parseArgs(argv, cwd) {
-  let file = join6(cwd, STATE_FILE_RELATIVE_PATH);
+  let file = join8(resolveProjectDirectory(cwd), STATE_FILE_RELATIVE_PATH);
   let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
   let color = true;
@@ -2557,7 +2694,7 @@ function waitingInfo(s, width) {
   const clock = s.elapsedMs !== void 0 ? ` \xB7 waiting ${elapsedLabel(s.elapsedMs)}` : "";
   const lines = [
     `watching  ${s.defaultFile}`,
-    `      and ${join6(s.pagesDir, "*.json")}`,
+    `      and ${join8(s.pagesDir, "*.json")}`,
     `polling every ${s.intervalMs} ms${clock}`
   ];
   for (const b of s.broken) lines.push(`! ${b}`);
@@ -2780,7 +2917,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       const info = waitingInfo(
         {
           defaultFile: cfg.file,
-          pagesDir: join6(dirname7(cfg.file), PAGES_DIR_NAME),
+          pagesDir: join8(dirname9(cfg.file), PAGES_DIR_NAME),
           intervalMs: cfg.intervalMs,
           elapsedMs: interactive ? Date.now() - startedAt : void 0,
           broken: pane.pages.flatMap(
@@ -2928,7 +3065,13 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       return;
     }
     const file = asked.request.file;
-    const removed = deletePageFile(file);
+    let removed;
+    try {
+      removed = withStoreLock(file, () => deletePageFile(file));
+    } catch (error) {
+      flash = { text: String(error), until: now + FLASH_NOTICE_MS };
+      return;
+    }
     flash = removed.ok ? { text: `deleted ${pageName(file)}`, until: now + FLASH_ACK_MS } : { text: describeStoreError(removed.error), until: now + FLASH_NOTICE_MS };
     tick();
   };

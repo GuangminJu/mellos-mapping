@@ -12,7 +12,7 @@ From the `chatgpt-app` branch run `node install.mjs`; from `main` run
 
 The installer checks file hashes and a real MCP handshake, copies the runtime to
 `~/.mellos/installations/chatgpt-app/`, registers the `mellos-mapping-codex`
-marketplace, installs the skill, and registers the six MCP tools at user scope.
+marketplace, installs the skill, and registers the eight MCP tools at user scope.
 The runtime uses an absolute Node executable and leaves its working directory
 unset so each conversation writes to its own project. The clone can be deleted
 or moved after installation. Other plugins, maps and mapping policies are preserved.
@@ -40,6 +40,12 @@ Project maps and mapping preferences remain. GitHub distribution does not itself
 publish the package into OpenAI's public plugin directory.
 
 ## Automatic web terminal
+
+For saved-map discovery, structured CRUD, checkpoints and concurrent updates,
+see [the persistent-map API guide](map-api.md). Start by reading existing pages;
+a new conversation does not require a new map. Restart older MCP/native watchers
+before writing maps with format-2 context or source references. Reopening a Web
+surface replaces services without format-2 support and returns a new URL.
 
 Call `mmap_open {surface: "web-terminal", page: "<slug>"}` and pass the returned
 `hostOpen` object to `open_in_codex`. It uses `placement: "right"` and a browser

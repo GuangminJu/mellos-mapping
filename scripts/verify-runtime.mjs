@@ -1,7 +1,7 @@
 // @ts-check
 /** Dependency-free MCP handshake used by a fresh clone's installer. */
 import { spawn } from 'node:child_process';
-export const TOOL_NAMES = ['mmap_declare', 'mmap_open', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view'];
+export const TOOL_NAMES = ['mmap_batch', 'mmap_declare', 'mmap_open', 'mmap_read', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view'];
 
 /** @param {string} server @param {string} cwd @param {NodeJS.ProcessEnv} [env] @returns {Promise<string[]>} */
 export function verifyRuntime(server, cwd, env = process.env) {

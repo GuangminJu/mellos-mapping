@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.22.1",
+  "version": "0.23.0",
   "description": "梅勒斯地图 — a live layered dependency map for bottom-up development: ghost the design first, then light nodes up from the bottom as they are built and verified",
   "author": {
     "name": "Mellos"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Mellos Mapping · ChatGPT App",
     "shortDescription": "Live plans beside your ChatGPT desktop Codex conversation",
-    "longDescription": "For ChatGPT desktop in Codex mode (Codex App). Automatically open a live mmap terminal in the current conversation's right browser panel, with semantic zoom, node selection, child maps and independent font size. The installer includes every browser/runtime dependency and registers six local MCP tools. Native terminal, SVG web maps and Markdown remain available.",
+    "longDescription": "For ChatGPT desktop in Codex mode (Codex App). Automatically open a live mmap terminal in the current conversation's right browser panel, with semantic zoom, node selection, child maps and independent font size. The installer includes every browser/runtime dependency and registers eight local MCP tools. Native terminal, SVG web maps and Markdown remain available.",
     "developerName": "Mellos",
     "category": "Productivity",
     "capabilities": [
