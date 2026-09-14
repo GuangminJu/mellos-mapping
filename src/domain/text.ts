@@ -1,5 +1,6 @@
 /** Text remains data at every input and display boundary. No host dependencies. */
 import type { MellosMap } from './types.js';
+import { contextError, sourceError } from './context.js';
 
 // Explicit ranges also work in the JSON Schema published by the MCP adapter.
 export const NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
@@ -9,6 +10,7 @@ export const NO_CONTROLS_BUT_BREAKS_TEXT =
   'text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed';
 
 export function mapTextError(map: MellosMap): string | undefined {
+  if (map.context !== undefined) { const error = contextError(map.context); if (error) return error; }
   const check = (field: string, value: string | undefined, multiline = false): string | undefined =>
     value === undefined || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value)
       ? undefined : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
@@ -25,6 +27,7 @@ export function mapTextError(map: MellosMap): string | undefined {
     }
   }
   for (const [i, node] of map.nodes.entries()) {
+    if (node.sources !== undefined) { const error = sourceError(node.sources); if (error) return `nodes[${i}]: ${error}`; }
     for (const name of ['label', 'evidence', 'detail'] as const) {
       // Version-1 files and document exports also support multiline evidence.
       // MCP keeps its narrower one-line evidence input for concise updates.

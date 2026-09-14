@@ -4,7 +4,7 @@ description: >-
   Maintain a live layered dependency map (Mellos map) while doing bottom-up
   development. Use when starting any non-trivial implementation or
   architecture task — multiple modules, layers, or more than roughly an hour
-  of work. Declare the design as ghost nodes first, then light nodes up
+  of work. Resume existing maps first; declare missing design, then light nodes up
   bottom-to-top as they are built and verified. Also use when the user asks
   for a mellos map, /mmap, a dependency map, or wants to see development
   progress as a picture. The user's mmap_setup policy decides how eager
@@ -13,8 +13,8 @@ description: >-
 
 # Mellos Mapping — the map discipline
 
-Six MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`,
-`mmap_setup`, `mmap_open`)
+Eight MCP tools (`mmap_declare`, `mmap_update`, `mmap_remove`, `mmap_view`,
+`mmap_setup`, `mmap_open`, `mmap_read`, `mmap_batch`)
 maintain a **Mellos map**: a layered dependency map of the system under
 construction, persisted in `.mellos/map.json` (default page) plus
 `.mellos/pages/<slug>.json` (named pages) and rendered live in
@@ -23,6 +23,17 @@ exists — and under which page slugs — call `mmap_view`: every response ends
 with a `pages:` line naming the pages this project has and which one you are
 looking at. Never probe the default file to decide: it is absent whenever all
 work lives on named pages.
+
+With current servers, prefer mmap_read {resource: "pages"}: it returns page
+summaries, saved context and revisions. A new conversation or compaction is not
+a new effort. Resume the matching page, read relevant nodes by ID/filter and
+request detail/evidence only when needed. Use the IDs returned by mmap_read,
+not display labels. Declare only missing structure. Keep context.summary and
+context.next current so another conversation can continue without rebuilding.
+Pass expectedRevision on writes; reread on CONFLICT. mmap_batch applies mixed
+changes atomically to one page. mmap_read changes checks linked source hashes;
+record sources[].sha256 only after verification. Older servers can fall back
+to mmap_view discovery and the saved JSON for precise IDs.
 
 The map is a **ledger, not a judge**: the tools only refuse structural
 corruption; *when* to declare, start, or complete nodes is YOUR discipline,
@@ -144,8 +155,8 @@ confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle de
 
 ## The working loop
 
-1. **Design first, as ghosts.** Before writing code, decompose bottom-up and
-   declare the WHOLE intended design in one `mmap_declare` batch: `title`,
+1. **Resume first, then fill gaps.** Read existing pages and the matching effort's
+   records. For a new effort, declare its intended design with `mmap_declare`: `title`,
    layer bands (rank 0 = most primitive, at the bottom), every planned node,
    and the edges. Everything starts `planned` — the user can veto the ghost
    design before any code exists.
@@ -217,8 +228,8 @@ confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle de
    band was wrong, fix the map in the same turn you change the plan:
    `mmap_update` moves a node to another band (`layer`), renames or re-ranks
    a band, relabels a group or a lane, and clears any optional field with
-   `null` (never an empty string); `mmap_declare` grows the map and owns the
-   title (`null` removes it); `mmap_remove` drops edges, nodes, groups, lanes
+   `null` (never an empty string); it also edits title, kind and edge labels.
+   `mmap_declare` grows the map; `mmap_remove` drops edges, nodes, groups, lanes
    and bands you have emptied. A map that no longer matches your intent is
    the one failure mode this system cannot survive.
 7. **Clean up a finished effort.** Pages accumulate — one effort, one page —

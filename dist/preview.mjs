@@ -222,12 +222,37 @@ function updateNode(map, input) {
   return ok({ ...map, nodes: map.nodes.map((n) => n.id === input.id ? updated : n) });
 }
 
+// src/domain/context.ts
+function sourceError(raw) {
+  if (!Array.isArray(raw) || raw.length > 100) return "sources must be an array of at most 100 file references";
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return "source must be an object";
+    const s = item;
+    if (Object.keys(s).some((k) => k !== "path" && k !== "sha256")) return "unknown source field";
+    if (typeof s.path !== "string" || s.path.length > 1024 || !s.path || /[\u0000-\u001f\u007f-\u009f\\:]/.test(s.path) || s.path.startsWith("/") || s.path.split("/").some((p) => !p || p === "." || p === "..")) return "source path must be relative to the project, with forward slashes and no traversal";
+    if (s.sha256 !== void 0 && (typeof s.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(s.sha256))) return "source sha256 must be a lowercase SHA256 hash";
+  }
+  return void 0;
+}
+function contextError(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "context must be an object";
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== "summary" && key !== "next") return "unknown context field";
+    if (typeof value !== "string" || value.length > 2e3 || /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(value)) return "context fields must be text of at most 2000 characters";
+  }
+  return void 0;
+}
+
 // src/domain/text.ts
 var NO_CONTROLS = /^[^\u0000-\u001f\u007f-\u009f]*$/;
 var NO_CONTROLS_TEXT = "one line of text; control characters (ESC, newline, tab) are not allowed";
 var NO_CONTROLS_BUT_BREAKS = /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]*$/;
 var NO_CONTROLS_BUT_BREAKS_TEXT = "text with optional newlines (\\n) and tabs; other control characters (ESC, BEL, CR) are not allowed";
 function mapTextError(map) {
+  if (map.context !== void 0) {
+    const error2 = contextError(map.context);
+    if (error2) return error2;
+  }
   const check = (field, value, multiline = false) => value === void 0 || (multiline ? NO_CONTROLS_BUT_BREAKS : NO_CONTROLS).test(value) ? void 0 : `${field}: ${multiline ? NO_CONTROLS_BUT_BREAKS_TEXT : NO_CONTROLS_TEXT}`;
   let error = check("title", map.title);
   if (error) return error;
@@ -242,6 +267,10 @@ function mapTextError(map) {
     }
   }
   for (const [i, node] of map.nodes.entries()) {
+    if (node.sources !== void 0) {
+      const error2 = sourceError(node.sources);
+      if (error2) return `nodes[${i}]: ${error2}`;
+    }
     for (const name of ["label", "evidence", "detail"]) {
       error = check(`nodes[${i}].${name}`, node[name], name !== "label");
       if (error) return error;
@@ -307,8 +336,8 @@ function optionalString(rec, key, where, path) {
 }
 function parseMap(raw, path) {
   if (!isRecord(raw)) return err({ kind: "bad-shape", path, detail: "root is not an object" });
-  if (raw["version"] !== STATE_FILE_VERSION) {
-    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION}` });
+  if (raw["version"] !== STATE_FILE_VERSION && raw["version"] !== 2) {
+    return err({ kind: "bad-shape", path, detail: `version is ${String(raw["version"])}, expected ${STATE_FILE_VERSION} or 2` });
   }
   const layers = arrayField(raw, "layers", path, "required");
   if (!layers.ok) return layers;
@@ -321,6 +350,11 @@ function parseMap(raw, path) {
   const groups = arrayField(raw, "groups", path, "optional");
   if (!groups.ok) return groups;
   let map = EMPTY_MAP;
+  if (raw["context"] !== void 0) {
+    const error = contextError(raw["context"]);
+    if (error) return err({ kind: "bad-shape", path, detail: error });
+    map = { ...map, context: raw["context"] };
+  }
   const title = optionalString(raw, "title", "map", path);
   if (!title.ok) return title;
   if (title.value !== void 0) map = setTitle(map, title.value);
@@ -448,6 +482,11 @@ function parseMap(raw, path) {
       const updated = updateNode(map, { id: id.value, evidence: evidence.value });
       if (!updated.ok) return err({ kind: "invariant-violation", path, violation: updated.error });
       map = updated.value;
+    }
+    if (rawNode["sources"] !== void 0) {
+      const error = sourceError(rawNode["sources"]);
+      if (error) return err({ kind: "bad-shape", path, detail: `${where}: ${error}` });
+      map = { ...map, nodes: map.nodes.map((n) => n.id === id.value ? { ...n, sources: rawNode["sources"] } : n) };
     }
   }
   for (const [i, rawEdge] of edges.value.entries()) {

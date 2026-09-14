@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "title": "地图复用与完整 CRUD",
+  "layers": [
+    {
+      "id": "storage",
+      "name": "存储与项目身份",
+      "rank": 0
+    },
+    {
+      "id": "api",
+      "name": "结构化接口",
+      "rank": 1
+    },
+    {
+      "id": "workflow",
+      "name": "恢复流程与交付",
+      "rank": 2
+    }
+  ],
+  "nodes": [
+    {
+      "id": "revision-lock",
+      "label": "并发事务与版本检查",
+      "layer": "storage",
+      "status": "done",
+      "evidence": "独立 MCP 进程：冲突拒写、旧调用序列化、回滚测试通过"
+    },
+    {
+      "id": "project-root",
+      "label": "目录定位与工作区隔离",
+      "layer": "storage",
+      "status": "done",
+      "evidence": "子目录、嵌套 Git、worktree、主目录与临时目录边界验证通过"
+    },
+    {
+      "id": "structured-read",
+      "label": "精确查询与分页",
+      "layer": "api",
+      "status": "done",
+      "evidence": "ID、过滤、分页、字段选择、邻接及错误语义测试通过"
+    },
+    {
+      "id": "complete-crud",
+      "label": "完整修改及混合批次",
+      "layer": "api",
+      "status": "done",
+      "evidence": "边修改、页面元数据、分组迁移、泳道顺序与删除检查通过"
+    },
+    {
+      "id": "resume",
+      "label": "旧图恢复与变更检查",
+      "layer": "workflow",
+      "status": "done",
+      "evidence": "进程重启读取摘要、增量修改、文件哈希变化测试通过"
+    },
+    {
+      "id": "validation",
+      "label": "兼容验证与打包",
+      "layer": "workflow",
+      "status": "done",
+      "evidence": "646 tests + 1 skip；真实双进程、0.22.1 升级回滚、App 引擎加载与旧 Web 服务替换均通过",
+      "detail": "0.23.0 开发完成；源码和 dist 已更新，未发布或替换当前正式安装"
+    },
+    {
+      "id": "dialogue-acceptance",
+      "label": "真实对话与压缩后复用验收",
+      "layer": "workflow",
+      "status": "done",
+      "evidence": "CLI 0.154.0 / App 引擎 0.154.0-alpha.6.2：8/8 真实模型场景通过；新对话、压缩、重启子目录、普通请求均复用原图，120 个无关节点及另一页保留。",
+      "detail": "CLI 与 App 引擎：新对话、真实压缩、进程重启与子目录；对比节点 ID、验证记录、页面数量和定向工具调用。"
+    }
+  ],
+  "edges": [
+    {
+      "from": "structured-read",
+      "to": "project-root"
+    },
+    {
+      "from": "complete-crud",
+      "to": "revision-lock"
+    },
+    {
+      "from": "resume",
+      "to": "structured-read"
+    },
+    {
+      "from": "resume",
+      "to": "complete-crud"
+    },
+    {
+      "from": "validation",
+      "to": "structured-read"
+    },
+    {
+      "from": "validation",
+      "to": "complete-crud"
+    }
+  ]
+}

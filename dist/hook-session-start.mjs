@@ -113,7 +113,8 @@ function sessionStartContext(input) {
     `mellos-mapping policy: ${policy} \u2014 ${describeMappingPolicy(policy)}.`,
     scope,
     "  1. Load the mellos-mapping skill and follow it.",
-    "  2. Declare the whole ghost design with mmap_declare BEFORE writing code.",
+    "  2. Read existing pages and context with mmap_read; a new conversation is not a new effort.",
+    "     Reuse the matching page and verified nodes. Use mmap_declare only for missing structure.",
     "  3. Open the map pane WITHOUT asking \u2014 the recorded policy is the user's standing consent:",
     '       mmap_open {page: "<the page this effort lives on>"}',
     "     It opens the pane beside this conversation, or retargets one that is already open.",
@@ -121,6 +122,7 @@ function sessionStartContext(input) {
     "     looking. `pane: CLOSED` means the user cannot see this map \u2014 call mmap_open then too.",
     "  5. Keep the map current as the work proceeds: in-progress when a node is started,",
     "     done WITH EVIDENCE when its verification passes, regressed when something breaks.",
+    "     Save a concise context.next checkpoint and use expectedRevision for incremental writes.",
     "An explicit request from the user always outranks this."
   ].join("\n");
 }

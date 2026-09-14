@@ -62,9 +62,9 @@ async function callText(name: string, args: Record<string, unknown>): Promise<{ 
 }
 
 describe('mellos-mapping MCP server', () => {
-  it('exposes exactly the six mmap tools', async () => {
+  it('exposes the eight mmap tools including structured reads and transactions', async () => {
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(['mmap_declare', 'mmap_open', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
+    expect(tools).toEqual(['mmap_batch', 'mmap_declare', 'mmap_open', 'mmap_read', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
   });
 
   it('declares a ghost design and persists it to the project state file', async () => {

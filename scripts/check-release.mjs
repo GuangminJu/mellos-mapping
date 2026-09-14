@@ -38,6 +38,6 @@ try {
       assert.equal(existsSync(join(runtime, '.codex-plugin')), false);
       assert.ok(existsSync(join(runtime, 'dist/hook-session-start.mjs')));
     }
-    console.log(`${edition}: complete clone, checksums, dependency-free installer and six-tool MCP handshake passed.`);
+    console.log(`${edition}: complete clone, checksums, dependency-free installer and eight-tool MCP handshake passed.`);
   }
 } finally { rmSync(temporary, { recursive: true, force: true }); }

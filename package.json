@@ -1,6 +1,6 @@
 {
   "name": "mellos-mapping",
-  "version": "0.22.1",
+  "version": "0.23.0",
   "mcpName": "io.github.GuangminJu/mellos-mapping",
   "description": "A live layered dependency map for bottom-up development — MCP server + terminal pane. Ghost the design first, then light nodes up from the bottom as they are built and verified.",
   "type": "module",
@@ -70,6 +70,7 @@
     "lib",
     "README.zh-CN.md",
     "docs/codex.md",
+    "docs/map-api.md",
     "scripts/codex-register.mjs",
     "scripts/codex-cli.mjs",
     "scripts/install-mmap-command.mjs",
@@ -92,9 +93,10 @@
     "check:release": "node scripts/check-release.mjs",
     "check:package": "node scripts/check-package-surface.mjs",
     "check:codex": "node scripts/check-codex-package.mjs",
+    "check:reuse": "node scripts/check-reuse.mjs",
     "benchmark:render": "node scripts/benchmark-render.mjs",
     "prepack": "npm run build",
-    "verify": "npm run typecheck && npm run test && npm run build && npm run check:package && npm run check:codex && npm run check:release"
+    "verify": "npm run typecheck && npm run test && npm run build && npm run check:reuse && npm run check:package && npm run check:codex && npm run check:release"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

@@ -120,6 +120,7 @@ await build({
       '  readLiveViewers,',
       "} from './src/store/store.js';",
       "export { ID_RULE } from './src/domain/types.js';",
+      "export { resolveProjectDirectory } from './src/store/project.js';",
     ].join('\n'),
     resolveDir: root,
     sourcefile: 'store-paths.ts',

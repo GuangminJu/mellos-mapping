@@ -71,6 +71,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { mapStatus } from '../domain/ops.js';
+import { resolveProjectDirectory } from '../store/project.js';
+import { withStoreLock } from '../store/transaction.js';
 import { type MellosMap, type NodeStatus, type Result, err, ok } from '../domain/types.js';
 import {
   type NeighborRef,
@@ -190,7 +192,7 @@ export const USAGE =
  * now hold the same line.
  */
 export function parseArgs(argv: readonly string[], cwd: string): Result<WatchConfig, ArgsError> {
-  let file = join(cwd, STATE_FILE_RELATIVE_PATH);
+  let file = join(resolveProjectDirectory(cwd), STATE_FILE_RELATIVE_PATH);
   let intervalMs = POLL_INTERVAL_DEFAULT_MS;
   let unicode = true;
   let color = true;
@@ -1395,7 +1397,9 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       return;
     }
     const file = asked.request.file;
-    const removed = deletePageFile(file);
+    let removed;
+    try { removed = withStoreLock(file, () => deletePageFile(file)); }
+    catch (error) { flash = { text: String(error), until: now + FLASH_NOTICE_MS }; return; }
     flash = removed.ok
       ? { text: `deleted ${pageName(file)}`, until: now + FLASH_ACK_MS }
       : { text: describeStoreError(removed.error), until: now + FLASH_NOTICE_MS };

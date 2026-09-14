@@ -5,6 +5,7 @@ import { deletePageFile, describeStoreError, pageFilePath, type PageId } from '.
 import { createPreviewPublisher } from '../preview/publisher.js';
 import { readWebSnapshot } from './source.js';
 import { attachTerminalService } from './terminal-service.js';
+import { LedgerError, withStoreLock } from '../store/transaction.js';
 
 export interface WebAssets {
   readonly html: string; readonly javascript: string; readonly css: string;
@@ -42,7 +43,7 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
         const asset = new Map<string, readonly [string, string]>([['terminal.js', [assets.terminal.javascript, 'text/javascript']], ['terminal.css', [assets.terminal.css, 'text/css']], ['xterm.css', [assets.terminal.xtermCss, 'text/css']]]).get(route);
         if (asset) { send(res, 200, asset[0], `${asset[1]}; charset=utf-8`); return; }
       }
-      if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, surfaces: terminalService ? ['web', 'web-terminal'] : ['web'] })); return; }
+      if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, formats: [1, 2], surfaces: terminalService ? ['web', 'web-terminal'] : ['web'] })); return; }
       if (req.method === 'GET' && route === 'api/state') {
         const snapshot = readWebSnapshot(defaultFile);
         const etag = `"${snapshot.revision}"`;
@@ -51,6 +52,7 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
         send(res, 200, JSON.stringify(snapshot)); return;
       }
       if (req.method === 'DELETE' && route.startsWith('api/pages/')) {
+        withStoreLock(defaultFile, () => {
         const id = route.slice('api/pages/'.length);
         if (id !== '_default' && !ID_RULE.test(id)) { send(res, 400, '{"error":"Invalid page"}'); return; }
         // Require the version the user reviewed, so confirmation cannot delete
@@ -61,10 +63,11 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
         const previews = createPreviewPublisher(defaultFile);
         const refreshed = previews.enabled() ? previews.refresh() : undefined;
         send(res, 200, JSON.stringify({ deleted: true, ...(refreshed && !refreshed.ok ? { warning: `地图已删除，Markdown 预览待重新生成：${refreshed.error}` } : {}) })); return;
+        }); return;
       }
       if (req.method === 'POST' && route === 'api/stop') { send(res, 200, '{"stopped":true}'); void close(); return; }
       send(res, 404, '{"error":"Not found"}');
-    } catch (error) { send(res, 500, JSON.stringify({ error: String(error) })); }
+    } catch (error) { send(res, error instanceof LedgerError && error.code === 'BUSY' ? 409 : 500, JSON.stringify({ error: String(error) })); }
   });
   const terminalService = assets.terminal && options.terminalWorker ? attachTerminalService(server, {
     file: defaultFile, worker: options.terminalWorker, prefix, origin: () => origin, touch: () => { lastRequest = Date.now(); },

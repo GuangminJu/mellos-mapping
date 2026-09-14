@@ -34,7 +34,7 @@ async function checkProject(name) {
     await client.connect(transport);
     assert.equal(client.getServerVersion()?.version, expectedVersion);
     assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(),
-      ['mmap_declare', 'mmap_open', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
+      ['mmap_batch', 'mmap_declare', 'mmap_open', 'mmap_read', 'mmap_remove', 'mmap_setup', 'mmap_update', 'mmap_view']);
     const declared = await client.callTool({ name: 'mmap_declare', arguments: {
       page: 'smoke', title: name, layers: [{ id: 'base', name: '基础', rank: 0 }],
       nodes: [{ id: 'runtime', label: '运行时', layer: 'base', detail: 'Verify local project isolation.' }],
@@ -126,7 +126,7 @@ try {
   await checkProject('项目 A');
   await checkProject('Project B');
   assert.equal(existsSync(join(bundle, '.mellos')), false, 'Server wrote into its installation directory');
-  console.log('Codex package: six tools, stdio handshake, Markdown/SVG refresh, live web assets/updates/reuse, strict errors and two-project isolation passed.');
+  console.log('Codex package: eight tools, stdio handshake, Markdown/SVG refresh, live web assets/updates/reuse, strict errors and two-project isolation passed.');
 } finally {
   // temporary is a fresh mkdtemp directory owned solely by this check.
   rmSync(temporary, { recursive: true, force: true });

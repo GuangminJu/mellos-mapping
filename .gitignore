@@ -19,3 +19,4 @@ artifacts/
 .mellos/viewers/
 .mellos/previews/
 .mellos/web/
+.mellos/.write-lock/

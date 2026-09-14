@@ -176,7 +176,9 @@ export interface MapLane {
 }
 
 /** A unit of work living in exactly one band. */
+export type { SourceRef, MapContext } from './context.js';
 export interface MapNode {
+  readonly sources?: readonly import('./context.js').SourceRef[];
   readonly id: NodeId;
   readonly label: string;
   readonly layer: LayerId;
@@ -205,6 +207,7 @@ export interface DepEdge {
 
 /** The whole map. A plain immutable value — operations return new maps. */
 export interface MellosMap {
+  readonly context?: import('./context.js').MapContext;
   readonly title?: string;
   /** Presentation intent; absent means 'dev' (the progress ledger). */
   readonly kind?: MapKind;

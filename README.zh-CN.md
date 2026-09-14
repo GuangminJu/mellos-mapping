@@ -55,7 +55,7 @@ Claude 为你构建系统时，对话旁边的分屏实时显示这个系统的*
 | `chatgpt-app` | ChatGPT 桌面 App 的 Codex 模式 | `node install.mjs` |
 
 前置要求为 Node.js 18+ 和对应宿主的 CLI，并确保命令在 PATH 中。安装器检查
-发行文件和六个 MCP 工具，将运行时保留到克隆目录之外，完成宿主配置。
+发行文件和八个 MCP 工具，将运行时保留到克隆目录之外，完成宿主配置。
 安装后开启新对话。详见[发布与分支说明](docs/releasing.md)。
 
 Claude Code 也可以通过插件市场安装：
@@ -141,7 +141,7 @@ the move.`）：
 
 本版用于 ChatGPT 桌面 App 的 Codex 模式（也称 Codex App）。在源码分支运行
 以下命令；在 `chatgpt-app` 分支运行时省略宿主参数。它会一次配置桌面专用技能、
-插件市场与六个 MCP 工具。
+插件市场与八个 MCP 工具。
 
 ```
 node install.mjs chatgpt-app
@@ -223,7 +223,7 @@ npx -y -p mellos-mapping mellos-mapping-watch
 插件 MCP 服务器设置的约定），最后才是服务器进程自己的工作目录。如果你的
 客户端会在你实际工作的项目之外启动服务器，就设 `MELLOS_MAPPING_CWD`。
 
-技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得六个 `mmap_*`
+技能/纪律层是 Claude Code 与 Codex 专属的；其他客户端获得八个 `mmap_*`
 工具和面板，提示词自备。
 
 ## 使用
@@ -448,12 +448,18 @@ Claude 会话的正确姿势。
 
 ## MCP 工具
 
+先用 `mmap_read` 查找并恢复已有页面；新对话不等于新任务。通过稳定 ID、过滤查询
+和版本检查做增量修改。[持久化地图接口说明](docs/map-api.md)包含完整增删改查、
+混合事务、恢复摘要、源码哈希和 worktree 边界。
+
 | 工具 | 用途 |
 | --- | --- |
 | `mmap_declare` | 生长地图：标题（传 `null` 删掉）、图种、层级横条、泳道、分组（子系统）、节点（可带 `status`、`evidence`、`detail`、`kind`、`group`、`lane`、`submap`）、边（可带标签）；批量，全有或全无 |
 | `mmap_update` | 记录进度**并修订**：状态（`planned → in-progress → done` 附证据、`regressed`）、改节点标签、把节点搬到另一层（`layer`）、加入/退出分组或泳道、设节点 kind 或 `submap`；给层改名和改 rank（`layers`）、给分组改标签（`groups`）、给泳道改标签（`lanes`）；任何可清空的字段传 `null` 即清空 |
 | `mmap_remove` | 修订：删除边、节点、分组、泳道、空层——以及用 `pages` 删掉整页，连文件一起（永久；在本次调用的地图修改之后执行） |
 | `mmap_view` | 把当前地图渲染成文本，直接在对话里看（可选 `zoom`，`-4`…`2`）；每次响应结尾都有一行 `pages:`，列出本项目有哪些页、以及你正在看哪一页 |
+| `mmap_read` | 结构化页面发现、稳定 ID、过滤分页查询、恢复摘要与源码变化检查 |
+| `mmap_batch` | 单页增删改混合事务与版本冲突检查 |
 | `mmap_setup` | 查/设本项目的建图策略——什么时候开地图 |
 | `mmap_open` | 把地图放到你屏幕上：开面板，或把已开的面板切到某一 `page`（`window: true` 用独立窗口）。它回答的是"事后有没有面板真的报到"，而不只是"命令跑过了"——而且它永远关不掉面板 |
 
@@ -561,7 +567,7 @@ npm run verify
 | 1 store | `src/store/store.ts` | `store.test.ts`、`atomic-save.test.ts` | Node 上的原子化状态文件持久化 |
 | 1 semantics | `src/semantics/` | `semantics.test.ts` | 媒介无关的视图语义：缩放阶梯、分组聚合、页集规则、时序翻转、共享字形词汇表 |
 | 2 apply | `src/server/apply.ts` | `apply.test.ts` | 工具输入 → 事务性操作序列 |
-| 3 server | `src/server/server.ts` | `server.test.ts`、`save-failure.test.ts` | stdio 上的六个 MCP 工具 |
+| 3 server | `src/server/server.ts` | `server.test.ts`、`save-failure.test.ts` | stdio 上的八个 MCP 工具 |
 | 4 render | `src/render/` | `render.test.ts`、`routing.test.ts` | ASCII 渲染器与它的走线 |
 | 4 pane | `src/watch/` | `watch.test.ts`、`pane-state.test.ts`、`input.test.ts` | 轮询面板：页集、输入解析、详情面板与外框 |
 | — 启动脚本 | `scripts/` | `open-pane.test.mjs`、`codex-register.test.mjs` | 纯 node 的入口 |

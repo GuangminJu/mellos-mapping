@@ -4,6 +4,7 @@ import { ID_RULE, ID_RULE_TEXT, NODE_STATUSES, MAP_KINDS, RANK_MIN, RANK_MAX, RA
 import { NO_CONTROLS, NO_CONTROLS_TEXT, NO_CONTROLS_BUT_BREAKS, NO_CONTROLS_BUT_BREAKS_TEXT } from '../domain/text.js';
 import { MAPPING_POLICIES, POLICY_SCOPES, describeMappingPolicy } from '../store/policy.js';
 import { ZOOM_MIN, ZOOM_MAX } from '../render/render.js';
+import { sourceError } from '../domain/context.js';
 // ---------------------------------------------------------------------------
 // the advertised schema — what a model reads BEFORE it calls
 // ---------------------------------------------------------------------------
@@ -34,8 +35,8 @@ function id(description: string): z.ZodString {
 
 const PAGE_DESCRIPTION =
   'page (parallel map) this call targets; omit for the default page. ' +
-  'One effort = one page: start a NEW effort on its own page named after the effort, ' +
-  'so concurrent sessions never write over each other and the pane can switch between pages.';
+  'A new conversation is not a new effort. Read existing pages with mmap_read first; reuse the same page for continued work. ' +
+  'Create a new page only for a distinct effort.';
 
 function page(): z.ZodOptional<z.ZodString> {
   return id(PAGE_DESCRIPTION).optional();
@@ -122,6 +123,10 @@ function closed<T extends z.ZodRawShape>(shape: T): z.ZodObject<T, 'strict'> {
   return z.object(shape).strict();
 }
 
+const expectedRevision = () => z.string().regex(/^(?:[a-f0-9]{64}|absent)$/).optional().describe('Revision from mmap_read; absent requires a new page. A stale revision returns CONFLICT.');
+const context = () => closed({ summary: note(2000, 'Concise purpose and confirmed decisions').optional(), next: note(2000, 'Next actions for resuming this effort').optional() });
+const sources = () => z.array(closed({ path: z.string().max(1024), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(100).refine(value => sourceError(value) === undefined, 'Use project-relative file paths without traversal.').describe('Optional source files and verified SHA256 baselines. mmap_read changes checks them without rescanning the repository.');
+
 
 export function declareTool() {
   return {
@@ -131,12 +136,14 @@ export function declareTool() {
         '(labeled subsystems within ONE band — declare them when a single band grows crowded, ' +
         'roughly five or more nodes in that band; a group must be a strict subset of its band, ' +
         'and a map spread thin across many bands needs none), add nodes, add dependency edges. Declare the ' +
-        'whole ghost design up front, then grow it as understanding deepens. Edges must point ' +
+        'missing design after reading existing pages with mmap_read; reuse verified nodes. Edges must point ' +
         'strictly downward (a node may only use nodes on lower layers); the batch is all-or-nothing. ' +
-        'The title lives here and only here: pass it again to replace it, or null to remove it. ' +
+        'Title and kind can also be changed with mmap_update; this legacy form remains supported. ' +
         'Revising what already exists (moving, renaming, relabeling, clearing) is mmap_update.',
       inputSchema: closed({
         page: page(),
+        expectedRevision: expectedRevision(),
+        context: context().optional(),
         title: line(TITLE_MAX, 'map title, e.g. the feature being built; null removes it')
           .nullable()
           .optional(),
@@ -172,6 +179,7 @@ export function declareTool() {
           .array(
             closed({
               id: id('stable kebab-case identifier of the node'),
+              sources: sources().optional(),
               label: line(LABEL_MAX, 'display label inside the box'),
               layer: id('id of the band this node lives in'),
               status: status('defaults to planned').optional(),
@@ -221,10 +229,17 @@ export function updateTool() {
         'other fields. The map is a ledger: report honestly, it never blocks you.',
       inputSchema: closed({
         page: page(),
+        expectedRevision: expectedRevision(),
+        title: line(TITLE_MAX, 'Map title; null clears').nullable().optional(),
+        kind: mapKind().optional(),
+        context: context().nullable().optional(),
+        laneOrder: z.array(id('existing lane id')).max(100).optional().describe('Every lane exactly once, in display order.'),
+        edges: z.array(closed({ ...edgeEnds(), label: line(EDGE_LABEL_MAX, 'New edge label; null clears').nullable().optional(), newFrom: id('replacement consumer').optional(), newTo: id('replacement dependency').optional() })).min(1).optional(),
         updates: z
           .array(
             closed({
               id: id('id of the node to update'),
+              sources: sources().nullable().optional(),
               status: status('the status to record').optional(),
               label: line(LABEL_MAX, 'new display label inside the box').optional(),
               evidence: line(EVIDENCE_MAX, 'for done: how it was verified; for regressed: what broke; null clears it')
@@ -262,10 +277,10 @@ export function updateTool() {
           .optional()
           .describe('rename and/or re-rank existing bands; an item must carry a name, a rank, or both'),
         groups: z
-          .array(closed({ id: id('id of the group to relabel'), label: line(LABEL_MAX, 'new subsystem name') }))
+          .array(closed({ id: id('id of the group to revise'), label: line(LABEL_MAX, 'new subsystem name').optional(), layer: id('new layer; move members in the same batch').optional() }))
           .min(1)
           .optional()
-          .describe('relabel existing groups; membership and band are untouched'),
+          .describe('relabel or move a group; final membership must match its layer'),
         lanes: z
           .array(closed({ id: id('id of the lane to relabel'), label: line(LABEL_MAX, 'new column name') }))
           .min(1)
@@ -295,6 +310,9 @@ export function removeTool() {
         'page comes back.',
       inputSchema: closed({
         page: page(),
+        expectedRevision: expectedRevision(),
+        deletePage: z.boolean().optional().describe('Delete the page targeted by page, including the default page; cannot be combined with other edits.'),
+        references: z.enum(['reject', 'keep']).optional().describe('For deletePage: reject inbound submap references by default, or explicitly keep them.'),
         edges: z.array(closed(edgeEnds())).optional(),
         nodes: z.array(id('id of the node to remove, with every edge touching it')).optional(),
         groups: z.array(id('id of the group to remove; members stay, merely ungrouped')).optional(),
@@ -346,6 +364,45 @@ export function setupTool() {
           ),
       }),
     };
+}
+
+export function readTool() {
+  return {
+    title: 'Read and resume saved maps',
+    description: 'Read existing pages before creating a map. Returns structured IDs, revisions and bounded results. pages lists summaries; map reads page metadata/context; nodes/edges/layers/groups/lanes read editable records; neighborhood reads related nodes; changes compares saved source hashes with local files. New conversations and compacted context should resume the existing effort. mmap_view remains the picture.',
+    inputSchema: closed({
+      resource: z.enum(['pages', 'map', 'nodes', 'edges', 'layers', 'groups', 'lanes', 'neighborhood', 'changes']).optional(),
+      page: page(),
+      id: z.string().min(1).max(200).optional().describe('Exact ID; missing returns NOT_FOUND. Edge IDs use from->to; default page ID is _default.'),
+      ids: z.array(z.string().min(1).max(200)).max(100).optional(),
+      query: z.string().max(200).optional(),
+      status: z.enum(NODE_STATUSES).optional(),
+      layer: id('filter by layer').optional(),
+      group: id('filter by group').optional(),
+      lane: id('filter by lane').optional(),
+      fields: z.array(z.enum(['id', 'label', 'name', 'rank', 'status', 'layer', 'group', 'lane', 'kind', 'submap', 'detail', 'evidence', 'sources', 'from', 'to', 'title', 'context', 'counts', 'revision', 'error', 'state', 'affectedConsumers'])).min(1).max(30).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      cursor: z.string().max(2048).optional().describe('Opaque cursor; reuse the same query. Changes return CONFLICT instead of skipping records.'),
+      ifRevision: expectedRevision(),
+      depth: z.number().int().min(0).max(4).optional(),
+      direction: z.enum(['dependencies', 'consumers', 'both']).optional(),
+    }),
+  };
+}
+
+export function batchTool() {
+  return {
+    title: 'Commit a single-page transaction',
+    description: 'Atomically combine additions, updates and removals on ONE page. Checks the final graph, so a coordinated move or edge replacement needs no intermediate saves. Read IDs and revision with mmap_read first. Cross-page deletion is excluded.',
+    inputSchema: closed({
+      page: page(), expectedRevision: expectedRevision(),
+      operations: z.array(z.discriminatedUnion('op', [
+        closed({ op: z.literal('declare'), data: declareTool().inputSchema.omit({ page: true, expectedRevision: true }) }),
+        closed({ op: z.literal('update'), data: updateTool().inputSchema.omit({ page: true, expectedRevision: true }) }),
+        closed({ op: z.literal('remove'), data: removeTool().inputSchema.omit({ page: true, expectedRevision: true, pages: true, deletePage: true, references: true }) }),
+      ])).min(1).max(100),
+    }),
+  };
 }
 
 export function viewTool() {

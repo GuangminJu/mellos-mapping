@@ -52,6 +52,8 @@ import {
   makeSubmapRef,
   ok,
 } from '../domain/types.js';
+import { applyBatch } from './mutations.js';
+import type { SourceRef, MapContext } from '../domain/context.js';
 
 /**
  * A node may not dive into the page it lives on. Pages are the one structure
@@ -69,6 +71,7 @@ function refuseSelfDive(where: string, submap: string, page: string | undefined)
 // The `| undefined` on every optional field keeps these assignable from
 // zod-inferred tool inputs under exactOptionalPropertyTypes.
 export interface DeclareInput {
+  readonly context?: MapContext | undefined;
   /** The page this batch targets (undefined = the default page); see refuseSelfDive. */
   readonly page?: string | undefined;
   /** Text sets the title; null removes it (the map keeps everything else). */
@@ -92,6 +95,7 @@ export interface DeclareInput {
         readonly kind?: string | undefined;
         readonly lane?: string | undefined;
         readonly submap?: string | undefined;
+        readonly sources?: readonly SourceRef[] | undefined;
       }>
     | undefined;
   readonly edges?:
@@ -106,6 +110,11 @@ export interface DeclareInput {
  * had happened.
  */
 export interface UpdateInput {
+  readonly title?: string | null | undefined;
+  readonly kind?: string | undefined;
+  readonly context?: MapContext | null | undefined;
+  readonly laneOrder?: readonly string[] | undefined;
+  readonly edges?: ReadonlyArray<{ from: string; to: string; label?: string | null | undefined; newFrom?: string | undefined; newTo?: string | undefined }> | undefined;
   /** The page this batch targets (undefined = the default page); see refuseSelfDive. */
   readonly page?: string | undefined;
   readonly updates?:
@@ -127,6 +136,7 @@ export interface UpdateInput {
         readonly lane?: string | null | undefined;
         /** A page slug links a child map; null unlinks it. */
         readonly submap?: string | null | undefined;
+        readonly sources?: readonly SourceRef[] | null | undefined;
       }>
     | undefined;
   /** Bands to rename and/or re-rank; an item must carry a name, a rank, or both. */
@@ -137,7 +147,7 @@ export interface UpdateInput {
         readonly rank?: number | undefined;
       }>
     | undefined;
-  readonly groups?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
+  readonly groups?: ReadonlyArray<{ readonly id: string; readonly label?: string | undefined; readonly layer?: string | undefined }> | undefined;
   readonly lanes?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
 }
 
@@ -151,6 +161,7 @@ export interface RemoveInput {
 
 /** Grow the map: title, kind, bands, lanes, groups, nodes, edges — in that order. */
 export function applyDeclare(map: MellosMap, input: DeclareInput): Result<MellosMap, string> {
+  if (input.context !== undefined || input.nodes?.some(n => n.sources !== undefined)) return applyBatch(map, [{ op: 'declare', data: input }], input.page);
   let next = input.title !== undefined ? setTitle(map, input.title) : map;
   if (input.kind !== undefined) {
     const kind = makeMapKind(input.kind);
@@ -269,6 +280,7 @@ export function applyDeclare(map: MellosMap, input: DeclareInput): Result<Mellos
  * @returns the fully revised map, or the first refusal with its item index.
  */
 export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMap, string> {
+  if (input.title !== undefined || input.kind !== undefined || input.context !== undefined || input.edges !== undefined || input.laneOrder !== undefined || input.groups?.some(g => g.layer !== undefined) || input.updates?.some(n => n.sources !== undefined)) return applyBatch(map, [{ op: 'update', data: input }], input.page);
   let next = map;
   const items =
     (input.updates?.length ?? 0) + (input.layers?.length ?? 0) + (input.groups?.length ?? 0) + (input.lanes?.length ?? 0);
@@ -297,6 +309,7 @@ export function applyUpdate(map: MellosMap, input: UpdateInput): Result<MellosMa
   for (const [i, g] of (input.groups ?? []).entries()) {
     const id = makeGroupId(g.id);
     if (!id.ok) return err(`groups[${i}]: ${describeMapError(id.error)}`);
+    if (g.label === undefined) return err(`groups[${i}]: nothing to change; give a label or layer`);
     const updated = updateGroup(next, id.value, g.label);
     if (!updated.ok) return err(`groups[${i}]: ${describeMapError(updated.error)}`);
     next = updated.value;
