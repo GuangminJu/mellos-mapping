@@ -83,12 +83,18 @@ Maintainer-only, and deliberately not automated end to end:
 node scripts/release.mjs <semver>
 ```
 
-That bumps the version in the six places it lives — both plugin manifests,
-`package.json`, `server.json` (twice), and the server banner — resyncs the
-lockfile against the public registry, then runs the full verify. Commit,
-merge, tag, `npm publish` and the MCP-registry workflow stay manual on
-purpose; the comment at the top of the script explains why publishing cannot
-move into CI as things stand.
+That synchronizes both plugin manifests, the Claude marketplace entry,
+`package.json`, both version fields in `server.json`, and the server banner.
+It also updates the two root version fields in `package-lock.json`, preserving
+the resolved dependency graph and optional platform packages, then runs the
+full verify. It does not re-resolve dependencies against a registry.
+
+Commit, merge, tag, npm publishing and the MCP Registry workflow remain
+separate maintainer steps. Follow the [release guide](docs/releasing.md) to
+verify the exact npm version can be installed from the official registry
+before publishing its MCP Registry entry. The current local npm publishing
+flow does not attach provenance; adding provenance would require moving that
+publish step to a supported CI environment with an OIDC identity.
 
 ## Reporting bugs
 
