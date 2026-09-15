@@ -2896,6 +2896,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         lastHits = [];
       } else {
         const windowed = rendered.value;
+        if (map.nodes.length > 0) io.onMapRendered?.();
         const maxX = Math.max(0, windowed.contentWidth - viewW);
         const maxY = Math.max(0, windowed.contentHeight - viewH);
         if (view.offsetX > maxX || view.offsetY > maxY || view.offsetX < 0 || view.offsetY < 0) {
