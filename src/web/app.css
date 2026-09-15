@@ -724,7 +724,8 @@ h2 {
   margin-left: 20px;
 }
 footer {
-  height: 29px;
+  min-height: 29px;
+  flex-wrap: wrap;
   flex-shrink: 0;
   border-top: 1px solid var(--line);
   display: flex;
@@ -919,7 +920,7 @@ dialog p {
   #app {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-rows: 58px auto auto minmax(0, 1fr) 29px;
+    grid-template-rows: 58px auto auto minmax(0, 1fr) auto;
   }
   header {
     grid-column: 1 / -1;

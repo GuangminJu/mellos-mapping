@@ -2,9 +2,11 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { homedir } from 'node:os';
 import { STATE_FILE_RELATIVE_PATH, writeFileAtomic, describeStoreError } from '../store/store.js';
 import { openWebPreview, runningWebUrl, webRuntimeFile } from './launcher.js';
 import { startWebService } from './service.js';
+import { createStarReminder } from '../support/star-reminder.js';
 
 export async function runWeb(args: readonly string[]): Promise<void> {
   const entry = fileURLToPath(import.meta.url);
@@ -21,7 +23,7 @@ export async function runWeb(args: readonly string[]): Promise<void> {
     service = await startWebService(file, {
       html: readFileSync(join(assets, 'index.html'), 'utf8'), javascript: readFileSync(join(assets, 'app.js'), 'utf8'), css: readFileSync(join(assets, 'app.css'), 'utf8'),
       terminal: { html: readFileSync(join(assets, 'terminal.html'), 'utf8'), javascript: readFileSync(join(assets, 'terminal.js'), 'utf8'), css: readFileSync(join(assets, 'terminal.css'), 'utf8'), xtermCss: readFileSync(join(assets, 'xterm.css'), 'utf8') },
-    }, { terminalWorker: join(dirname(entry), 'terminal-worker.mjs'), onClose: () => {
+    }, { starReminder: createStarReminder({ entry, userBase: homedir(), env: process.env }), terminalWorker: join(dirname(entry), 'terminal-worker.mjs'), onClose: () => {
       try { if (JSON.parse(readFileSync(webRuntimeFile(file), 'utf8')).token === service.token) rmSync(webRuntimeFile(file)); } catch { /* Already removed. */ }
     } });
     const saved = writeFileAtomic(webRuntimeFile(file), JSON.stringify({ port: service.port, token: service.token, pid: process.pid }));

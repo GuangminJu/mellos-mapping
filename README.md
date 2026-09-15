@@ -661,6 +661,26 @@ by a test, so a graphical client (a web panel, an editor view) can parse state
 files and reuse the exact aggregation, zoom and glyph semantics the terminal
 pane draws with.
 
+## Optional GitHub Star reminder
+
+npm/npx installations may show one small, dismissible reminder after at least
+7 days and successful map viewing on 3 different UTC dates. Web viewers show
+it inline without taking focus; a native interactive terminal shows it only
+after a successful viewing session exits. It is never added to MCP replies,
+AI prompts, install logs, CI or piped output. Plugin editions and source
+checkouts are excluded.
+
+The reminder is claimed once per user, across projects, versions and installs.
+The Star button opens GitHub in the system's default browser, keeping its
+existing sign-in session. A failed launch leaves the notice open with a copy-address option.
+Closing it, following its Star link, or simply leaving the session means it
+will not appear again. To suppress it before it appears, set
+`MELLOS_MAPPING_NO_STAR=1` in the environment of the viewer/MCP process.
+Only the first-use time, last UTC day, a capped day count and the one-time flag
+are stored in `~/.mellos/support/star-reminder.json`; nothing is uploaded and
+GitHub is contacted only when the user follows the link. Unreadable settings
+or a busy store silently skip the reminder.
+
 ## License
 
 MIT

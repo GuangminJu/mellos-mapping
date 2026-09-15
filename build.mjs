@@ -65,6 +65,12 @@ await build({ absWorkingDir: root, bundle: true, platform: 'browser', format: 'e
 await copyFile(join(root, 'node_modules/@xterm/xterm/css/xterm.css'), join(root, 'dist/web/xterm.css'));
 await writeFile(join(root, 'dist/web/TERMINAL-LICENSES.txt'), (await Promise.all(['@xterm/xterm', '@xterm/addon-fit', 'ws'].map(async name => name + '\n\n' + await readFile(join(root, 'node_modules', name, 'LICENSE'), 'utf8')))).join('\n\n'));
 for (const name of ['index.html', 'app.css', 'terminal.html', 'terminal.css']) await copyFile(join(root, 'src/web', name), join(root, 'dist/web', name));
+// Both browser surfaces share the same support notice without another request.
+const starStyles = await readFile(join(root, 'src/web/star-reminder.css'), 'utf8');
+for (const name of ['app.css', 'terminal.css']) {
+  const target = join(root, 'dist/web', name);
+  await writeFile(target, (await readFile(target, 'utf8')) + '\n' + starStyles);
+}
 
 /**
  * The human's `mmap` toggle, as one file.

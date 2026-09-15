@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.24.0
+
+- Added an optional, one-time GitHub Star reminder for npm/npx installations
+  after seven days and use on three distinct UTC dates. Local user-wide state
+  prevents repeat prompts across projects, installations and versions; no telemetry.
+- Show a colorful inline card in graph and web-terminal views without taking
+  focus. Motion stops after 12 seconds, pauses on hover/focus and respects reduced
+  motion. Native terminals show the reminder only after a successful map session.
+- Open the Star link in the system default browser to reuse its GitHub sign-in.
+  Failed launches keep the reminder visible with retry and copy-address options.
+- Keep MCP responses, piped output, CI and plugin-clone installations silent.
+  Set `MELLOS_MAPPING_NO_STAR=1` to disable reminders before they appear.
+- Recognize the native executable in newer Windows npm installations of Claude
+  Code while retaining compatibility with the previous JavaScript entry point.
+
 ## 0.23.0
 
 - Added structured page/resource reads with stable IDs, filters, field projection,

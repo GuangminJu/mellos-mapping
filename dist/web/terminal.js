@@ -9137,6 +9137,82 @@ var o = class {
   }
 };
 
+// src/web/star-reminder.ts
+function createStarNotice(base2) {
+  let attempted = false;
+  const notice = document.getElementById("star-reminder");
+  const link = notice.querySelector("a");
+  let opening = false;
+  link.title = "\u5728\u7CFB\u7EDF\u9ED8\u8BA4\u6D4F\u89C8\u5668\u4E2D\u6253\u5F00 GitHub";
+  const dismiss = () => {
+    notice.hidden = true;
+  };
+  notice.querySelector("button").addEventListener("click", dismiss);
+  const launch = async (event) => {
+    event.preventDefault();
+    if (opening) return;
+    opening = true;
+    link.setAttribute("aria-disabled", "true");
+    link.textContent = "\u6B63\u5728\u6253\u5F00\u2026";
+    notice.querySelector(".star-open-error")?.remove();
+    try {
+      const response = await fetch(new URL("api/star-reminder/open", base2), { method: "POST", signal: AbortSignal.timeout(8e3) });
+      const result = await response.json();
+      if (!response.ok || result.opened !== true) throw new Error("Not opened");
+      dismiss();
+    } catch {
+      const error = document.createElement("div");
+      error.className = "star-open-error";
+      error.setAttribute("role", "status");
+      const message = document.createElement("span");
+      message.textContent = "\u9ED8\u8BA4\u6D4F\u89C8\u5668\u672A\u80FD\u6253\u5F00\uFF0C\u53EF\u91CD\u8BD5\u6216\u590D\u5236\u5730\u5740\u3002";
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.textContent = "\u590D\u5236 GitHub \u5730\u5740";
+      copy.addEventListener("click", () => {
+        void (async () => {
+          try {
+            await navigator.clipboard.writeText(link.href);
+            copy.textContent = "\u5DF2\u590D\u5236";
+          } catch {
+            const address = document.createElement("input");
+            address.readOnly = true;
+            address.value = link.href;
+            address.setAttribute("aria-label", "GitHub \u5730\u5740");
+            copy.replaceWith(address);
+            address.focus();
+            address.select();
+          }
+        })();
+      });
+      error.append(message, copy);
+      notice.append(error);
+    } finally {
+      opening = false;
+      link.removeAttribute("aria-disabled");
+      link.textContent = "\u53BB\u70B9 Star \u2197";
+    }
+  };
+  link.addEventListener("click", (event) => {
+    void launch(event);
+  });
+  link.addEventListener("auxclick", (event) => {
+    if (event.button === 1) void launch(event);
+  });
+  return (page2) => {
+    if (attempted || document.visibilityState !== "visible") return;
+    attempted = true;
+    const url = new URL("api/star-reminder/visit", base2);
+    if (page2) url.searchParams.set("page", page2);
+    void fetch(url, { method: "POST", signal: AbortSignal.timeout(3e3) }).then(async (response) => {
+      if (!response.ok) return;
+      const result = await response.json();
+      if (result.show === true && document.visibilityState === "visible") notice.hidden = false;
+    }).catch(() => {
+    });
+  };
+}
+
 // src/web/terminal-app.ts
 var element = (id) => document.getElementById(id);
 var container = element("terminal");
@@ -9145,6 +9221,7 @@ var restart = element("restart");
 var font = element("font-size");
 var graphic = element("graphic");
 var base = new URL(".", location.href);
+var starNotice = createStarNotice(base);
 var page = new URL(location.href).searchParams.get("page") ?? void 0;
 var socket;
 var retryTimer;
@@ -9264,6 +9341,7 @@ function connect() {
     } else if (message.type === "view") {
       page = message.page;
       syncPage();
+      starNotice(page);
     } else if (message.type === "error") setStatus(message.message, "error");
   });
   connection.addEventListener("close", (event) => {

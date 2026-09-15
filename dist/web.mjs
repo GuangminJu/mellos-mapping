@@ -3703,9 +3703,10 @@ var require_websocket_server = __commonJS({
 });
 
 // src/web/cli.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync5, realpathSync as realpathSync2, rmSync as rmSync4, statSync as statSync2 } from "node:fs";
-import { dirname as dirname8, join as join6, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync6, realpathSync as realpathSync3, rmSync as rmSync4, statSync as statSync2 } from "node:fs";
+import { dirname as dirname9, join as join7, resolve as resolve2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { homedir } from "node:os";
 
 // src/domain/types.ts
 var ok = (value) => ({ ok: true, value });
@@ -5435,12 +5436,117 @@ function attachTerminalService(server, options) {
   };
 }
 
+// src/support/open-star.ts
+import { spawn as spawn3 } from "node:child_process";
+import { win32 } from "node:path";
+
+// src/support/star-reminder.ts
+import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync2 } from "node:fs";
+import { basename as basename3, dirname as dirname8, join as join6 } from "node:path";
+var STAR_URL = "https://github.com/GuangminJu/mellos-mapping";
+var DAY_MS = 864e5;
+function isNpmInstallation(entry) {
+  try {
+    const root = dirname8(dirname8(realpathSync2(entry)));
+    if (basename3(dirname8(root)).toLowerCase() !== "node_modules" || existsSync4(join6(root, ".git")) || existsSync4(join6(root, ".codex-plugin")) || existsSync4(join6(root, ".claude-plugin"))) return false;
+    const pkg = JSON.parse(readFileSync5(join6(root, "package.json"), "utf8"));
+    return pkg.name === "mellos-mapping" && pkg.bin?.mmap === "dist/mmap.mjs";
+  } catch {
+    return false;
+  }
+}
+function starReminderFile(userBase) {
+  return join6(userBase, ".mellos", "support", "star-reminder.json");
+}
+function enabledFlag(value) {
+  return !!value && value !== "0" && value.toLowerCase() !== "false";
+}
+function validState(value) {
+  if (!value || typeof value !== "object") return false;
+  const s = value;
+  return s.version === 1 && Number.isFinite(s.firstSeen) && s.firstSeen >= 0 && Number.isSafeInteger(s.lastDay) && s.lastDay >= Math.floor(s.firstSeen / DAY_MS) && Number.isSafeInteger(s.days) && s.days >= 1 && s.days <= 3 && typeof s.notified === "boolean";
+}
+function createStarReminder(options) {
+  const eligible = isNpmInstallation(options.entry) && !enabledFlag(options.env["CI"]) && !enabledFlag(options.env["MELLOS_MAPPING_NO_STAR"]);
+  const file = starReminderFile(options.userBase);
+  return {
+    visit() {
+      if (!eligible) return false;
+      try {
+        return withStoreLock(file, () => {
+          const now = (options.now ?? Date.now)();
+          if (!Number.isFinite(now) || now < 0) return false;
+          const day = Math.floor(now / DAY_MS);
+          let state;
+          try {
+            const saved2 = JSON.parse(readFileSync5(file, "utf8"));
+            if (!validState(saved2)) return false;
+            state = saved2;
+          } catch (error) {
+            if (error.code !== "ENOENT") return false;
+            state = { version: 1, firstSeen: now, lastDay: day, days: 1, notified: false };
+          }
+          if (state.notified || now < state.firstSeen || day < state.lastDay) return false;
+          if (day > state.lastDay) {
+            state.days = Math.min(3, state.days + 1);
+            state.lastDay = day;
+          }
+          const show = state.days >= 3 && now - state.firstSeen >= 7 * DAY_MS;
+          if (show) state.notified = true;
+          const saved = writeAtomic(file, JSON.stringify(state, null, 2) + "\n", 1);
+          return saved.ok && show;
+        });
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+
+// src/support/open-star.ts
+function starBrowserCommand(platform, windowsRoot = "C:\\Windows") {
+  if (platform === "win32") return {
+    file: win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-Command",
+      `$ErrorActionPreference = 'Stop'; Start-Process -FilePath '${STAR_URL}'`
+    ]
+  };
+  if (platform === "darwin") return { file: "/usr/bin/open", args: [STAR_URL] };
+  if (platform === "linux") return { file: "xdg-open", args: [STAR_URL] };
+  throw new Error("No supported desktop browser launcher");
+}
+function openStarInDefaultBrowser() {
+  const command = starBrowserCommand(process.platform, process.env["SystemRoot"]);
+  return new Promise((resolve3, reject) => {
+    const child = spawn3(command.file, command.args, { windowsHide: true, stdio: "ignore" });
+    let finished = false;
+    const finish = (error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      child.unref();
+      if (error) reject(error);
+      else resolve3();
+    };
+    const deadline = setTimeout(() => finish(), 5e3);
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code) => finish(code === 0 ? void 0 : new Error("Default browser launch failed")));
+  });
+}
+
 // src/web/service.ts
 async function startWebService(defaultFile, assets, options = {}) {
   const token = options.token ?? randomBytes(24).toString("hex");
   if (!/^[a-f0-9]{48}$/.test(token)) throw new Error("Invalid web token");
   const prefix = `/${token}/`;
   let origin = "", lastRequest = Date.now(), closed = false;
+  let openingStar = false;
   const send = (res, code, body, type = "application/json; charset=utf-8") => {
     res.writeHead(code, {
       "Content-Type": type,
@@ -5490,6 +5596,36 @@ async function startWebService(defaultFile, assets, options = {}) {
       }
       if (req.method === "GET" && route === "api/health") {
         send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, formats: [1, 2], surfaces: terminalService ? ["web", "web-terminal"] : ["web"] }));
+        return;
+      }
+      if (req.method === "POST" && route === "api/star-reminder/open") {
+        if (req.headers.origin !== origin) {
+          send(res, 403, '{"error":"Origin refused"}');
+          return;
+        }
+        if (req.url !== `${prefix}api/star-reminder/open` || req.headers["transfer-encoding"] || Number(req.headers["content-length"] ?? 0) !== 0) {
+          send(res, 400, '{"error":"No parameters accepted"}');
+          return;
+        }
+        if (openingStar) {
+          send(res, 409, '{"error":"Browser is already opening"}');
+          return;
+        }
+        openingStar = true;
+        void Promise.resolve().then(options.openStar ?? openStarInDefaultBrowser).then(() => {
+          send(res, 200, '{"opened":true}');
+        }, () => {
+          send(res, 503, '{"error":"\u65E0\u6CD5\u6253\u5F00\u9ED8\u8BA4\u6D4F\u89C8\u5668"}');
+        }).finally(() => {
+          openingStar = false;
+        });
+        return;
+      }
+      if (req.method === "POST" && route === "api/star-reminder/visit") {
+        const requested = new URL(req.url, origin).searchParams.get("page");
+        const id = !requested || requested === "_default" ? "" : requested;
+        const hasMap = options.starReminder && readWebSnapshot(defaultFile).value.pages.some((page) => page.id === id && !page.error && (page.map?.nodes.length ?? 0) > 0);
+        send(res, 200, JSON.stringify({ show: !!hasMap && options.starReminder.visit() }));
         return;
       }
       if (req.method === "GET" && route === "api/state") {
@@ -5582,19 +5718,19 @@ async function runWeb(args) {
   if (args[0] === "--serve" && args.length === 2) {
     const file2 = resolve2(args[1]);
     if (await runningWebUrl(file2)) return;
-    const directory = dirname8(webRuntimeFile(file2));
+    const directory = dirname9(webRuntimeFile(file2));
     mkdirSync4(directory, { recursive: true });
-    if (realpathSync2(directory).toLowerCase() !== join6(realpathSync2(dirname8(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
-    const assets = join6(dirname8(entry), "web");
+    if (realpathSync3(directory).toLowerCase() !== join7(realpathSync3(dirname9(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
+    const assets = join7(dirname9(entry), "web");
     let service;
     service = await startWebService(file2, {
-      html: readFileSync5(join6(assets, "index.html"), "utf8"),
-      javascript: readFileSync5(join6(assets, "app.js"), "utf8"),
-      css: readFileSync5(join6(assets, "app.css"), "utf8"),
-      terminal: { html: readFileSync5(join6(assets, "terminal.html"), "utf8"), javascript: readFileSync5(join6(assets, "terminal.js"), "utf8"), css: readFileSync5(join6(assets, "terminal.css"), "utf8"), xtermCss: readFileSync5(join6(assets, "xterm.css"), "utf8") }
-    }, { terminalWorker: join6(dirname8(entry), "terminal-worker.mjs"), onClose: () => {
+      html: readFileSync6(join7(assets, "index.html"), "utf8"),
+      javascript: readFileSync6(join7(assets, "app.js"), "utf8"),
+      css: readFileSync6(join7(assets, "app.css"), "utf8"),
+      terminal: { html: readFileSync6(join7(assets, "terminal.html"), "utf8"), javascript: readFileSync6(join7(assets, "terminal.js"), "utf8"), css: readFileSync6(join7(assets, "terminal.css"), "utf8"), xtermCss: readFileSync6(join7(assets, "xterm.css"), "utf8") }
+    }, { starReminder: createStarReminder({ entry, userBase: homedir(), env: process.env }), terminalWorker: join7(dirname9(entry), "terminal-worker.mjs"), onClose: () => {
       try {
-        if (JSON.parse(readFileSync5(webRuntimeFile(file2), "utf8")).token === service.token) rmSync4(webRuntimeFile(file2));
+        if (JSON.parse(readFileSync6(webRuntimeFile(file2), "utf8")).token === service.token) rmSync4(webRuntimeFile(file2));
       } catch {
       }
     } });
@@ -5625,8 +5761,8 @@ async function runWeb(args) {
     else throw new Error(usage);
   }
   const project = resolve2(args[0]);
-  if (!existsSync4(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
-  const file = join6(project, STATE_FILE_RELATIVE_PATH);
+  if (!existsSync5(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
+  const file = join7(project, STATE_FILE_RELATIVE_PATH);
   if (stop) {
     const url = await runningWebUrl(file);
     if (url) await fetch(`${url}api/stop`, { method: "POST", signal: AbortSignal.timeout(2e3) });
@@ -5635,7 +5771,7 @@ async function runWeb(args) {
   }
   console.log(JSON.stringify({ surface: terminal ? "web-terminal" : "web", url: await openWebPreview(file, entry, page, terminal), visibility: "unconfirmed" }));
 }
-if (process.argv[1] && existsSync4(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync2(process.argv[1])).href) {
+if (process.argv[1] && existsSync5(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync3(process.argv[1])).href) {
   runWeb(process.argv.slice(2)).catch((error) => {
     console.error(String(error));
     process.exitCode = 1;

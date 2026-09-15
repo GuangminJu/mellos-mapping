@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "context": {
+    "next": "开发与本地验收完成；发布状态以 GitHub Release、npm 和 MCP Registry 为准。"
+  },
+  "title": "npm 用户的低干扰 Star 提醒",
+  "layers": [
+    {
+      "id": "policy",
+      "name": "资格与频率",
+      "rank": 0
+    },
+    {
+      "id": "surfaces",
+      "name": "显示与验收",
+      "rank": 1
+    }
+  ],
+  "nodes": [
+    {
+      "id": "local-policy",
+      "label": "本地资格与一次性记录",
+      "layer": "policy",
+      "status": "done",
+      "evidence": "22 项定向测试通过：资格、7 天/3 日门槛、跨实例去重、静默退出与 HTTP 入口检查。",
+      "detail": "用户本地一次性记录；环境变量可提前关闭；忙锁、坏文件与非 npm 安装均跳过。"
+    },
+    {
+      "id": "viewer-notice",
+      "label": "网页和终端轻提示",
+      "layer": "surfaces",
+      "status": "done",
+      "evidence": "Windows 实机从 npm 安装预览点击 Star：系统默认 Edge 打开仓库并沿用登录状态，Codex 无新增标签；失败夹具保留提醒并显示复制地址。彩色律动最多 12 秒，悬停/聚焦暂停并支持减少动态效果。",
+      "detail": "用户点击 Star 后交由系统默认浏览器打开；失败保留提醒并提供复制地址；固定目的地址、同源 POST 与并发点击保护。"
+    },
+    {
+      "id": "verification",
+      "label": "安装隔离与行为验收",
+      "layer": "surfaces",
+      "status": "done",
+      "evidence": "0.24.0 npm run verify：663 passed + 1 platform skip。Windows npm 浏览器跳转与失败反馈实测通过。Claude/Codex 从真实 0.23.0 升级、回退、重复安装、移除克隆后运行与 MCP 握手通过；实际 Codex App 引擎在隔离配置中识别 0.24.0 技能。"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer-notice",
+      "to": "local-policy"
+    },
+    {
+      "from": "verification",
+      "to": "local-policy"
+    }
+  ]
+}
