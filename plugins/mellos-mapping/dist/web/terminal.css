@@ -7,3 +7,106 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;pa
 footer{min-height:32px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:5px 14px;border-top:1px solid #283343;color:#8c9eb5;font-size:11px}#connection{overflow-wrap:anywhere}#connection[data-state="connected"]{color:#81dbae}#connection[data-state="error"]{color:#ffaf87}.hint{margin-left:auto}[hidden]{display:none!important}
 @media(max-width:440px){.brand span{margin-left:6px}.hint{margin-left:0;width:100%}header{padding:0 10px}#terminal .xterm{padding-left:4px;padding-right:4px}}
 dialog{max-width:min(420px,90vw);border:1px solid #3b4b60;border-radius:10px;background:#151c25;color:#d9e2ed;padding:24px}dialog::backdrop{background:#0009}dialog h2{font-size:18px;margin-top:0}dialog p{line-height:1.9;font-size:13px}dialog form{text-align:right}
+
+#star-reminder {
+  --star-surface: linear-gradient(115deg, #15302e, #202341 48%, #36243b);
+  --star-text: #f2f5ff;
+  --star-muted: #c9d2e5;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 4px 0 8px;
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--star-surface) padding-box,
+    linear-gradient(110deg, #69ebc9, #8299ff, #d897ff, #ffc17d, #69ebc9) border-box;
+  background-size: 200% 100%;
+  color: var(--star-text);
+  font-size: 14px;
+  line-height: 1.5;
+  animation: star-color-flow 6s ease-in-out 2, star-glow 3s ease-in-out 4;
+}
+#star-reminder::before {
+  content: "★";
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 36px;
+  border: 1px solid #ffe49950;
+  border-radius: 10px;
+  background: #f9c76916;
+  color: #ffe49b;
+  font-size: 26px;
+  line-height: 1;
+  text-shadow: 0 0 14px #ffd47870;
+  animation: star-beat 3s ease-in-out 4;
+}
+#star-reminder > span { flex: 1 1 230px; font-weight: 550; }
+#star-reminder a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 7px 16px;
+  border: 1px solid #ffffff50;
+  border-radius: 8px;
+  background: linear-gradient(110deg, #8bf0d0, #babaff 55%, #ffd0aa);
+  color: #17243a;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 12px #8b96ff25;
+}
+#star-reminder a:hover { filter: brightness(1.1); }
+#star-reminder a[aria-disabled=true] { cursor: progress; opacity: .8; }
+#star-reminder .star-open-error { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--star-muted); }
+#star-reminder .star-open-error input { min-width: 0; max-width: 100%; width: 340px; padding: 6px; color: var(--star-text); background: transparent; border: 1px solid #b8c5e470; border-radius: 6px; }
+#star-reminder button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #b8c5e42e;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--star-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+#star-reminder button:hover { background: #a0b5f014; border-color: #b8c5e470; }
+#star-reminder a:focus-visible, #star-reminder button:focus-visible {
+  outline: 2px solid #b0b9ff;
+  outline-offset: 3px;
+}
+#star-reminder:hover, #star-reminder:focus-within,
+#star-reminder:hover::before, #star-reminder:focus-within::before { animation-play-state: paused; }
+[data-theme=light] #star-reminder {
+  --star-surface: linear-gradient(115deg, #e4fbf5, #eeedff 48%, #fff0e5);
+  --star-text: #263451;
+  --star-muted: #53607b;
+}
+[data-theme=light] #star-reminder::before { color: #a5660c; background: #ffe6aa80; border-color: #dbae6340; text-shadow: none; }
+@keyframes star-color-flow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+@keyframes star-glow {
+  0%, 100% { box-shadow: 0 0 0 #8299ff00; }
+  50% { box-shadow: 0 0 16px #8299ff30, inset 0 0 18px #b897ff0c; }
+}
+@keyframes star-beat {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  50% { transform: scale(1.1) rotate(-7deg); }
+}
+@media (max-width: 520px) {
+  #star-reminder { padding: 12px; gap: 10px; }
+  #star-reminder > span { flex-basis: calc(100% - 50px); font-size: 13px; }
+  #star-reminder a { margin-left: 46px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #star-reminder, #star-reminder::before { animation: none; }
+}
