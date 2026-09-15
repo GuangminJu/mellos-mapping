@@ -9,12 +9,14 @@ import { layoutWebScene, type WebScene } from './scene.js';
 import { renderInspector, renderStage, stateOf } from './view.js';
 import { fitViewport, svgViewBox, type Viewport } from './viewport.js';
 import { showsOverview, zoomScene } from './zoom.js';
+import { createStarNotice } from './star-reminder.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const viewport = element('viewport'), stage = element('stage'), inspector = element('inspector');
 const pages = element<HTMLSelectElement>('pages'), search = element<HTMLInputElement>('search');
 const dialog = element<HTMLDialogElement>('dialog');
 const base = new URL('.', window.location.href);
+const starNotice = createStarNotice(base);
 const kinds: Record<string, string> = { dev: '开发地图', architecture: '架构地图', dataflow: '数据流', 'behavior-tree': '行为树', sequence: '时序地图' };
 interface PageView { viewport: Viewport; selected: string | undefined; overview: boolean; fitted: boolean }
 let snapshot: WebSnapshot = { project: '', pages: [] }, revision = '', etag = '';
@@ -290,6 +292,7 @@ async function poll(): Promise<void> {
         }
         // No data change on this page: preserve DOM focus, hover and selection.
         if (initial || JSON.stringify(priorPage) !== JSON.stringify(current())) render(); else renderHeading();
+        if ((current()?.map?.nodes.length ?? 0) > 0 && !current()?.error) starNotice(currentId);
         element('updated').textContent = `已同步 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
       }
     }

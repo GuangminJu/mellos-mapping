@@ -3,11 +3,13 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import type { TerminalInput, TerminalOutput } from './terminal-protocol.js';
+import { createStarNotice } from './star-reminder.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const container = element('terminal'), status = element('connection'), restart = element<HTMLButtonElement>('restart');
 const font = element<HTMLSelectElement>('font-size'), graphic = element<HTMLAnchorElement>('graphic');
 const base = new URL('.', location.href);
+const starNotice = createStarNotice(base);
 let page = new URL(location.href).searchParams.get('page') ?? undefined;
 let socket: WebSocket | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined, retries = 0, disposed = false;
 try { const saved = localStorage.getItem('mellos-terminal-font'); if (Array.from(font.options).some(o => o.value === saved)) font.value = saved!; } catch { /* Storage may be disabled. */ }
@@ -75,7 +77,7 @@ function connect(): void {
     if (message.type === 'data') {
       retries = 0;
       terminal.write(message.data, () => { if (connection.readyState === WebSocket.OPEN) connection.send('{"type":"ack"}'); });
-    } else if (message.type === 'view') { page = message.page; syncPage(); }
+    } else if (message.type === 'view') { page = message.page; syncPage(); starNotice(page); }
     else if (message.type === 'error') setStatus(message.message, 'error');
   });
   connection.addEventListener('close', event => {

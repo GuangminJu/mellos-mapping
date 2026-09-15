@@ -18,6 +18,7 @@ export interface WatcherIO {
     on(event: 'resize', listener: () => void): unknown;
   };
   readonly report?: (view: ViewerReport) => void;
+  readonly onMapRendered?: () => void;
 }
 
 export const nativeWatcherIO = (): WatcherIO => ({

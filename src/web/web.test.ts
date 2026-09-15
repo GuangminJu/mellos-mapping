@@ -112,6 +112,57 @@ describe('web layout and presentation', () => {
   });
 });
 describe('project source and local web service', () => {
+  it('opens GitHub only on an empty same-origin POST, with no caller-supplied destination', async () => {
+    const { file } = project(); let opens = 0;
+    const service = await startWebService(file, assets, { openStar: async () => { opens++; } }); services.push(service);
+    const endpoint = `${service.url}api/star-reminder/open`, origin = new URL(service.url).origin;
+    expect((await fetch(endpoint)).status).toBe(404);
+    expect((await fetch(endpoint, { method: 'POST' })).status).toBe(403);
+    expect((await fetch(endpoint, { method: 'POST', headers: { Origin: 'https://example.org' } })).status).toBe(403);
+    expect((await fetch(`${endpoint}?url=https://example.org`, { method: 'POST', headers: { Origin: origin } })).status).toBe(400);
+    expect((await fetch(endpoint, { method: 'POST', headers: { Origin: origin }, body: '{"url":"file:///private"}' })).status).toBe(400);
+    expect(opens).toBe(0);
+    expect(await (await fetch(endpoint, { method: 'POST', headers: { Origin: origin } })).json()).toEqual({ opened: true });
+    expect(opens).toBe(1);
+  });
+  it('coalesces an in-flight launch and permits a retry after failure', async () => {
+    const { file } = project(); let rejectLaunch!: (error: Error) => void, signalStarted!: () => void;
+    const started = new Promise<void>(resolve => { signalStarted = resolve; });
+    let calls = 0;
+    const service = await startWebService(file, assets, { openStar: () => {
+      calls++; if (calls > 1) return Promise.resolve();
+      return new Promise<void>((_resolve, reject) => { rejectLaunch = reject; signalStarted(); });
+    } }); services.push(service);
+    const endpoint = `${service.url}api/star-reminder/open`, options = { method: 'POST', headers: { Origin: new URL(service.url).origin } };
+    const pending = fetch(endpoint, options); await started;
+    expect((await fetch(endpoint, options)).status).toBe(409); expect(calls).toBe(1);
+    rejectLaunch(new Error('No desktop handler'));
+    expect((await pending).status).toBe(503);
+    expect(await (await fetch(endpoint, options)).json()).toEqual({ opened: true }); expect(calls).toBe(2);
+  });
+  it('only records an explicit successful view, never a health/state fetch, empty page or foreign request', async () => {
+    const { file, root } = project(); let visits = 0;
+    const service = await startWebService(file, assets, { starReminder: { visit: () => { visits++; return visits === 1; } } }); services.push(service);
+    await fetch(`${service.url}api/health`); await fetch(`${service.url}api/state`);
+    expect((await fetch(`${service.url}api/star-reminder/visit`)).status).toBe(404);
+    expect(await (await fetch(`${service.url}api/star-reminder/visit`, { method: 'POST' })).json()).toEqual({ show: false });
+    saveMapFile(join(root, '.mellos', 'pages', 'existing.json'), map());
+    expect((await fetch(`${service.url}api/star-reminder/visit?page=existing`, { method: 'POST', headers: { Origin: 'https://example.org' } })).status).toBe(403);
+    expect(await (await fetch(`${service.url}api/star-reminder/visit?page=missing`, { method: 'POST' })).json()).toEqual({ show: false });
+    expect(visits).toBe(0);
+    expect(await (await fetch(`${service.url}api/star-reminder/visit?page=existing`, { method: 'POST' })).json()).toEqual({ show: true });
+    expect(await (await fetch(`${service.url}api/star-reminder/visit?page=existing`, { method: 'POST' })).json()).toEqual({ show: false });
+    const plugin = await startWebService(file, assets); services.push(plugin);
+    expect(await (await fetch(`${plugin.url}api/star-reminder/visit?page=existing`, { method: 'POST' })).json()).toEqual({ show: false });
+  });
+  it('counts the default web page as well as named pages', async () => {
+    const { file } = project(); saveMapFile(file, map()); let visits = 0;
+    const service = await startWebService(file, assets, { starReminder: { visit: () => { visits++; return true; } } }); services.push(service);
+    for (const suffix of ['', '?page=', '?page=_default']) {
+      expect(await (await fetch(`${service.url}api/star-reminder/visit${suffix}`, { method: 'POST' })).json()).toEqual({ show: true });
+    }
+    expect(visits).toBe(3);
+  });
   it('changes revisions only when project state changes and isolates a corrupt page', () => {
     const { file, root } = project(); saveMapFile(file, map());
     const before = readWebSnapshot(file);

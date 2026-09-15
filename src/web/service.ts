@@ -6,12 +6,13 @@ import { createPreviewPublisher } from '../preview/publisher.js';
 import { readWebSnapshot } from './source.js';
 import { attachTerminalService } from './terminal-service.js';
 import { LedgerError, withStoreLock } from '../store/transaction.js';
+import { openStarInDefaultBrowser } from '../support/open-star.js';
 
 export interface WebAssets {
   readonly html: string; readonly javascript: string; readonly css: string;
   readonly terminal?: { readonly html: string; readonly javascript: string; readonly css: string; readonly xtermCss: string };
 }
-export interface WebServiceOptions { readonly token?: string; readonly idleMs?: number; readonly onClose?: () => void; readonly terminalWorker?: string }
+export interface WebServiceOptions { readonly token?: string; readonly idleMs?: number; readonly onClose?: () => void; readonly terminalWorker?: string; readonly starReminder?: { visit: () => boolean }; readonly openStar?: () => Promise<void> }
 
 /** Local transport adapter. Exact routes only; no general filesystem server. */
 export async function startWebService(defaultFile: string, assets: WebAssets, options: WebServiceOptions = {}) {
@@ -19,6 +20,7 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
   if (!/^[a-f0-9]{48}$/.test(token)) throw new Error('Invalid web token');
   const prefix = `/${token}/`;
   let origin = '', lastRequest = Date.now(), closed = false;
+  let openingStar = false;
   const send = (res: ServerResponse, code: number, body: string, type = 'application/json; charset=utf-8') => {
     res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
@@ -44,6 +46,23 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
         if (asset) { send(res, 200, asset[0], `${asset[1]}; charset=utf-8`); return; }
       }
       if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, formats: [1, 2], surfaces: terminalService ? ['web', 'web-terminal'] : ['web'] })); return; }
+      if (req.method === 'POST' && route === 'api/star-reminder/open') {
+        // A user click sends an empty same-origin POST. This is not an open-URL API.
+        if (req.headers.origin !== origin) { send(res, 403, '{"error":"Origin refused"}'); return; }
+        if (req.url !== `${prefix}api/star-reminder/open` || req.headers['transfer-encoding'] || Number(req.headers['content-length'] ?? 0) !== 0) { send(res, 400, '{"error":"No parameters accepted"}'); return; }
+        if (openingStar) { send(res, 409, '{"error":"Browser is already opening"}'); return; }
+        openingStar = true;
+        void Promise.resolve().then(options.openStar ?? openStarInDefaultBrowser)
+          .then(() => { send(res, 200, '{"opened":true}'); }, () => { send(res, 503, '{"error":"无法打开默认浏览器"}'); })
+          .finally(() => { openingStar = false; });
+        return;
+      }
+      if (req.method === 'POST' && route === 'api/star-reminder/visit') {
+        const requested = new URL(req.url!, origin).searchParams.get('page');
+        const id = !requested || requested === '_default' ? '' : requested;
+        const hasMap = options.starReminder && readWebSnapshot(defaultFile).value.pages.some(page => page.id === id && !page.error && (page.map?.nodes.length ?? 0) > 0);
+        send(res, 200, JSON.stringify({ show: !!hasMap && options.starReminder!.visit() })); return;
+      }
       if (req.method === 'GET' && route === 'api/state') {
         const snapshot = readWebSnapshot(defaultFile);
         const etag = `"${snapshot.revision}"`;

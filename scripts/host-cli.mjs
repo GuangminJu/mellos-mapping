@@ -13,9 +13,12 @@ export function resolveHost(host, env = process.env) {
     const dir = raw.replace(/^"|"$/g, '');
     if (!dir) continue;
     if (isFile(join(dir, 'claude.exe'))) return { command: join(dir, 'claude.exe'), args: [] };
-    const entry = join(dir, 'node_modules/@anthropic-ai/claude-code/cli.js');
-    if (isFile(entry) && (isFile(join(dir, 'claude.cmd')) || isFile(join(dir, 'claude.ps1')))) {
-      return { command: process.execPath, args: [entry] };
+    if (isFile(join(dir, 'claude.cmd')) || isFile(join(dir, 'claude.ps1'))) {
+      const packageRoot = join(dir, 'node_modules/@anthropic-ai/claude-code');
+      const native = join(packageRoot, 'bin/claude.exe');
+      if (isFile(native)) return { command: native, args: [] };
+      const entry = join(packageRoot, 'cli.js');
+      if (isFile(entry)) return { command: process.execPath, args: [entry] };
     }
   }
   throw new Error('Claude Code CLI not found on PATH. Install Claude Code, then rerun this command.');

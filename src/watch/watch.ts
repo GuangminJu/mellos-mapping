@@ -1156,6 +1156,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
         lastHits = [];
       } else {
         const windowed = rendered.value;
+        if (map.nodes.length > 0) io.onMapRendered?.();
         // clamp AFTER measuring so a shrinking map pulls the view back in
         const maxX = Math.max(0, windowed.contentWidth - viewW);
         const maxY = Math.max(0, windowed.contentHeight - viewH);
