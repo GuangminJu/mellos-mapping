@@ -2735,12 +2735,12 @@ function viewerReportOf(pane, defaultFile) {
   const shown = pane.activeFile ?? pane.pendingFocusFile ?? defaultFile;
   return { page: pageIdOfFile(defaultFile, shown), follow: pane.follow };
 }
-function runWatcher(cfg, io = nativeWatcherIO()) {
+function runWatcher(cfg, io2 = nativeWatcherIO()) {
   const renderScene = createWindowRenderer();
   if (migrateLegacyStore(cfg.file)) console.error("mellos-mapping: moved the legacy .claude map store to .mellos/ \u2014 commit the move.");
   sweepQuitRequest(cfg.file);
   sweepQuitRequest(cfg.file, process.pid);
-  const interactive = io.interactive;
+  const interactive = io2.interactive;
   const mouseActive = interactive && cfg.mouse;
   let lastFrame = "";
   let spinnerFrame = 0;
@@ -2749,8 +2749,8 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
   const standbyNotice = "waiting for the first mmap_declare ...";
   let map;
   let notice = standbyNotice;
-  let lastCols = io.output.columns ?? 0;
-  let lastRows = io.output.rows ?? 0;
+  let lastCols = io2.output.columns ?? 0;
+  let lastRows = io2.output.rows ?? 0;
   let pane = initialPaneState(
     cfg.follow,
     cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page)
@@ -2777,8 +2777,8 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
     }
     return false;
   };
-  const viewWidth = () => usableColumns(io.output.columns ?? FALLBACK_COLUMNS);
-  const viewHeight = () => Math.max(1, (io.output.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
+  const viewWidth = () => usableColumns(io2.output.columns ?? FALLBACK_COLUMNS);
+  const viewHeight = () => Math.max(1, (io2.output.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
   const dividerY = () => tabRows() + viewHeight() + 1;
   const pageTabsOf = (files) => files.map((f) => {
     const entry = entryOf(pane, f);
@@ -2833,20 +2833,20 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
     return lastHits.find((h) => cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h)?.id;
   };
   const publishPresence = () => {
-    io.report?.(viewerReportOf(pane, cfg.file));
+    io2.report?.(viewerReportOf(pane, cfg.file));
     publishViewer(cfg.file, process.pid, {
       ...viewerReportOf(pane, cfg.file),
       ...cfg.owner === void 0 ? {} : { owner: cfg.owner }
     });
   };
-  if (interactive) io.input.setRawMode(true);
-  const terminal = openTerminalSession({ interactive, mouse: cfg.mouse, write: (text) => io.output.write(text) });
+  if (interactive) io2.input.setRawMode(true);
+  const terminal = openTerminalSession({ interactive, mouse: cfg.mouse, write: (text) => io2.output.write(text) });
   const frameOutput = interactive ? createFrameOutput({
-    write: (text) => io.output.write(text),
+    write: (text) => io2.output.write(text),
     onDrain: (ready) => {
-      io.output.once("drain", ready);
+      io2.output.once("drain", ready);
       return () => {
-        io.output.off("drain", ready);
+        io2.output.off("drain", ready);
       };
     }
   }) : void 0;
@@ -2877,9 +2877,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
   const paint2 = () => {
     clearTimeout(paintTimer);
     paintTimer = void 0;
-    const cols = io.output.columns ?? FALLBACK_COLUMNS;
+    const cols = io2.output.columns ?? FALLBACK_COLUMNS;
     const viewW = viewWidth();
-    panelContentRows = clampPanelRows(panelContentRows, io.output.rows ?? FALLBACK_ROWS, tabRows());
+    panelContentRows = clampPanelRows(panelContentRows, io2.output.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
     const focus = view.hoverId ?? view.selectedId;
     let body;
@@ -2897,6 +2897,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         lastHits = [];
       } else {
         const windowed = rendered.value;
+        if (map.nodes.length > 0) io2.onMapRendered?.();
         const maxX = Math.max(0, windowed.contentWidth - viewW);
         const maxY = Math.max(0, windowed.contentHeight - viewH);
         if (view.offsetX > maxX || view.offsetY > maxY || view.offsetX < 0 || view.offsetY < 0) {
@@ -2990,7 +2991,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     } else {
       const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join("\n");
       if (frame !== lastFrame) {
-        io.output.write(frame);
+        io2.output.write(frame);
         lastFrame = frame;
       }
     }
@@ -2999,16 +3000,16 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     paintTimer ??= setTimeout(paint2, 16);
   };
   const handleResize = () => {
-    lastCols = io.output.columns ?? lastCols;
-    lastRows = io.output.rows ?? lastRows;
+    lastCols = io2.output.columns ?? lastCols;
+    lastRows = io2.output.rows ?? lastRows;
     lastFrame = "";
     frameOutput?.invalidate();
-    io.output.write(CLEAR_ALL);
+    io2.output.write(CLEAR_ALL);
     paint2();
   };
   const tick = () => {
     if (takeQuitRequest(cfg.file, process.pid)) quit();
-    if ((io.output.columns ?? lastCols) !== lastCols || (io.output.rows ?? lastRows) !== lastRows) {
+    if ((io2.output.columns ?? lastCols) !== lastCols || (io2.output.rows ?? lastRows) !== lastRows) {
       handleResize();
     }
     const discovered = listPageFiles(cfg.file);
@@ -3077,9 +3078,9 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     tick();
   };
   if (interactive) {
-    io.input.resume();
-    io.input.setEncoding("utf8");
-    io.input.on("data", (chunk) => {
+    io2.input.resume();
+    io2.input.setEncoding("utf8");
+    io2.input.on("data", (chunk) => {
       const parsed2 = parseInput(pendingInput + chunk);
       pendingInput = parsed2.rest;
       let dirty = false;
@@ -3152,7 +3153,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
             break;
           case "mouse-drag":
             if (view.dividerDrag) {
-              const next = panelRowsFromDividerY(event.y, io.output.rows ?? FALLBACK_ROWS, tabRows());
+              const next = panelRowsFromDividerY(event.y, io2.output.rows ?? FALLBACK_ROWS, tabRows());
               if (next !== panelContentRows) {
                 panelContentRows = next;
                 dirty = true;
@@ -3248,7 +3249,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
         else paint2();
       }
     });
-    io.output.on("resize", handleResize);
+    io2.output.on("resize", handleResize);
   }
   tick();
   setInterval(tick, cfg.intervalMs);
@@ -3264,10 +3265,90 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
 }
 
 // src/watch/cli.ts
+import { homedir as homedir2 } from "node:os";
+import { fileURLToPath } from "node:url";
+
+// src/support/star-reminder.ts
+import { existsSync as existsSync5, readFileSync as readFileSync5, realpathSync as realpathSync3 } from "node:fs";
+import { basename as basename2, dirname as dirname10, join as join9 } from "node:path";
+var STAR_URL = "https://github.com/GuangminJu/mellos-mapping";
+var DAY_MS = 864e5;
+function isNpmInstallation(entry) {
+  try {
+    const root = dirname10(dirname10(realpathSync3(entry)));
+    if (basename2(dirname10(root)).toLowerCase() !== "node_modules" || existsSync5(join9(root, ".git")) || existsSync5(join9(root, ".codex-plugin")) || existsSync5(join9(root, ".claude-plugin"))) return false;
+    const pkg = JSON.parse(readFileSync5(join9(root, "package.json"), "utf8"));
+    return pkg.name === "mellos-mapping" && pkg.bin?.mmap === "dist/mmap.mjs";
+  } catch {
+    return false;
+  }
+}
+function starReminderFile(userBase) {
+  return join9(userBase, ".mellos", "support", "star-reminder.json");
+}
+function enabledFlag(value) {
+  return !!value && value !== "0" && value.toLowerCase() !== "false";
+}
+function validState(value) {
+  if (!value || typeof value !== "object") return false;
+  const s = value;
+  return s.version === 1 && Number.isFinite(s.firstSeen) && s.firstSeen >= 0 && Number.isSafeInteger(s.lastDay) && s.lastDay >= Math.floor(s.firstSeen / DAY_MS) && Number.isSafeInteger(s.days) && s.days >= 1 && s.days <= 3 && typeof s.notified === "boolean";
+}
+function createStarReminder(options) {
+  const eligible = isNpmInstallation(options.entry) && !enabledFlag(options.env["CI"]) && !enabledFlag(options.env["MELLOS_MAPPING_NO_STAR"]);
+  const file = starReminderFile(options.userBase);
+  return {
+    visit() {
+      if (!eligible) return false;
+      try {
+        return withStoreLock(file, () => {
+          const now = (options.now ?? Date.now)();
+          if (!Number.isFinite(now) || now < 0) return false;
+          const day = Math.floor(now / DAY_MS);
+          let state;
+          try {
+            const saved2 = JSON.parse(readFileSync5(file, "utf8"));
+            if (!validState(saved2)) return false;
+            state = saved2;
+          } catch (error) {
+            if (error.code !== "ENOENT") return false;
+            state = { version: 1, firstSeen: now, lastDay: day, days: 1, notified: false };
+          }
+          if (state.notified || now < state.firstSeen || day < state.lastDay) return false;
+          if (day > state.lastDay) {
+            state.days = Math.min(3, state.days + 1);
+            state.lastDay = day;
+          }
+          const show = state.days >= 3 && now - state.firstSeen >= 7 * DAY_MS;
+          if (show) state.notified = true;
+          const saved = writeAtomic(file, JSON.stringify(state, null, 2) + "\n", 1);
+          return saved.ok && show;
+        });
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+
+// src/watch/cli.ts
 var parsed = parseArgs(process.argv.slice(2), process.cwd());
 if (!parsed.ok) {
   console.error(`mellos-mapping-watch: ${describeArgsError(parsed.error)}
 ${USAGE}`);
   process.exit(1);
 }
-runWatcher(parsed.value);
+var viewed = false;
+var io = nativeWatcherIO();
+var reminder = createStarReminder({ entry: fileURLToPath(import.meta.url), userBase: homedir2(), env: process.env });
+runWatcher(parsed.value, { ...io, onMapRendered: () => {
+  viewed = true;
+} });
+process.on("exit", (code) => {
+  if (code === 0 && viewed && io.interactive && process.stderr.isTTY && process.env["TERM"] !== "dumb" && reminder.visit()) {
+    process.stderr.write(`
+If Mellos Mapping has been useful, a GitHub Star is welcome: ${STAR_URL}
+This optional reminder will not appear again.
+`);
+  }
+});
