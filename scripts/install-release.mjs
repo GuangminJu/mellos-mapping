@@ -23,7 +23,7 @@ export async function installRelease(source, argv, {
   makeRunner = hostRunner, verify = verifyRuntime, log = console.log,
 } = {}) {
   if (argv.includes('--help')) { log(USAGE); return; }
-  if (Number(process.versions.node.split('.')[0]) < 18) throw new Error('Node.js 18+ is required. Install Node.js and retry.');
+  if (Number(process.versions.napi ?? 0) < 9) throw new Error('Node.js 18.17+ or 20.3+ with Node-API 9 is required. Upgrade Node.js and retry.');
   const selected = argv.find(arg => editions.includes(arg));
   if (argv.some(arg => !editions.includes(arg) && arg !== '--check') || argv.filter(arg => editions.includes(arg)).length > 1) throw new Error(USAGE);
   if (!existsSync(join(source, 'release.json'))) {
