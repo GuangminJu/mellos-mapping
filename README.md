@@ -453,12 +453,17 @@ to it — gitignore `focus`, `quit` and `viewers/` if you commit the store.
 
 **Concurrency, stated plainly.** Every save is atomic — written to a private
 sibling temp file and renamed over the target — so a reader polling the store
-sees the previous complete map or the new one, never a torn write. There is
-no lost-update protection: two writers saving the *same* page race, and the
-last rename wins, silently discarding what the other computed from an older
-read. Pages are the isolation unit — two sessions that must not clobber each
-other belong on two pages, which is also the answer to running several Claude
-sessions in one project.
+sees the previous complete map or the new one, never a torn write. Writers are
+serialized as well: every graph writer (MCP, the HTTP viewer, the watcher)
+takes a cooperative cross-process lock for the project, so two writers saving
+the *same* page do not race. A call that passes `expectedRevision` is checked
+against the map inside that lock, and a stale revision answers `CONFLICT`
+instead of overwriting newer work; a writer that finds the lock held answers a
+retryable `BUSY`. Pages remain the isolation unit for *work* — two unrelated
+efforts belong on two pages — but a page is no longer clobbered by a second
+session writing it. Low-level `saveMapFile`, hand edits and an older
+already-running process take no part in that contract; the
+[persistent-map API guide](docs/map-api.md) states the full boundary.
 
 ### Diagram kinds
 
