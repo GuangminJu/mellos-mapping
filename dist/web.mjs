@@ -3703,7 +3703,7 @@ var require_websocket_server = __commonJS({
 });
 
 // src/web/cli.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync5, realpathSync as realpathSync3, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync5, realpathSync as realpathSync4, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
 import { dirname as dirname9, join as join7, resolve as resolve2 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
@@ -4299,32 +4299,11 @@ function stripBom(text) {
 }
 
 // src/store/migration.ts
-import { dirname as dirname3, join as join2 } from "node:path";
-var LEGACY_STATE_FILE_RELATIVE_PATH = join2(".claude", "mellos-mapping.json");
-
-// src/store/maps.ts
-import { readFileSync } from "node:fs";
-function loadMapFile(path) {
-  let text;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch (e) {
-    const code = e.code;
-    if (code === "ENOENT") return err({ kind: "not-found", path });
-    throw e;
-  }
-  let raw;
-  try {
-    raw = JSON.parse(stripBom(text));
-  } catch (e) {
-    return err({ kind: "malformed-json", path, detail: e.message });
-  }
-  return parseMap(raw, path);
-}
+import { dirname as dirname4, join as join3 } from "node:path";
 
 // src/store/transaction.ts
-import { closeSync, fstatSync, lstatSync, mkdirSync as mkdirSync2, openSync } from "node:fs";
-import { dirname as dirname4, join as join3 } from "node:path";
+import { closeSync, fstatSync, lstatSync, mkdirSync as mkdirSync2, openSync, realpathSync } from "node:fs";
+import { basename as basename2, dirname as dirname3, join as join2 } from "node:path";
 
 // src/store/native-lock.ts
 import { existsSync as existsSync2 } from "node:fs";
@@ -4360,8 +4339,15 @@ var LedgerError = class extends Error {
   }
 };
 function storeDirectory(file) {
-  const dir = dirname4(file);
-  return dir.endsWith("/pages") || dir.endsWith("\\pages") ? dirname4(dir) : dir;
+  const dir = dirname3(file);
+  if (basename2(dir).toLowerCase() === "pages") return dirname3(dir);
+  let canonical = dir;
+  try {
+    canonical = realpathSync.native(dir);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return basename2(canonical).toLowerCase() === "pages" ? dirname3(canonical) : canonical;
 }
 function checkLockPath(lock) {
   const entry = lstatSync(lock, { throwIfNoEntry: false });
@@ -4385,7 +4371,7 @@ function withStoreLock(file, action) {
   }
   const dir = storeDirectory(file);
   mkdirSync2(dir, { recursive: true });
-  const lock = join3(dir, ".write-lock");
+  const lock = join2(dir, ".write-lock");
   checkLockPath(lock);
   let fd;
   try {
@@ -4427,6 +4413,29 @@ function warnLockCleanup(message) {
   }
 }
 
+// src/store/migration.ts
+var LEGACY_STATE_FILE_RELATIVE_PATH = join3(".claude", "mellos-mapping.json");
+
+// src/store/maps.ts
+import { readFileSync } from "node:fs";
+function loadMapFile(path) {
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (e) {
+    const code = e.code;
+    if (code === "ENOENT") return err({ kind: "not-found", path });
+    throw e;
+  }
+  let raw;
+  try {
+    raw = JSON.parse(stripBom(text));
+  } catch (e) {
+    return err({ kind: "malformed-json", path, detail: e.message });
+  }
+  return parseMap(raw, path);
+}
+
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
@@ -4435,7 +4444,7 @@ import { dirname as dirname6, join as join4 } from "node:path";
 // src/web/source.ts
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { basename as basename2, dirname as dirname5 } from "node:path";
+import { basename as basename3, dirname as dirname5 } from "node:path";
 function readWebSnapshot(defaultFile) {
   const pages = listPageFiles(defaultFile).map((file) => {
     const id = pageIdOfFile(defaultFile, file) ?? "";
@@ -4450,7 +4459,7 @@ function readWebSnapshot(defaultFile) {
     }
   });
   if (pages.length === 0) pages.push({ id: "", title: "\u7B49\u5F85\u7B2C\u4E00\u5F20\u5730\u56FE", modified: 0, map: EMPTY_MAP });
-  const value = { project: basename2(dirname5(dirname5(defaultFile))), pages };
+  const value = { project: basename3(dirname5(dirname5(defaultFile))), pages };
   return { revision: createHash("sha256").update(JSON.stringify(value)).digest("hex"), value };
 }
 
@@ -4523,7 +4532,7 @@ import { createServer } from "node:http";
 
 // src/preview/publisher.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync3, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync3, readdirSync as readdirSync2, realpathSync as realpathSync2, rmdirSync } from "node:fs";
 import { dirname as dirname7, join as join5, resolve } from "node:path";
 
 // src/semantics/vocabulary.ts
@@ -5258,8 +5267,8 @@ function save(path, contents) {
 }
 function ownedDirectory(path) {
   mkdirSync3(path, { recursive: true });
-  const expected = join5(realpathSync(dirname7(path)), path.slice(dirname7(path).length + 1));
-  const actual = realpathSync(path);
+  const expected = join5(realpathSync2(dirname7(path)), path.slice(dirname7(path).length + 1));
+  const actual = realpathSync2(path);
   if (process.platform === "win32" ? actual.toLowerCase() !== expected.toLowerCase() : actual !== expected) {
     throw new Error(`Preview directory redirects outside its parent: ${path}`);
   }
@@ -5489,14 +5498,14 @@ import { spawn as spawn3 } from "node:child_process";
 import { win32 } from "node:path";
 
 // src/support/star-reminder.ts
-import { existsSync as existsSync5, readFileSync as readFileSync4, realpathSync as realpathSync2 } from "node:fs";
-import { basename as basename3, dirname as dirname8, join as join6 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync4, realpathSync as realpathSync3 } from "node:fs";
+import { basename as basename4, dirname as dirname8, join as join6 } from "node:path";
 var STAR_URL = "https://github.com/GuangminJu/mellos-mapping";
 var DAY_MS = 864e5;
 function isNpmInstallation(entry) {
   try {
-    const root = dirname8(dirname8(realpathSync2(entry)));
-    if (basename3(dirname8(root)).toLowerCase() !== "node_modules" || existsSync5(join6(root, ".git")) || existsSync5(join6(root, ".codex-plugin")) || existsSync5(join6(root, ".claude-plugin"))) return false;
+    const root = dirname8(dirname8(realpathSync3(entry)));
+    if (basename4(dirname8(root)).toLowerCase() !== "node_modules" || existsSync5(join6(root, ".git")) || existsSync5(join6(root, ".codex-plugin")) || existsSync5(join6(root, ".claude-plugin"))) return false;
     const pkg = JSON.parse(readFileSync4(join6(root, "package.json"), "utf8"));
     return pkg.name === "mellos-mapping" && pkg.bin?.mmap === "dist/mmap.mjs";
   } catch {
@@ -5768,7 +5777,7 @@ async function runWeb(args) {
     if (await runningWebUrl(file2)) return;
     const directory = dirname9(webRuntimeFile(file2));
     mkdirSync4(directory, { recursive: true });
-    if (realpathSync3(directory).toLowerCase() !== join7(realpathSync3(dirname9(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
+    if (realpathSync4(directory).toLowerCase() !== join7(realpathSync4(dirname9(directory)), "web").toLowerCase()) throw new Error("Redirected web runtime directory");
     const assets = join7(dirname9(entry), "web");
     let service;
     service = await startWebService(file2, {
@@ -5819,7 +5828,7 @@ async function runWeb(args) {
   }
   console.log(JSON.stringify({ surface: terminal ? "web-terminal" : "web", url: await openWebPreview(file, entry, page, terminal), visibility: "unconfirmed" }));
 }
-if (process.argv[1] && existsSync6(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync3(process.argv[1])).href) {
+if (process.argv[1] && existsSync6(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync4(process.argv[1])).href) {
   runWeb(process.argv.slice(2)).catch((error) => {
     console.error(String(error));
     process.exitCode = 1;

@@ -2,7 +2,7 @@
 import { PassThrough, Writable } from "node:stream";
 
 // src/watch/watch.ts
-import { realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
+import { realpathSync as realpathSync3, statSync as statSync2 } from "node:fs";
 import { dirname as dirname9, join as join8 } from "node:path";
 
 // src/domain/types.ts
@@ -262,8 +262,8 @@ function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
 }
 
 // src/store/transaction.ts
-import { closeSync, fstatSync, lstatSync, mkdirSync, openSync } from "node:fs";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync as realpathSync2 } from "node:fs";
+import { basename, dirname as dirname2, join as join2 } from "node:path";
 
 // src/domain/context.ts
 function sourceError(raw) {
@@ -587,7 +587,14 @@ var LedgerError = class extends Error {
 };
 function storeDirectory(file) {
   const dir = dirname2(file);
-  return dir.endsWith("/pages") || dir.endsWith("\\pages") ? dirname2(dir) : dir;
+  if (basename(dir).toLowerCase() === "pages") return dirname2(dir);
+  let canonical = dir;
+  try {
+    canonical = realpathSync2.native(dir);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return basename(canonical).toLowerCase() === "pages" ? dirname2(canonical) : canonical;
 }
 function checkLockPath(lock) {
   const entry = lstatSync(lock, { throwIfNoEntry: false });
@@ -1825,7 +1832,7 @@ function writeAtomic(path, contents, maxAttempts) {
 
 // src/store/pages.ts
 import { existsSync as existsSync3, readdirSync, rmSync as rmSync2 } from "node:fs";
-import { basename, dirname as dirname4, join as join3 } from "node:path";
+import { basename as basename2, dirname as dirname4, join as join3 } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join3(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
@@ -1834,7 +1841,7 @@ function pageFilePath(defaultFile, page) {
 }
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
-  const name = basename(path);
+  const name = basename2(path);
   return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
 }
 function listPageFiles(defaultFile) {
@@ -1968,7 +1975,7 @@ function configFilePath(defaultFile) {
 }
 
 // src/store/migration.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync3, renameSync as renameSync2 } from "node:fs";
+import { existsSync as existsSync5, renameSync as renameSync2 } from "node:fs";
 import { dirname as dirname8, join as join7 } from "node:path";
 var LEGACY_STATE_FILE_RELATIVE_PATH = join7(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
@@ -1978,14 +1985,16 @@ function migrateLegacyStore(defaultFile) {
   const legacyDefault = join7(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
   const legacyPages = join7(dirname8(legacyDefault), LEGACY_PAGES_DIR_NAME);
   const legacyConfig = join7(dirname8(legacyDefault), LEGACY_CONFIG_FILE_NAME);
-  const hasLegacy = existsSync5(legacyDefault) || existsSync5(legacyPages) || existsSync5(legacyConfig);
-  const hasCurrent = existsSync5(defaultFile) || existsSync5(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync5(configFilePath(defaultFile));
-  if (!hasLegacy || hasCurrent) return false;
-  mkdirSync3(dirname8(defaultFile), { recursive: true });
-  if (existsSync5(legacyDefault)) renameSync2(legacyDefault, defaultFile);
-  if (existsSync5(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
-  if (existsSync5(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
-  return true;
+  const hasLegacy = () => existsSync5(legacyDefault) || existsSync5(legacyPages) || existsSync5(legacyConfig);
+  const hasCurrent = () => existsSync5(defaultFile) || existsSync5(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync5(configFilePath(defaultFile));
+  if (!hasLegacy() || hasCurrent()) return false;
+  return withStoreLock(defaultFile, () => {
+    if (!hasLegacy() || hasCurrent()) return false;
+    if (existsSync5(legacyDefault)) renameSync2(legacyDefault, defaultFile);
+    if (existsSync5(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
+    if (existsSync5(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
+    return true;
+  });
 }
 
 // src/store/maps.ts

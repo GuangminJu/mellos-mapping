@@ -1,6 +1,6 @@
 /** Cooperative, cross-process transactions for MCP and HTTP writers. */
-import { closeSync, fstatSync, lstatSync, mkdirSync, openSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { serializeMap } from './format.js';
 import { nativeLock } from './native-lock.js';
@@ -20,7 +20,17 @@ export function assertRevision(actual: string, expected?: string): void {
 /** A named page and the default page share the same project lock. */
 export function storeDirectory(file: string): string {
   const dir = dirname(file);
-  return dir.endsWith('/pages') || dir.endsWith('\\pages') ? dirname(dir) : dir;
+  // Keep a configured pages directory tied to its project even when that
+  // directory itself is a symlink. Case variants must share the lock on
+  // Windows and case-insensitive macOS volumes (and are harmless elsewhere).
+  if (basename(dir).toLowerCase() === 'pages') return dirname(dir);
+  let canonical = dir;
+  try { canonical = realpathSync.native(dir); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  // An explicit --file may reach pages through a differently named alias.
+  return basename(canonical).toLowerCase() === 'pages' ? dirname(canonical) : canonical;
 }
 
 function checkLockPath(lock: string): void {

@@ -1,4 +1,4 @@
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,6 +39,35 @@ describe('permanent OS project lock', () => {
       }
     });
     expect(withStoreLock(join(f.dir, 'pages', 'other.json'), () => 1)).toBe(1);
+  });
+
+  it('shares the project lock for pages directory case variants, including a first write', () => {
+    const f = fixture();
+    withStoreLock(f.file, () => {
+      for (const name of ['pages', 'PAGES', 'Pages']) {
+        let entered = false;
+        expect(() => withStoreLock(join(f.dir, name, 'other.json'), () => { entered = true; })).toThrow(expect.objectContaining({ code: 'BUSY' }));
+        expect(entered).toBe(false);
+        expect(existsSync(join(f.dir, name, '.write-lock'))).toBe(false);
+      }
+    });
+  });
+
+  it('shares the project lock when --file reaches pages through a directory alias', () => {
+    const f = fixture();
+    const pages = join(f.dir, 'pages');
+    const alias = join(f.dir, 'page-alias');
+    mkdirSync(pages);
+    symlinkSync(pages, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const file = join(pages, 'named.json');
+    const aliasedFile = join(alias, 'named.json');
+    writeFileSync(file, 'original');
+    expect(statSync(aliasedFile).ino).toBe(statSync(file).ino);
+    withStoreLock(file, () => {
+      expect(() => withStoreLock(aliasedFile, () => writeFileSync(aliasedFile, 'must not write'))).toThrow(expect.objectContaining({ code: 'BUSY' }));
+    });
+    expect(readFileSync(file, 'utf8')).toBe('original');
+    expect(existsSync(join(pages, '.write-lock'))).toBe(false);
   });
 
   it('closing an old descriptor cannot release the successor lock', () => {
