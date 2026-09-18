@@ -23,8 +23,13 @@ what was saved, at which scope, and where. Then stop.
 Otherwise: open the live Mellos map watcher for this project in a separate terminal pane.
 
 The `mmap_open` tool does exactly this and is the shorter route — pass the page
-this conversation is working on (`mmap_open {page: "<slug>"}`), or `window: true`
-for the dedicated window. It reports whether a pane actually came up afterwards.
+this conversation is working on (`mmap_open {page: "<slug>"}`, or `window: true`
+for the dedicated window). It resolves the runtime's own absolute paths and
+reports back whether a pane actually came up, which is also why it is the one
+route that needs no placeholder expanded: this command's text is plain text, and
+`${CLAUDE_PLUGIN_ROOT}` inside it is substituted by Claude Code, NOT by omp
+(omp expands that placeholder inside a plugin's MCP config, not in command
+bodies) nor by a bare MCP client.
 Use the platform routes below when the mmap tools are not available in this
 session, or when the tool reports it could not open one. (You do not need this
 command to keep the map visible day to day: every write answers with a `pane:`
@@ -41,7 +46,8 @@ and ends every response with a `pages:` line naming the pages that exist
 
 Follow the platform-appropriate route:
 
-1. **Windows with Windows Terminal** (`wt` available — the usual case): run
+1. **Windows with Windows Terminal** (`wt` available — the usual case, in
+   Claude Code and in omp alike; omp's plugin also ships this same launcher): run
 
    ```
    node "${CLAUDE_PLUGIN_ROOT}/scripts/open-pane.mjs" "<PROJECT_DIR>" --page <PAGE_SLUG>
@@ -98,10 +104,14 @@ Follow the platform-appropriate route:
    also set `MELLOS_MAPPING_TMUX_SOCKET` to its absolute path, then restart the
    MCP server. Do not guess a session or open a detached window.
 
-3. **Neither**: print the command
-   `node "${CLAUDE_PLUGIN_ROOT}/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`
-   and tell the user to run it in any second terminal themselves (add
-   `--ascii` if their font lacks box-drawing characters).
+3. **Neither**: print the watcher command and tell the user to run it in any
+   second terminal themselves (add `--ascii` if their font lacks box-drawing
+   characters). The launcher's own failure message quotes it in full, with
+   absolute paths — relay that one verbatim. Written by hand it is
+   `node "<plugin root>/dist/watch.mjs" --file "<PROJECT_DIR>/.mellos/map.json" --page <PAGE_SLUG>`,
+   where `<plugin root>` is `${CLAUDE_PLUGIN_ROOT}` inside Claude Code and the
+   installed runtime's own directory everywhere else (omp and bare MCP
+   clients: take the path from the tool's message rather than inventing one).
 
 If launching fails, relay its reason and the complete quoted fallback command.
 Do not repeatedly call `mmap_open` on later writes; retry only after the terminal
