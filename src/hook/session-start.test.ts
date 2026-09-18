@@ -18,10 +18,13 @@ import {
   hasMap,
   hookOutput,
   installContextLine,
+  mmapCommandResolves,
+  mmapFallbackDirs,
   mmapShimCurrent,
   mmapShimFilePath,
   parseHookInput,
   sessionStartContext,
+  shimIsOurs,
 } from './session-start.js';
 
 const base: SessionContextInput = {
@@ -200,6 +203,11 @@ describe('the mmap command installs itself — the hook side of the installer co
     expect(mmapShimCurrent(undefined, mine)).toBe(false);
   });
 
+  it('counts the git-bash shape as our own — its slashes are not a different install', () => {
+    const mine = 'C:\\cache\\0.26.0\\dist\\mmap.mjs';
+    expect(mmapShimCurrent(`#!/bin/sh\nexec node "${mine.replaceAll('\\', '/')}" "$@"\n`, mine)).toBe(true);
+  });
+
   it('a PATH update is announced, and names the one thing the user must do', () => {
     const line = installContextLine({ kind: 'installed', binDir: 'C:\\bin', path: 'updated', wanted: 'C:\\a;C:\\bin' })!;
     expect(line).toContain('C:\\bin');
@@ -224,5 +232,58 @@ describe('the mmap command installs itself — the hook side of the installer co
     for (const junk of [undefined, null, 'text', 42, {}, { kind: 'installed' }]) {
       expect(installContextLine(junk)).toBeUndefined();
     }
+  });
+});
+
+describe('the command resolving is not the file having been written', () => {
+  const local = 'C:\\Users\\ada\\AppData\\Local';
+  const home = 'C:\\Users\\ada';
+  const mine = 'C:\\Users\\ada\\.omp\\cache\\plugins\\mellos-mapping___mellos-mapping___0.26.0\\dist\\mmap.mjs';
+  const [windowsApps, dotLocal] = mmapFallbackDirs(local, home);
+  const cmd = (target: string): string => `@echo off\r\nnode "${target}" %*\r\n`;
+  const sh = (target: string): string => `#!/bin/sh\nexec node "${target.replaceAll('\\', '/')}" "$@"\n`;
+
+  it('probes the same two directories the installer writes to — the pair is pinned on both sides', () => {
+    expect([windowsApps, dotLocal]).toEqual([join(local, 'Microsoft', 'WindowsApps'), join(home, '.local', 'bin')]);
+  });
+
+  it('the canonical directory needs nothing else while the PATH names it', () => {
+    const path = `C:\\Windows;${join(local, 'mellos-mapping', 'bin')}`;
+    expect(mmapCommandResolves(local, mine, { path, home }, () => undefined, () => false)).toBe(true);
+  });
+
+  it('a fallback copy counts when it launches THIS install from a named directory — either shape', () => {
+    const listing: Record<string, string> = { [join(windowsApps, 'mmap.cmd')]: cmd(mine) };
+    expect(mmapCommandResolves(local, mine, { path: `C:\\Windows;${windowsApps}`, home }, (p) => listing[p], (p) => p === windowsApps)).toBe(true);
+    const bash: Record<string, string> = { [join(dotLocal, 'mmap')]: sh(mine) };
+    expect(mmapCommandResolves(local, mine, { path: dotLocal, home }, (p) => bash[p], (p) => p === dotLocal)).toBe(true);
+  });
+
+  it('a stale copy of ours is no resolution — the installer must run', () => {
+    const stale: Record<string, string> = { [join(windowsApps, 'mmap.cmd')]: cmd(mine.replace('0.26.0', '0.24.0')) };
+    expect(mmapCommandResolves(local, mine, { path: windowsApps, home }, (p) => stale[p], (p) => p === windowsApps)).toBe(false);
+    // one current file does not excuse a stale sibling: each shell resolves its own shape
+    const mixed: Record<string, string> = { [join(windowsApps, 'mmap.cmd')]: cmd(mine), [join(windowsApps, 'mmap')]: sh(mine.replace('0.26.0', '0.24.0')) };
+    expect(mmapCommandResolves(local, mine, { path: windowsApps, home }, (p) => mixed[p], (p) => p === windowsApps)).toBe(false);
+  });
+
+  it('a stranger owning the name settles it — nothing of ours to repair', () => {
+    const stranger: Record<string, string> = { [join(windowsApps, 'mmap')]: '#!/bin/sh\nexec /usr/bin/mmap "$@"\n' };
+    expect(mmapCommandResolves(local, mine, { path: windowsApps, home }, (p) => stranger[p], (p) => p === windowsApps)).toBe(true);
+  });
+
+  it('an unnamed directory, or no copy at all, needs the installer', () => {
+    const elsewhere: Record<string, string> = { [join(dotLocal, 'mmap')]: sh(mine) };
+    expect(mmapCommandResolves(local, mine, { path: 'C:\\Windows', home }, (p) => elsewhere[p], (p) => p === dotLocal)).toBe(false);
+    expect(mmapCommandResolves(local, mine, { path: `C:\\Windows;${windowsApps}`, home }, () => undefined, (p) => p === windowsApps)).toBe(false);
+    expect(mmapCommandResolves(local, mine, { path: windowsApps, home: undefined }, () => undefined, () => true)).toBe(false);
+  });
+
+  it('recognizes the family\'s shims by marker, or by the path that predates it', () => {
+    expect(shimIsOurs('@echo off\r\nrem mellos-mapping mmap shim\r\nnode "C:\\anywhere\\dist\\mmap.mjs" %*\r\n')).toBe(true);
+    expect(shimIsOurs('#!/bin/sh\n# mellos-mapping mmap shim\nexec node "C:/anywhere/dist/mmap.mjs" "$@"\n')).toBe(true);
+    expect(shimIsOurs('@echo off\r\nnode "C:\\x\\mellos-mapping\\dist\\mmap.mjs" %*\r\n')).toBe(true);
+    expect(shimIsOurs('@echo off\r\nnode "C:\\tools\\mmap\\index.js" %*\r\n')).toBe(false);
+    expect(shimIsOurs('')).toBe(false);
   });
 });

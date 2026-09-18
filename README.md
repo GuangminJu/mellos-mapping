@@ -94,6 +94,32 @@ committed, so a clone runs as-is —
 `dist/store-paths.mjs` (the store's path vocabulary, which the plain-node pane
 launcher imports instead of restating filenames).
 
+**omp (Oh My Pi)** reads the same plugin layout the Claude Code edition ships —
+the same marketplace catalog, `.mcp.json`, skill and slash command — so one
+release serves both hosts:
+
+```
+omp plugin marketplace add GuangminJu/mellos-mapping
+omp plugin install mellos-mapping@mellos-mapping
+```
+
+That install follows `main`, where a release is a version bump. To freeze a
+version instead, add a checkout of one — the Claude Code edition ZIP from the
+GitHub Release, or a clone at the release tag:
+
+```
+omp plugin marketplace add "<checkout or extracted release directory>"
+omp plugin install mellos-mapping@mellos-mapping
+```
+
+omp never reads `hooks/hooks.json`, so the session paragraph arrives through the
+plugin's omp host adapter (`dist/omp-extension.mjs`, declared in
+`package.json#omp.extensions`): the same store, the same policy text, and the
+same `mmap` shim install as the Claude hook. The pane is the same terminal
+split beside the session. Install it *as a plugin*: neither `omp plugin link`
+nor the npm package is a plugin, and both would leave the tools behind. See
+[omp installation and limitations](docs/distributions/omp.md).
+
 The first session after installing asks you **one** question — how eager
 mapping should be — and records the answer for every project you will ever
 open. From then on the hook carries it into each new session by itself; there
@@ -110,8 +136,14 @@ Terminal inherits the old environment, so close the terminal app entirely and
 reopen it before the first `mmap`. The PATH edit keeps the
 installer's guarantees: nothing happens when the entry is already there, and
 a PATH that `setx` would damage (flattened `%VARIABLE%` references, truncation
-past its limit) is refused outright, with the entry to add by hand named
-instead.
+past its limit) is refused outright.
+
+A refused PATH is not a dead end: the same two shims are then written into
+`%LOCALAPPDATA%\Microsoft\WindowsApps` (or `~/.local/bin`) — a directory your
+PATH already names — so `mmap` is runnable in a new terminal with no PATH
+change at all. Machines with a long PATH are exactly where that happens, and
+where it matters most. The command takes the page to open as an argument
+(`mmap omp-host-support`), and closes the pane when it is already open.
 
 The step behind it is still a command of its own, for the cases the hook does
 not cover — `--uninstall`, or re-adding a PATH entry you removed while the
@@ -135,6 +167,26 @@ Two steps because `plugin update` compares against the locally cached
 marketplace clone — the first command is what actually pulls this repo.
 Restart Claude Code to apply. Releases are version bumps on `main`.
 (In-app, `/plugin` opens the same management UI.)
+
+omp updates with its own two steps:
+
+```
+omp plugin marketplace update mellos-mapping && omp plugin upgrade mellos-mapping@mellos-mapping
+```
+
+Close the pane first (`q` in it): the watcher runs from the plugin copy, and on
+Windows an open file cannot be renamed away, so an upgrade attempted while a
+pane is open can fail with `EPERM` and leave the plugin cache empty — repaired
+by `omp plugin install mellos-mapping@mellos-mapping --force`. Then: the first
+command refreshes the catalog, the second reinstalls from it. omp also
+refreshes a catalog entry it has not updated for a day at startup, unless
+`marketplace.autoUpdate` is `off` — in the default `notify` mode that check
+writes its finding to the debug log only, so `marketplace update` is the step
+that makes an update visible. `upgrade` does not compare versions: it
+force-reinstalls whatever the catalog names, which is why a release is
+identified by its version bump rather than gated by it. Restart omp afterwards,
+and reopen a pane still showing the old bundle (`q` in it, then `mmap_open`
+again).
 
 ### Upgrading from 0.19
 

@@ -447,6 +447,9 @@ export function openTool() {
         '(the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a ' +
         'pane actually reported itself in afterwards, not merely that a command was run. ' +
         'Automatic terminal opening supports Windows Terminal and tmux on Linux/macOS. ' +
+        'omp (Oh My Pi) has no side panel of its own: there the routes are this same terminal pane ' +
+        '(a Windows Terminal split, or a tmux split on Linux/macOS) and the web viewer, whose URL ' +
+        'the session opens with its own browser tool. ' +
         'If opening fails, relay the reason and copyable command; retry only after the environment changes or the user asks.',
       inputSchema: closed({
         surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web', 'web-terminal']).optional().describe('web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal or tmux launcher (default)'),

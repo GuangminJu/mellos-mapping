@@ -38,9 +38,11 @@
  *
  * Two promises this file keeps because a hook runs before the user has typed
  * anything:
- *   FAST — one config read, one existsSync, one shim read; no map is parsed.
- *   The installer child process runs only when the shim is missing or stale —
- *   in the steady state it never spawns.
+ *   FAST — a config read, an existsSync and shim reads; no map is parsed. On
+ *   Windows the fallback probe runs only when the canonical directory is off
+ *   the PATH. The installer child process runs only when the shim is missing
+ *   or stale, or when the command would not actually resolve — in the steady
+ *   state it never spawns.
  *   SILENT ON FAILURE — see main(). A hook that throws must not be the reason
  *   someone's session starts badly.
  */
@@ -147,18 +149,98 @@ export function hasMap(stateFile: string): boolean {
  * directory scripts/install-mmap-command.mjs owns — each side's spec pins the
  * identical literal, so the two cannot drift apart without a test failing.
  */
+export function mmapBinDir(localAppData: string): string {
+  return join(localAppData, 'mellos-mapping', 'bin');
+}
+
+/** The one shim file the fast path reads — the cmd shape of the canonical pair. */
 export function mmapShimFilePath(localAppData: string): string {
-  return join(localAppData, 'mellos-mapping', 'bin', 'mmap.cmd');
+  return join(mmapBinDir(localAppData), 'mmap.cmd');
 }
 
 /**
- * Does this shim already launch THIS install's `mmap`? The shim quotes the
- * bundle's absolute path, so containing it is the whole test: a missing shim,
- * another version's cache path, or a hand-edited file all read as stale — and
- * a stale shim is re-installed, never trusted.
+ * Per-user directories the PATH already names, in probe order — where a shim
+ * goes when the PATH cannot carry the canonical directory. The twin of
+ * `linkDirCandidates` in scripts/install-mmap-command.mjs; that side's spec
+ * pins the same literals, so the pair cannot drift apart silently.
+ */
+export function mmapFallbackDirs(localAppData: string, home: string): [string, string] {
+  return [join(localAppData, 'Microsoft', 'WindowsApps'), join(home, '.local', 'bin')];
+}
+
+/** Is `dir` one of `rawPath`'s entries? Case and a trailing slash do not count. */
+export function pathNames(rawPath: string, dir: string): boolean {
+  const norm = (s: string): string => s.trim().replace(/^"|"$/g, '').replace(/[\\/]+$/, '').toLowerCase();
+  return rawPath.split(';').some((entry) => entry.trim() !== '' && norm(entry) === norm(dir));
+}
+
+/** Read a file's text, or undefined when it is absent or unreadable. */
+function readIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Does this shim launch THIS install's `mmap`? The shim quotes the bundle's
+ * absolute path — the cmd shape with backslashes, the git-bash shape with
+ * forward slashes — so BOTH forms count: a comparison that knew one form would
+ * read its own sibling as a stranger. A missing shim, another install's cache
+ * path, or a hand-edited file all read as stale — and a stale shim is
+ * re-installed, never trusted.
  */
 export function mmapShimCurrent(shimContent: string | undefined, mmapPath: string): boolean {
-  return shimContent !== undefined && shimContent.includes(`"${mmapPath}"`);
+  if (shimContent === undefined) return false;
+  return shimContent.includes(`"${mmapPath}"`) || shimContent.includes(`"${mmapPath.replaceAll('\\', '/')}"`);
+}
+
+/**
+ * Whether a shim file is one of this plugin family's — the marker says so, or
+ * (for shims written before the marker) the target path named the plugin. The
+ * twin of `shimIsOurs` in scripts/install-mmap-command.mjs; both specs pin the
+ * marker literal, so the pair cannot drift apart silently.
+ */
+export function shimIsOurs(content: string): boolean {
+  if (content.includes('mellos-mapping mmap shim')) return true;
+  const quoted = /"([^"]*mmap\.mjs)"/.exec(content)?.[1];
+  return quoted !== undefined && /mellos-mapping/i.test(quoted);
+}
+
+/**
+ * Whether `mmap` genuinely resolves for a new terminal: the canonical
+ * directory while the PATH names it, or a fallback copy — the route a PATH
+ * that refused the edit leaves — in a directory the PATH names NOW. Pure so
+ * the spec can hold it; the caller passes the real environment and fs.
+ *
+ * The first fallback directory that holds any file is the one that decides:
+ * PATH order means the earliest name wins, and copies later in the order never
+ * resolve. A stranger's command there is not ours to argue with — the session
+ * settles. Our own copy, stale in EITHER shape, is not a resolution: "the file
+ * was written" and "the command runs the bundle it should" are different
+ * claims, and only the second one short-circuits the installer.
+ */
+export function mmapCommandResolves(
+  localAppData: string,
+  mmapPath: string,
+  environment: { readonly path: string; readonly home: string | undefined },
+  read: (path: string) => string | undefined,
+  exists: (path: string) => boolean,
+): boolean {
+  if (pathNames(environment.path, mmapBinDir(localAppData))) return true;
+  if (environment.home === undefined || environment.home === '') return false;
+  for (const dir of mmapFallbackDirs(localAppData, environment.home)) {
+    if (!exists(dir) || !pathNames(environment.path, dir)) continue;
+    const files = ['mmap.cmd', 'mmap']
+      .map((name) => read(join(dir, name)))
+      .filter((content) => content !== undefined);
+    if (files.length === 0) continue;
+    const ours = files.filter((content) => shimIsOurs(content));
+    if (ours.length === 0) return true; // a stranger owns the name here; PATH order means they win
+    return ours.every((content) => mmapShimCurrent(content, mmapPath));
+  }
+  return false;
 }
 
 /**
@@ -170,7 +252,13 @@ export function mmapShimCurrent(shimContent: string | undefined, mmapPath: strin
  */
 export function installContextLine(outcome: unknown): string | undefined {
   if (typeof outcome !== 'object' || outcome === null) return undefined;
-  const o = outcome as { readonly kind?: unknown; readonly binDir?: unknown; readonly path?: unknown; readonly reason?: unknown };
+  const o = outcome as {
+    readonly kind?: unknown;
+    readonly binDir?: unknown;
+    readonly path?: unknown;
+    readonly reason?: unknown;
+    readonly alias?: unknown;
+  };
   if (o.kind !== 'installed' || typeof o.binDir !== 'string') return undefined;
   if (o.path === 'updated') {
     return [
@@ -183,35 +271,69 @@ export function installContextLine(outcome: unknown): string | undefined {
   }
   if (o.path === 'refused' || o.path === 'error') {
     const reason = typeof o.reason === 'string' ? o.reason : 'the PATH edit failed';
+    const aliasDir =
+      typeof o.alias === 'object' && o.alias !== null && 'dir' in o.alias && typeof o.alias.dir === 'string'
+        ? o.alias.dir
+        : undefined;
+    if (aliasDir !== undefined) {
+      return [
+        `mellos-mapping: the \`mmap\` terminal command should work: its shims live in`,
+        `${o.binDir}, and — because the user PATH could not be changed (${reason}) — a second copy`,
+        `was written to ${aliasDir}, a directory PATH already names (so \`mmap\` resolves there unless`,
+        'something earlier in PATH claims the name first).',
+        'The user can therefore type `mmap` in a new terminal right now; the command opens the map',
+        'pane for the project it is typed in, or closes the open one.',
+      ].join('\n');
+    }
     return [
       `mellos-mapping: the \`mmap\` command's launcher was written to ${o.binDir},`,
       `but the user PATH was NOT changed: ${reason}.`,
       'If the user wants the `mmap` pane-toggle command, tell them to add that directory to',
-      'their user PATH (Settings > "Edit environment variables for your account").',
+      'their user PATH (Settings > "Edit environment variables for their account").',
     ].join('\n');
   }
   return undefined;
 }
 
 /**
- * Make sure the user's `mmap` command exists and points at this install; say
- * what a session should hear about it, or undefined when there is nothing to
- * do or to say. The fast path — the usual one — is a single small file read.
+ * Make sure the user's `mmap` command exists, points at THIS install, and
+ * actually resolves for a new terminal; say what a session should hear about
+ * it, or undefined when there is nothing to do or to say. The fast path — the
+ * usual one — is a single small file read. When that shim IS current but the
+ * command would not resolve (the canonical directory is off the PATH and the
+ * fallback copy is missing, stale, or claimed by another install), the
+ * installer still runs: which copy a terminal finds is not something a
+ * session may assume from the canonical file alone.
+ *
+ * Exported for the omp host adapter (`src/host/omp/extension.ts`), which is the
+ * only other code that runs at a session start: the shim is installed from
+ * whichever of the two the host actually runs, never from both.
  */
-function ensureMmapCommand(pluginRoot: string): string | undefined {
+export function ensureMmapCommand(pluginRoot: string): string | undefined {
   if (process.platform !== 'win32') return undefined;
   const localAppData = process.env['LOCALAPPDATA'];
   if (localAppData === undefined || localAppData === '') return undefined;
   const mmapPath = join(pluginRoot, 'dist', 'mmap.mjs');
-  let shim: string | undefined;
-  try {
-    shim = readFileSync(mmapShimFilePath(localAppData), 'utf8');
-  } catch {
-    shim = undefined; // no shim yet — exactly what the install below fixes
-  }
-  if (mmapShimCurrent(shim, mmapPath)) return undefined;
+  // A missing shim is exactly what the install below fixes; so is a current
+  // one whose command a terminal would not resolve.
+  const shim = readIfPresent(mmapShimFilePath(localAppData));
+  const resolves =
+    mmapShimCurrent(shim, mmapPath) &&
+    mmapCommandResolves(
+      localAppData,
+      mmapPath,
+      { path: process.env['PATH'] ?? '', home: process.env['USERPROFILE'] ?? process.env['HOME'] },
+      readIfPresent,
+      existsSync,
+    );
+  if (resolves) return undefined;
+  // The installer is a plain-node script, and the host running this code is
+  // not necessarily node: omp loads the plugin's adapter inside its own Bun
+  // process, where `process.execPath` is the harness binary. There, node comes
+  // from PATH — the same interpreter the shim being installed will call.
+  const runtime = 'bun' in process.versions ? 'node' : process.execPath;
   const run = spawnSync(
-    process.execPath,
+    runtime,
     [join(pluginRoot, 'scripts', 'install-mmap-command.mjs'), '--json'],
     { encoding: 'utf8', windowsHide: true, timeout: 15_000 },
   );

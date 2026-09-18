@@ -65,6 +65,11 @@
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },
+  "omp": {
+    "extensions": [
+      "./dist/omp-extension.mjs"
+    ]
+  },
   "files": [
     "dist",
     "lib",
