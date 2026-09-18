@@ -37,7 +37,7 @@
  * point, so importing this file is inert.
  */
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { launchedAsEntry, pluginRootOf } from './pane-core.mjs';
@@ -56,9 +56,36 @@ export function binDirIn(localAppData) {
   return join(localAppData, 'mellos-mapping', 'bin');
 }
 
+/**
+ * Per-user command directories that are USUALLY already on the PATH, in the
+ * order they should be tried, given a `%LOCALAPPDATA%` and a home directory.
+ *
+ * These exist for one case: `setx` refuses to write a user PATH this script
+ * will not carry safely (see setxRefusal), and the canonical `bin` directory is
+ * therefore unreachable for good. A machine with a long PATH — conda, five
+ * Pythons, several toolchains — then has no way to run `mmap` at all, which is
+ * the opposite of what the command is for. Dropping the same two shims into a
+ * directory the PATH already names fixes that without editing anything:
+ *
+ *   - `WindowsApps` is Windows' own per-user command directory (the one App
+ *     Execution Aliases live in) and is on the PATH of every interactive user;
+ *   - `~/.local/bin` is the same idea as the rest of the world spells it.
+ *
+ * Only ever consulted when the PATH route is refused, and only if the directory
+ * exists, is reachable on the CURRENT PATH, and accepts a write.
+ */
+export function linkDirCandidates(localAppData, home) {
+  return [join(localAppData, 'Microsoft', 'WindowsApps'), join(home, '.local', 'bin')];
+}
+
+/** The candidates this PATH can already reach, in the order they were given. */
+export function reachableDirs(candidates, rawPath, exists) {
+  return candidates.filter((dir) => exists(dir) && pathContains(rawPath, dir));
+}
+
 /** The cmd/PowerShell shim: forwards every argument, prints nothing of its own. */
 export function cmdShim(mmapPath) {
-  return ['@echo off', `node "${mmapPath}" %*`, ''].join('\r\n');
+  return ['@echo off', `rem ${SHIM_MARKER}`, `node "${mmapPath}" %*`, ''].join('\r\n');
 }
 
 /**
@@ -67,7 +94,7 @@ export function cmdShim(mmapPath) {
  * `C:\Users` is one escape away from being someone else's bug.
  */
 export function shShim(mmapPath) {
-  return ['#!/bin/sh', `exec node "${mmapPath.replaceAll('\\', '/')}" "$@"`, ''].join('\n');
+  return ['#!/bin/sh', `# ${SHIM_MARKER}`, `exec node "${mmapPath.replaceAll('\\', '/')}" "$@"`, ''].join('\n');
 }
 
 /** PATH entries as written, empties dropped — the unit every rule below works on. */
@@ -175,6 +202,68 @@ function applyPath(raw, wanted) {
   }
 }
 
+/** The command name this plugin installs, and the script it must point at. */
+export const SHIM_COMMAND = 'mmap';
+export const SHIM_SCRIPT = 'mmap.mjs';
+
+/**
+ * Written into both shim shapes. The path alone says nothing reliable about
+ * who wrote a file in a shared directory — the same plugin may be installed
+ * under any checkout name — so ownership gets its own line, and old shims are
+ * still recognized by their target.
+ */
+export const SHIM_MARKER = 'mellos-mapping mmap shim';
+
+/**
+ * The `mmap.mjs` bundle a shim launches, normalized to forward slashes, or
+ * undefined when the text quotes no such path. One reader for every question
+ * about ownership: the cmd shape writes the Windows path, the git-bash shape
+ * the forward-slash one, and a rule that knew only one form would answer
+ * differently about a shim's two files.
+ */
+export function shimTarget(content) {
+  const quoted = /"([^"]*mmap\.mjs)"/.exec(content)?.[1];
+  return quoted === undefined ? undefined : quoted.replaceAll('\\', '/');
+}
+
+/**
+ * Is this shim file one of ours — a `mmap` command that launches a
+ * `dist/mmap.mjs` of this plugin family?
+ *
+ * The fallback directory is SHARED (`WindowsApps`, `~/.local/bin`): a file
+ * called `mmap` there may belong to somebody else, and a plugin that overwrites
+ * a stranger's command on its way in has no standing to be careful on the way
+ * out. Ownership is read from the file's own text. Every shim written since the
+ * marker exists carries it — an install under ANY directory name owns its
+ * copies — and shims written before it are recognized by their target, whose
+ * path named the plugin.
+ */
+export function shimIsOurs(content) {
+  if (content.includes(SHIM_MARKER)) return true;
+  const target = shimTarget(content);
+  return target !== undefined && /mellos-mapping/i.test(target);
+}
+
+/**
+ * Does this shim launch exactly `mmapPath`? Both shapes write the path their
+ * own way, so the comparison happens on the normalized form — the rule every
+ * removal in this file uses, or a git-bash copy would outlive the uninstall
+ * that removed its cmd sibling.
+ */
+export function shimLaunches(content, mmapPath) {
+  const target = shimTarget(content);
+  return target !== undefined && target === mmapPath.replaceAll('\\', '/');
+}
+
+/** Read a file's text, or undefined when it is absent or unreadable. */
+function readIfPresent(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The install itself, with the narration stripped out: write the shims, bring
  * the PATH in line, report what happened as data. This outcome object IS the
@@ -183,13 +272,16 @@ function applyPath(raw, wanted) {
  *
  * @returns one of
  *   {kind: 'not-built', missing}  — dist/mmap.mjs absent, nothing written;
- *   {kind: 'installed', binDir, cmdPath, shPath, path, wanted, reason?} —
+ *   {kind: 'installed', binDir, cmdPath, shPath, path, wanted, reason?, alias?} —
  *     shims written; `path` says what happened to the USER PATH:
  *       'unchanged' — the entry was already there,
  *       'updated'   — the entry was appended,
  *       'refused'   — setx would damage this PATH (`reason` says how); the
  *                     entry in `wanted` must be added by hand,
  *       'error'     — setx itself failed (`reason` is its message).
+ *     `alias` is the second copy in a directory the PATH already names, written
+ *     only when the PATH route came up short OR when one is already there and
+ *     needs to keep pointing at this install.
  */
 export function install(localAppData, pluginRoot) {
   const mmapPath = join(pluginRoot, 'dist', 'mmap.mjs');
@@ -211,14 +303,56 @@ export function install(localAppData, pluginRoot) {
   const raw = readUserPath();
   const wanted = pathWith(raw, binDir);
   const plan = planPath(raw, wanted);
-  if (plan.action === 'unchanged') return { kind: 'installed', binDir, cmdPath, shPath, path: 'unchanged', wanted };
+  /**
+   * When the PATH cannot be brought to the shim, bring the shim to the PATH:
+   * same two files, dropped into a directory this machine already searches.
+   *
+   * Two rules keep that from becoming a second install nobody owns. A
+   * candidate is skipped when its `mmap` belongs to somebody else — a shared
+   * directory is not ours to overwrite. And a copy that IS ours is refreshed
+   * on every install, not only when the PATH route fails: the shim embeds the
+   * absolute path of one plugin copy, and an untouched copy from an earlier
+   * install would keep launching a directory the next upgrade deletes.
+   *
+   * @param force - create the copy even when none exists yet (the PATH route
+   *   came up short, so this is the only runnable command).
+   * @returns `{dir, cmdPath, shPath, refreshed}` for the copy, or undefined.
+   */
+  const alias = (force) => {
+    const home = process.env['USERPROFILE'] ?? process.env['HOME'];
+    if (home === undefined || home === '') return undefined;
+    // every candidate gets its own try: a directory that exists and is on the
+    // PATH can still refuse the write, and that is a reason to try the next
+    // one, not to give up on having a runnable command
+    for (const dir of reachableDirs(linkDirCandidates(localAppData, home), process.env['PATH'] ?? '', existsSync)) {
+      const linkedCmd = join(dir, 'mmap.cmd');
+      const linkedSh = join(dir, 'mmap');
+      const existing = [readIfPresent(linkedCmd), readIfPresent(linkedSh)].filter((text) => text !== undefined);
+      const foreign = existing.some((text) => !shimIsOurs(text));
+      if (foreign) continue; // somebody else's command: not ours to touch
+      const refreshed = existing.length > 0;
+      if (!refreshed && !force) continue; // nothing there and nothing to fix
+      try {
+        writeFileSync(linkedCmd, cmdShim(mmapPath));
+        writeFileSync(linkedSh, shShim(mmapPath));
+        return { dir, cmdPath: linkedCmd, shPath: linkedSh, refreshed };
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  };
   if (plan.action === 'refused') {
-    return { kind: 'installed', binDir, cmdPath, shPath, path: 'refused', wanted, reason: plan.reason };
+    // refused means setx would damage this PATH: the alias is the whole answer
+    return { kind: 'installed', binDir, cmdPath, shPath, path: 'refused', wanted, reason: plan.reason, alias: alias(true) };
+  }
+  if (plan.action === 'unchanged') {
+    return { kind: 'installed', binDir, cmdPath, shPath, path: 'unchanged', wanted, alias: alias(false) };
   }
   const written = writeUserPath(wanted);
   return written.ok
-    ? { kind: 'installed', binDir, cmdPath, shPath, path: 'updated', wanted }
-    : { kind: 'installed', binDir, cmdPath, shPath, path: 'error', wanted, reason: written.error };
+    ? { kind: 'installed', binDir, cmdPath, shPath, path: 'updated', wanted, alias: alias(false) }
+    : { kind: 'installed', binDir, cmdPath, shPath, path: 'error', wanted, reason: written.error, alias: alias(true) };
 }
 
 function main() {
@@ -247,11 +381,37 @@ function main() {
   if (uninstall) {
     const binDir = binDirIn(localAppData);
     const raw = readUserPath();
+    const mine = join(pluginRootOf(import.meta.url), 'dist', 'mmap.mjs');
+    // Remove only what launches THIS install. The canonical pair is shared
+    // with every other host running this plugin (one file per shape, last
+    // installer wins), so when a file belongs to another install — or to a
+    // stranger — it stays, and with it the directory and its PATH entry: the
+    // command those files leave behind is theirs, not this uninstall's to take.
+    let stillInUse = false;
     for (const path of [join(binDir, 'mmap.cmd'), join(binDir, 'mmap')]) {
-      rmSync(path, { force: true });
-      console.log(`removed ${path}`);
+      const content = readIfPresent(path);
+      if (content === undefined) continue;
+      if (shimLaunches(content, mine)) {
+        rmSync(path, { force: true });
+        console.log(`removed ${path}`);
+      } else stillInUse = true;
     }
-    applyPath(raw, pathWithout(raw, binDir));
+    // The fallback copies — the route a refused PATH leaves — obey the same
+    // rule, per file, in every candidate directory.
+    const home = process.env['USERPROFILE'] ?? process.env['HOME'] ?? '';
+    for (const dir of home === '' ? [] : linkDirCandidates(localAppData, home)) {
+      for (const candidate of [join(dir, 'mmap.cmd'), join(dir, 'mmap')]) {
+        const content = readIfPresent(candidate);
+        if (content === undefined || !shimLaunches(content, mine)) continue;
+        rmSync(candidate, { force: true });
+        console.log(`removed ${candidate}`);
+      }
+    }
+    if (stillInUse) {
+      console.log(`kept ${binDir} and its PATH entry: another install of this plugin still launches from there.`);
+    } else {
+      applyPath(raw, pathWithout(raw, binDir));
+    }
     console.log('Close your terminal app entirely and reopen it for the change to take effect — a new tab keeps the old PATH.');
     return;
   }
@@ -277,8 +437,14 @@ function main() {
       break;
     case 'refused':
       console.log(`NOT touching your user PATH: ${outcome.reason}.`);
-      console.log('Add this entry yourself, in Settings > "Edit environment variables for your account":');
-      console.log(`  ${outcome.binDir}`);
+      if (outcome.alias !== undefined) {
+        console.log(`The command works anyway: both shims were also written to ${outcome.alias.dir},`);
+        console.log('which is already on your PATH — open a new terminal and type `mmap`.');
+        console.log(`(${outcome.binDir} stays the canonical home; add it in Settings if you prefer one place.)`);
+      } else {
+        console.log('Add this entry yourself, in Settings > "Edit environment variables for your account":');
+        console.log(`  ${outcome.binDir}`);
+      }
       break;
     case 'error':
       console.error(`setx refused: ${outcome.reason}`);
