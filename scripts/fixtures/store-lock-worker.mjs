@@ -1,6 +1,8 @@
 /** Test-only workers. stdout readiness/completion and stdin commands are events. */
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const [mode, moduleUrl, file, label] = process.argv.slice(2);
 const { withStoreLock, storeDirectory } = await import(moduleUrl);
@@ -63,16 +65,21 @@ try {
   } else if (mode === 'wait-for-kernel-release') {
     // Test-only blocking OS wait handles Windows' delayed cleanup after death.
     // The shipped product API remains immediate tryLock/BUSY with no polling.
-    const { waitForLock, unlock } = await import('fs-native-extensions');
+    // Load the exact shipped addon directly. Upstream's development-package
+    // resolver uses Array.prototype.with on macOS, which Node 18 lacks. The
+    // product also deliberately avoids that resolver. Only this test worker
+    // uses the addon's blocking primitive; no product API is added for it.
+    const binding = createRequire(import.meta.url)(fileURLToPath(new URL(
+      `../../dist/native/${process.platform}-${process.arch}/fs-native-extensions.node`, moduleUrl)));
     const fd = openSync(join(storeDirectory(file), '.write-lock'), 'a+');
     let locked = false;
     try {
       report({ type: 'waiting' });
-      await waitForLock(fd); locked = true;
+      binding.waitForLockSync(fd, 0, 0, true); locked = true;
       report({ type: 'locked' });
       command('release');
     } finally {
-      if (locked) unlock(fd);
+      if (locked) binding.unlock(fd, 0, 0);
       closeSync(fd);
     }
     report({ type: 'released' });
