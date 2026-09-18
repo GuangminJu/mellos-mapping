@@ -1,5 +1,5 @@
 /** Cooperative, cross-process transactions for MCP and HTTP writers. */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { serializeMap } from './format.js';
@@ -28,6 +28,42 @@ function deadOwner(lock: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * Delete a lock directory, whether or not `rmSync` is telling the truth.
+ *
+ * On Windows, a recursive `rmSync` can report success and delete NOTHING:
+ * nodejs/node#65578 reports it for every Node from 23.0.0 up to 24.13.0 the
+ * moment any path segment is non-ASCII, and 24.14.0 is the first release we
+ * measured clean. An empty directory is enough to show it, and `force`,
+ * retrying and waiting all change nothing, while the manual walk below does
+ * remove it — the same issue notes `unlinkSync`/`rmdirSync` keep working on
+ * exactly the paths `rm`/`rmSync` fail. Trusting the return value there leaves the lock directory
+ * behind, and a lock directory that outlives its owner is a project nobody
+ * can write to again: this process sees its own live pid and answers BUSY,
+ * and every later one fails to recover the same directory. So the removal is
+ * verified rather than assumed.
+ *
+ * @param lock - the lock directory to remove.
+ * @returns whether the directory is gone afterwards.
+ */
+function removeLockTree(lock: string): boolean {
+  try { rmSync(lock, { recursive: true, force: true }); } catch { /* the walk below still gets its chance */ }
+  if (existsSync(lock)) {
+    try {
+      /** Depth-first, because a directory only goes once it is empty. */
+      const walk = (dir: string): void => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const path = join(dir, entry.name);
+          if (entry.isDirectory()) walk(path); else unlinkSync(path);
+        }
+        rmdirSync(dir);
+      };
+      walk(lock);
+    } catch { /* reported to the caller through the result */ }
+  }
+  return !existsSync(lock);
+}
+
 /** No timed polling: contention is an explicit retryable BUSY result. Never steal a live lock. */
 export function withStoreLock<T>(file: string, action: () => T): T {
   const dir = storeDirectory(file);
@@ -43,8 +79,8 @@ export function withStoreLock<T>(file: string, action: () => T): T {
     if (!deadOwner(lock)) throw new LedgerError('BUSY', `Another writer owns ${lock}; retry after it completes. An orphan without owner metadata needs manual inspection.`);
     try { mkdirSync(join(lock, '.reap')); }
     catch { throw new LedgerError('BUSY', 'Another process is recovering the writer lock.'); }
-    if (!deadOwner(lock)) { rmSync(join(lock, '.reap'), { recursive: true, force: true }); throw new LedgerError('BUSY', 'Writer ownership changed.'); }
-    rmSync(lock, { recursive: true });
+    if (!deadOwner(lock)) { removeLockTree(join(lock, '.reap')); throw new LedgerError('BUSY', 'Writer ownership changed.'); }
+    removeLockTree(lock);
     try { mkdirSync(lock); } catch { throw new LedgerError('BUSY', 'Another writer acquired the recovered lock.'); }
   }
   let initialized = false;
@@ -54,7 +90,13 @@ export function withStoreLock<T>(file: string, action: () => T): T {
     return action();
   } finally {
     // Only remove the directory still owned by this invocation.
-    try { if (!initialized || (JSON.parse(readFileSync(owner, 'utf8')) as { token: string }).token === token) rmSync(lock, { recursive: true }); }
-    catch { /* A cleanup error must not misreport a successfully committed map as unsaved. */ }
+    try {
+      if (!initialized || (JSON.parse(readFileSync(owner, 'utf8')) as { token: string }).token === token) {
+        // A cleanup error must not misreport a successfully committed map as
+        // unsaved, so this stays non-fatal — but it is never silent: a lock
+        // that could not be removed makes every later write answer BUSY.
+        if (!removeLockTree(lock)) process.stderr.write(`mellos-mapping: could not remove ${lock}; writes will report BUSY until it is deleted by hand.\n`);
+      }
+    } catch { /* the map is committed either way */ }
   }
 }

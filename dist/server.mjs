@@ -7196,7 +7196,7 @@ var require_dist = __commonJS({
 });
 
 // src/server/server.ts
-import { existsSync as existsSync8, realpathSync as realpathSync4 } from "node:fs";
+import { existsSync as existsSync9, realpathSync as realpathSync4 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
@@ -23295,7 +23295,7 @@ function saveMapFile(path, map) {
 }
 
 // src/store/transaction.ts
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, rmSync as rmSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readdirSync as readdirSync3, readFileSync as readFileSync4, rmdirSync, rmSync as rmSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname6, join as join5 } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 var LedgerError = class extends Error {
@@ -23327,6 +23327,27 @@ function deadOwner(lock) {
     return false;
   }
 }
+function removeLockTree(lock) {
+  try {
+    rmSync4(lock, { recursive: true, force: true });
+  } catch {
+  }
+  if (existsSync3(lock)) {
+    try {
+      const walk = (dir) => {
+        for (const entry of readdirSync3(dir, { withFileTypes: true })) {
+          const path = join5(dir, entry.name);
+          if (entry.isDirectory()) walk(path);
+          else unlinkSync(path);
+        }
+        rmdirSync(dir);
+      };
+      walk(lock);
+    } catch {
+    }
+  }
+  return !existsSync3(lock);
+}
 function withStoreLock(file, action) {
   const dir = storeDirectory(file);
   mkdirSync3(dir, { recursive: true });
@@ -23344,10 +23365,10 @@ function withStoreLock(file, action) {
       throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
     }
     if (!deadOwner(lock)) {
-      rmSync4(join5(lock, ".reap"), { recursive: true, force: true });
+      removeLockTree(join5(lock, ".reap"));
       throw new LedgerError("BUSY", "Writer ownership changed.");
     }
-    rmSync4(lock, { recursive: true });
+    removeLockTree(lock);
     try {
       mkdirSync3(lock);
     } catch {
@@ -23361,14 +23382,17 @@ function withStoreLock(file, action) {
     return action();
   } finally {
     try {
-      if (!initialized || JSON.parse(readFileSync4(owner, "utf8")).token === token) rmSync4(lock, { recursive: true });
+      if (!initialized || JSON.parse(readFileSync4(owner, "utf8")).token === token) {
+        if (!removeLockTree(lock)) process.stderr.write(`mellos-mapping: could not remove ${lock}; writes will report BUSY until it is deleted by hand.
+`);
+      }
     } catch {
     }
   }
 }
 
 // src/store/project.ts
-import { existsSync as existsSync3, realpathSync } from "node:fs";
+import { existsSync as existsSync4, realpathSync } from "node:fs";
 import { dirname as dirname7, join as join6, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
@@ -23387,7 +23411,7 @@ function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
   }));
   while (true) {
     if (dir !== start && boundaries.has(dir)) return start;
-    if (existsSync3(join6(dir, ".git")) || existsSync3(join6(dir, ".mellos", "map.json")) || existsSync3(join6(dir, ".mellos", "pages"))) return dir;
+    if (existsSync4(join6(dir, ".git")) || existsSync4(join6(dir, ".mellos", "map.json")) || existsSync4(join6(dir, ".mellos", "pages"))) return dir;
     const parent = dirname7(dir);
     if (parent === dir) return start;
     dir = parent;
@@ -23734,7 +23758,7 @@ function summarize(map) {
 
 // src/preview/publisher.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync5, readdirSync as readdirSync3, realpathSync as realpathSync2, rmdirSync } from "node:fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync5, readdirSync as readdirSync4, realpathSync as realpathSync2, rmdirSync as rmdirSync2 } from "node:fs";
 import { dirname as dirname8, join as join7, resolve as resolve2 } from "node:path";
 
 // src/preview/presentation.ts
@@ -23922,7 +23946,7 @@ function acquireLock(directory) {
   while (true) {
     try {
       mkdirSync4(path);
-      return () => rmdirSync(path);
+      return () => rmdirSync2(path);
     } catch (error2) {
       if (error2.code !== "EEXIST") throw error2;
       if (Date.now() >= deadline) throw new Error(`Preview export is busy or was interrupted. Retry; if no exporter is running, remove the stale lock directory: ${path}`);
@@ -23933,7 +23957,7 @@ function acquireLock(directory) {
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
   const enabledFile = join7(directory, ENABLED);
-  const enabled = () => existsSync4(enabledFile);
+  const enabled = () => existsSync5(enabledFile);
   const refresh = (page2) => {
     try {
       const path = previewFile(defaultFile, page2);
@@ -23962,7 +23986,7 @@ function createPreviewPublisher(defaultFile) {
           save(join7(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
-        for (const filename of readdirSync3(directory)) {
+        for (const filename of readdirSync4(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
             save(join7(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
@@ -23992,7 +24016,7 @@ function createPreviewPublisher(defaultFile) {
 
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync5, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
 import { dirname as dirname10, join as join8 } from "node:path";
 
 // src/web/source.ts
@@ -24047,7 +24071,7 @@ async function openWebPreview(defaultFile, entry, page2, terminal = false) {
     }
   }
   if (!url) {
-    if (!existsSync5(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
+    if (!existsSync6(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
     const child = spawn(process.execPath, [entry, "--serve", defaultFile], { detached: true, windowsHide: true, stdio: "ignore" });
     let failure;
     child.on("error", (error2) => {
@@ -24484,7 +24508,7 @@ function paneLine(stateFile, touched, openFailure) {
 }
 
 // src/server/map-service.ts
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 function loadOrEmpty(file) {
   const loaded = loadMapFile(file);
   if (loaded.ok) return loaded;
@@ -24493,7 +24517,7 @@ function loadOrEmpty(file) {
 function mutateMap(file, apply, expectedRevision2) {
   const current = loadOrEmpty(file);
   if (!current.ok) return { ok: false, error: { kind: "load", detail: current.error } };
-  assertRevision(existsSync6(file) ? revisionOf(current.value) : "absent", expectedRevision2);
+  assertRevision(existsSync7(file) ? revisionOf(current.value) : "absent", expectedRevision2);
   const applied = apply(current.value);
   if (!applied.ok) return { ok: false, error: { kind: "refused", detail: applied.error } };
   const saved = saveMapFile(file, applied.value);
@@ -24502,7 +24526,7 @@ function mutateMap(file, apply, expectedRevision2) {
 
 // src/server/pane-launcher.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 import { dirname as dirname12, join as join9 } from "node:path";
 import { fileURLToPath } from "node:url";
 var pageName2 = (page2) => page2 ?? "(default)";
@@ -24546,7 +24570,7 @@ function runLauncher(script, args) {
 }
 function launchPane(args) {
   const script = launcherPath(import.meta.url);
-  if (!existsSync7(script)) return Promise.resolve({
+  if (!existsSync8(script)) return Promise.resolve({
     ok: false,
     output: `the launcher is missing at ${script}. This install is incomplete \u2014 reinstall the plugin (a source checkout needs "npm run build").`
   });
@@ -24637,7 +24661,7 @@ revision: ${revision}` + refreshPreview(page2)), structuredContent: { page: page
   };
   const mutate = (page2, apply, expectedRevision2) => guard(() => withStoreLock(stateFile, () => mutateUnlocked(page2, apply, expectedRevision2)));
   const withPane = (result, page2) => result.isError === true || previews.enabled() ? result : { ...result, ...text(`${result.content[0]?.text ?? ""}
-${existsSync8(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page2)}`) };
+${existsSync9(webRuntimeFile(stateFile)) ? 'web: configured \u2014 the browser reads project map updates. Use mmap_open {surface: "web", page} to open or reconnect; desktop visibility is not tracked.' : currentPaneLine(page2)}`) };
   const knownPages = () => listPageFiles(stateFile).map((f) => pageIdOfFile(stateFile, f)).filter((p) => p !== void 0);
   const refusePageDeletion = (pages, target) => {
     if (target !== void 0 && pages.includes(target)) {
@@ -24698,7 +24722,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
   );
   server.registerTool("mmap_read", readTool(), (input) => guard(() => structured(readMaps(stateFile, input))));
   server.registerTool("mmap_batch", batchTool(), (input) => withPane(mutate(input.page, (map) => {
-    if (!existsSync8(fileOf(input.page)) && !input.operations.some((op) => op.op === "declare")) throw new LedgerError("NOT_FOUND", "Create the page before updating it.");
+    if (!existsSync9(fileOf(input.page)) && !input.operations.some((op) => op.op === "declare")) throw new LedgerError("NOT_FOUND", "Create the page before updating it.");
     return applyBatch(map, input.operations, input.page);
   }, input.expectedRevision), input.page));
   server.registerTool(
@@ -24770,7 +24794,7 @@ note: ${describeStoreError(scopes.error)} \u2014 fix it or rerun setup (mmap_set
       const zoom = clampZoom(input.zoom ?? 0);
       const picture = renderMap(current.value, { color: false, unicode: true, spinnerFrame: 0, zoom }).join("\n");
       const surface = previews.enabled() ? `markdown: ${previewFile(stateFile, input.page)}
-Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync8(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
+Use mmap_open {surface: "markdown", page} to regenerate. Desktop visibility is not tracked.` : existsSync9(webRuntimeFile(stateFile)) ? 'web: configured \u2014 use mmap_open {surface: "web", page} to open or reconnect. Desktop visibility is not tracked.' : currentPaneLine(input.page);
       return text(`${picture}
 ${pagesLine(stateFile, input.page)}
 ${surface}`);

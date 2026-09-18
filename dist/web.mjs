@@ -3703,7 +3703,7 @@ var require_websocket_server = __commonJS({
 });
 
 // src/web/cli.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync6, realpathSync as realpathSync3, rmSync as rmSync4, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, realpathSync as realpathSync3, rmSync as rmSync4, statSync as statSync2 } from "node:fs";
 import { dirname as dirname9, join as join7, resolve as resolve2 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
@@ -4323,7 +4323,7 @@ function loadMapFile(path) {
 }
 
 // src/store/transaction.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync as rmSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, rmdirSync, rmSync as rmSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname4, join as join3 } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 var LedgerError = class extends Error {
@@ -4351,6 +4351,27 @@ function deadOwner(lock) {
     return false;
   }
 }
+function removeLockTree(lock) {
+  try {
+    rmSync3(lock, { recursive: true, force: true });
+  } catch {
+  }
+  if (existsSync2(lock)) {
+    try {
+      const walk = (dir) => {
+        for (const entry of readdirSync2(dir, { withFileTypes: true })) {
+          const path = join3(dir, entry.name);
+          if (entry.isDirectory()) walk(path);
+          else unlinkSync(path);
+        }
+        rmdirSync(dir);
+      };
+      walk(lock);
+    } catch {
+    }
+  }
+  return !existsSync2(lock);
+}
 function withStoreLock(file, action) {
   const dir = storeDirectory(file);
   mkdirSync2(dir, { recursive: true });
@@ -4368,10 +4389,10 @@ function withStoreLock(file, action) {
       throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
     }
     if (!deadOwner(lock)) {
-      rmSync3(join3(lock, ".reap"), { recursive: true, force: true });
+      removeLockTree(join3(lock, ".reap"));
       throw new LedgerError("BUSY", "Writer ownership changed.");
     }
-    rmSync3(lock, { recursive: true });
+    removeLockTree(lock);
     try {
       mkdirSync2(lock);
     } catch {
@@ -4385,7 +4406,10 @@ function withStoreLock(file, action) {
     return action();
   } finally {
     try {
-      if (!initialized || JSON.parse(readFileSync2(owner, "utf8")).token === token) rmSync3(lock, { recursive: true });
+      if (!initialized || JSON.parse(readFileSync2(owner, "utf8")).token === token) {
+        if (!removeLockTree(lock)) process.stderr.write(`mellos-mapping: could not remove ${lock}; writes will report BUSY until it is deleted by hand.
+`);
+      }
     } catch {
     }
   }
@@ -4393,7 +4417,7 @@ function withStoreLock(file, action) {
 
 // src/web/launcher.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
 import { dirname as dirname6, join as join4 } from "node:path";
 
 // src/web/source.ts
@@ -4448,7 +4472,7 @@ async function openWebPreview(defaultFile, entry, page, terminal = false) {
     }
   }
   if (!url) {
-    if (!existsSync2(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
+    if (!existsSync3(entry)) throw new Error(`Web runtime missing: ${entry}. Run npm run build or reinstall the plugin.`);
     const child = spawn(process.execPath, [entry, "--serve", defaultFile], { detached: true, windowsHide: true, stdio: "ignore" });
     let failure;
     child.on("error", (error) => {
@@ -4475,7 +4499,7 @@ import { createServer } from "node:http";
 
 // src/preview/publisher.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync2, realpathSync, rmdirSync } from "node:fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync3, realpathSync, rmdirSync as rmdirSync2 } from "node:fs";
 import { dirname as dirname7, join as join5, resolve } from "node:path";
 
 // src/semantics/vocabulary.ts
@@ -5222,7 +5246,7 @@ function acquireLock(directory) {
   while (true) {
     try {
       mkdirSync3(path);
-      return () => rmdirSync(path);
+      return () => rmdirSync2(path);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       if (Date.now() >= deadline) throw new Error(`Preview export is busy or was interrupted. Retry; if no exporter is running, remove the stale lock directory: ${path}`);
@@ -5233,7 +5257,7 @@ function acquireLock(directory) {
 function createPreviewPublisher(defaultFile) {
   const directory = previewDirectory(defaultFile);
   const enabledFile = join5(directory, ENABLED);
-  const enabled = () => existsSync3(enabledFile);
+  const enabled = () => existsSync4(enabledFile);
   const refresh = (page) => {
     try {
       const path = previewFile(defaultFile, page);
@@ -5262,7 +5286,7 @@ function createPreviewPublisher(defaultFile) {
           save(join5(directory, filename), renderMapMarkdown(item.map, image, pages));
           present.add(filename);
         }
-        for (const filename of readdirSync2(directory)) {
+        for (const filename of readdirSync3(directory)) {
           if (/^(map|page-[a-z0-9][a-z0-9-]{0,63})\.md$/.test(filename) && !present.has(filename)) {
             save(join5(directory, filename), "# \u5730\u56FE\u5DF2\u5220\u9664\n\n\u6B64\u9875\u9762\u5DF2\u4E0D\u5728\u9879\u76EE\u5730\u56FE\u4E2D\u3002\n\n[\u8FD4\u56DE\u5730\u56FE\u76EE\u5F55](index.md)\n");
           }
@@ -5441,14 +5465,14 @@ import { spawn as spawn3 } from "node:child_process";
 import { win32 } from "node:path";
 
 // src/support/star-reminder.ts
-import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync5, realpathSync as realpathSync2 } from "node:fs";
 import { basename as basename3, dirname as dirname8, join as join6 } from "node:path";
 var STAR_URL = "https://github.com/GuangminJu/mellos-mapping";
 var DAY_MS = 864e5;
 function isNpmInstallation(entry) {
   try {
     const root = dirname8(dirname8(realpathSync2(entry)));
-    if (basename3(dirname8(root)).toLowerCase() !== "node_modules" || existsSync4(join6(root, ".git")) || existsSync4(join6(root, ".codex-plugin")) || existsSync4(join6(root, ".claude-plugin"))) return false;
+    if (basename3(dirname8(root)).toLowerCase() !== "node_modules" || existsSync5(join6(root, ".git")) || existsSync5(join6(root, ".codex-plugin")) || existsSync5(join6(root, ".claude-plugin"))) return false;
     const pkg = JSON.parse(readFileSync5(join6(root, "package.json"), "utf8"));
     return pkg.name === "mellos-mapping" && pkg.bin?.mmap === "dist/mmap.mjs";
   } catch {
@@ -5761,7 +5785,7 @@ async function runWeb(args) {
     else throw new Error(usage);
   }
   const project = resolve2(args[0]);
-  if (!existsSync5(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
+  if (!existsSync6(project) || !statSync2(project).isDirectory()) throw new Error(`Project directory does not exist: ${project}`);
   const file = join7(project, STATE_FILE_RELATIVE_PATH);
   if (stop) {
     const url = await runningWebUrl(file);
@@ -5771,7 +5795,7 @@ async function runWeb(args) {
   }
   console.log(JSON.stringify({ surface: terminal ? "web-terminal" : "web", url: await openWebPreview(file, entry, page, terminal), visibility: "unconfirmed" }));
 }
-if (process.argv[1] && existsSync5(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync3(process.argv[1])).href) {
+if (process.argv[1] && existsSync6(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync3(process.argv[1])).href) {
   runWeb(process.argv.slice(2)).catch((error) => {
     console.error(String(error));
     process.exitCode = 1;

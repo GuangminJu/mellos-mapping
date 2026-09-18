@@ -262,7 +262,7 @@ function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
 }
 
 // src/store/transaction.ts
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync as existsSync2, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname as dirname2, join as join2 } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 
@@ -580,6 +580,27 @@ function deadOwner(lock) {
     return false;
   }
 }
+function removeLockTree(lock) {
+  try {
+    rmSync(lock, { recursive: true, force: true });
+  } catch {
+  }
+  if (existsSync2(lock)) {
+    try {
+      const walk = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const path = join2(dir, entry.name);
+          if (entry.isDirectory()) walk(path);
+          else unlinkSync(path);
+        }
+        rmdirSync(dir);
+      };
+      walk(lock);
+    } catch {
+    }
+  }
+  return !existsSync2(lock);
+}
 function withStoreLock(file, action) {
   const dir = storeDirectory(file);
   mkdirSync(dir, { recursive: true });
@@ -597,10 +618,10 @@ function withStoreLock(file, action) {
       throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
     }
     if (!deadOwner(lock)) {
-      rmSync(join2(lock, ".reap"), { recursive: true, force: true });
+      removeLockTree(join2(lock, ".reap"));
       throw new LedgerError("BUSY", "Writer ownership changed.");
     }
-    rmSync(lock, { recursive: true });
+    removeLockTree(lock);
     try {
       mkdirSync(lock);
     } catch {
@@ -614,7 +635,10 @@ function withStoreLock(file, action) {
     return action();
   } finally {
     try {
-      if (!initialized || JSON.parse(readFileSync(owner, "utf8")).token === token) rmSync(lock, { recursive: true });
+      if (!initialized || JSON.parse(readFileSync(owner, "utf8")).token === token) {
+        if (!removeLockTree(lock)) process.stderr.write(`mellos-mapping: could not remove ${lock}; writes will report BUSY until it is deleted by hand.
+`);
+      }
     } catch {
     }
   }
@@ -1791,7 +1815,7 @@ function writeAtomic(path, contents, maxAttempts) {
 }
 
 // src/store/pages.ts
-import { existsSync as existsSync2, readdirSync, rmSync as rmSync3 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync2, rmSync as rmSync3 } from "node:fs";
 import { basename, dirname as dirname4, join as join3 } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join3(STORE_DIR_NAME, "map.json");
@@ -1806,10 +1830,10 @@ function pageIdOfFile(defaultFile, path) {
 }
 function listPageFiles(defaultFile) {
   const out = [];
-  if (existsSync2(defaultFile)) out.push(defaultFile);
+  if (existsSync3(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
-    entries = readdirSync(join3(dirname4(defaultFile), PAGES_DIR_NAME));
+    entries = readdirSync2(join3(dirname4(defaultFile), PAGES_DIR_NAME));
   } catch {
   }
   for (const e of entries.sort()) {
@@ -1827,7 +1851,7 @@ function deletePageFile(path) {
 }
 
 // src/store/channels.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3, rmSync as rmSync5 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync3, rmSync as rmSync5 } from "node:fs";
 import { dirname as dirname6, join as join5 } from "node:path";
 
 // src/store/json-text.ts
@@ -1839,7 +1863,7 @@ function stripBom(text) {
 }
 
 // src/store/viewers.ts
-import { readdirSync as readdirSync2, readFileSync as readFileSync2, statSync, rmSync as rmSync4 } from "node:fs";
+import { readdirSync as readdirSync3, readFileSync as readFileSync2, statSync, rmSync as rmSync4 } from "node:fs";
 import { dirname as dirname5, join as join4 } from "node:path";
 var VIEWERS_DIR_NAME = "viewers";
 var VIEWER_FILE_VERSION = 1;
@@ -1874,7 +1898,7 @@ function paneChannelPath(defaultFile, channel, pid) {
 }
 function takeFocusRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : focusFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync3(targeted) ? targeted : focusFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync4(targeted) ? targeted : focusFilePath(defaultFile);
   let raw;
   try {
     raw = readFileSync3(path, "utf8");
@@ -1904,7 +1928,7 @@ function quitFilePath(defaultFile, pid) {
 }
 function takeQuitRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : quitFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync3(targeted) ? targeted : quitFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync4(targeted) ? targeted : quitFilePath(defaultFile);
   let raw;
   try {
     raw = readFileSync3(path, "utf8");
@@ -1935,7 +1959,7 @@ function configFilePath(defaultFile) {
 }
 
 // src/store/migration.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, renameSync as renameSync2 } from "node:fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync3, renameSync as renameSync2 } from "node:fs";
 import { dirname as dirname8, join as join7 } from "node:path";
 var LEGACY_STATE_FILE_RELATIVE_PATH = join7(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
@@ -1945,13 +1969,13 @@ function migrateLegacyStore(defaultFile) {
   const legacyDefault = join7(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
   const legacyPages = join7(dirname8(legacyDefault), LEGACY_PAGES_DIR_NAME);
   const legacyConfig = join7(dirname8(legacyDefault), LEGACY_CONFIG_FILE_NAME);
-  const hasLegacy = existsSync4(legacyDefault) || existsSync4(legacyPages) || existsSync4(legacyConfig);
-  const hasCurrent = existsSync4(defaultFile) || existsSync4(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync4(configFilePath(defaultFile));
+  const hasLegacy = existsSync5(legacyDefault) || existsSync5(legacyPages) || existsSync5(legacyConfig);
+  const hasCurrent = existsSync5(defaultFile) || existsSync5(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync5(configFilePath(defaultFile));
   if (!hasLegacy || hasCurrent) return false;
   mkdirSync3(dirname8(defaultFile), { recursive: true });
-  if (existsSync4(legacyDefault)) renameSync2(legacyDefault, defaultFile);
-  if (existsSync4(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
-  if (existsSync4(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
+  if (existsSync5(legacyDefault)) renameSync2(legacyDefault, defaultFile);
+  if (existsSync5(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
+  if (existsSync5(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
   return true;
 }
 
@@ -3269,14 +3293,14 @@ import { homedir as homedir2 } from "node:os";
 import { fileURLToPath } from "node:url";
 
 // src/support/star-reminder.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5, realpathSync as realpathSync3 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync5, realpathSync as realpathSync3 } from "node:fs";
 import { basename as basename2, dirname as dirname10, join as join9 } from "node:path";
 var STAR_URL = "https://github.com/GuangminJu/mellos-mapping";
 var DAY_MS = 864e5;
 function isNpmInstallation(entry) {
   try {
     const root = dirname10(dirname10(realpathSync3(entry)));
-    if (basename2(dirname10(root)).toLowerCase() !== "node_modules" || existsSync5(join9(root, ".git")) || existsSync5(join9(root, ".codex-plugin")) || existsSync5(join9(root, ".claude-plugin"))) return false;
+    if (basename2(dirname10(root)).toLowerCase() !== "node_modules" || existsSync6(join9(root, ".git")) || existsSync6(join9(root, ".codex-plugin")) || existsSync6(join9(root, ".claude-plugin"))) return false;
     const pkg = JSON.parse(readFileSync5(join9(root, "package.json"), "utf8"));
     return pkg.name === "mellos-mapping" && pkg.bin?.mmap === "dist/mmap.mjs";
   } catch {
