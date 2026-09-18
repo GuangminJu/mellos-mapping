@@ -15,6 +15,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SETX_VALUE_MAX,
+  SHIM_MARKER,
+  linkDirCandidates,
+  reachableDirs,
+  shimIsOurs,
+  shimLaunches,
+  shimTarget,
   binDirIn,
   cmdShim,
   pathContains,
@@ -32,10 +38,15 @@ describe('the one directory it owns', () => {
 });
 
 describe('the two shims', () => {
+  it('carry the ownership marker both hosts read back — the literal is pinned on both sides', () => {
+    expect(SHIM_MARKER).toBe('mellos-mapping mmap shim');
+  });
+
   it('forwards every argument from cmd and PowerShell', () => {
     const shim = cmdShim('C:\\plugin\\dist\\mmap.mjs');
     expect(shim).toContain('node "C:\\plugin\\dist\\mmap.mjs" %*');
     expect(shim.startsWith('@echo off')).toBe(true);
+    expect(shim).toContain(`rem ${SHIM_MARKER}`); // who wrote this file, said by the file
   });
 
   it('forwards every argument from git-bash, with a path sh will not eat', () => {
@@ -43,6 +54,7 @@ describe('the two shims', () => {
     expect(shim).toContain('exec node "C:/plugin/dist/mmap.mjs" "$@"');
     expect(shim).not.toContain('\\U'); // an sh escape waiting to happen
     expect(shim.startsWith('#!/bin/sh')).toBe(true);
+    expect(shim).toContain(`# ${SHIM_MARKER}`);
   });
 });
 
@@ -103,5 +115,73 @@ describe('the plan every mode executes — decided before anything is done', () 
     const plan = planPath('%USERPROFILE%\\bin', '%USERPROFILE%\\bin;C:\\bin');
     expect(plan.action).toBe('refused');
     expect(plan.reason).toContain('%VARIABLE%');
+  });
+});
+
+describe('a PATH that refuses the edit still gets a working command', () => {
+  const local = 'C:\\Users\\ada\\AppData\\Local';
+  const home = 'C:\\Users\\ada';
+
+  it('offers only per-user directories Windows already searches', () => {
+    const dirs = linkDirCandidates(local, home);
+    expect(dirs[0]).toContain('WindowsApps'); // the App Execution Alias home
+    expect(dirs[1]).toBe(join(home, '.local', 'bin'));
+  });
+
+  it('lists the candidates this PATH can already reach, in the order they should be tried', () => {
+    const [windowsApps, dotLocal] = linkDirCandidates(local, home);
+    const exists = () => true;
+    expect(reachableDirs([windowsApps, dotLocal], `${windowsApps};C:\\Windows`, exists)).toEqual([windowsApps]);
+    expect(reachableDirs([windowsApps, dotLocal], dotLocal, exists)).toEqual([dotLocal]);
+    expect(reachableDirs([windowsApps, dotLocal], 'C:\\Windows', exists)).toEqual([]);
+  });
+
+  it('never picks a directory that does not exist, however well it is named', () => {
+    const [windowsApps] = linkDirCandidates(local, home);
+    expect(reachableDirs([windowsApps], windowsApps, () => false)).toEqual([]);
+  });
+});
+
+describe('a shared directory is not ours to overwrite', () => {
+  const ours = cmdShim('C:\\Users\\ada\\.omp\\plugins\\cache\\mellos-mapping___x___1.0.0\\dist\\mmap.mjs');
+  const oursSh = shShim('C:\\Users\\ada\\.omp\\plugins\\cache\\mellos-mapping___x___1.0.0\\dist\\mmap.mjs');
+
+  it('recognizes every shim this plugin writes — cmd form and git-bash form', () => {
+    expect(shimIsOurs(ours)).toBe(true);
+    expect(shimIsOurs(oursSh)).toBe(true); // the sh path is written with forward slashes
+  });
+
+  it('leaves a stranger mmap command alone', () => {
+    expect(shimIsOurs('@echo off\r\nnode "C:\\tools\\mmap\\index.js" %*\r\n')).toBe(false);
+    expect(shimIsOurs('#!/bin/sh\nexec /usr/bin/mmap "$@"\n')).toBe(false);
+    expect(shimIsOurs('')).toBe(false);
+  });
+});
+
+describe('one ownership reader for both shim shapes', () => {
+  const target = 'C:\\Users\\ada\\.omp\\plugins\\cache\\plugins\\mellos-mapping___x___1.0.0\\dist\\mmap.mjs';
+
+  it('normalizes the cmd and git-bash shapes to one target', () => {
+    expect(shimTarget(cmdShim(target))).toBe(shimTarget(shShim(target)));
+  });
+
+  it('recognizes a shim that launches exactly this bundle — either shape', () => {
+    expect(shimLaunches(cmdShim(target), target)).toBe(true);
+    expect(shimLaunches(shShim(target), target)).toBe(true); // the forward-slash form counts too
+  });
+
+  it('does not mistake another install, or a stranger, for this one', () => {
+    expect(shimLaunches(cmdShim(target.replace('1.0.0', '2.0.0')), target)).toBe(false);
+    expect(shimLaunches('@echo off\r\nnode "C:\\tools\\mmap\\index.js" %*\r\n', target)).toBe(false);
+    expect(shimLaunches('', target)).toBe(false);
+    expect(shimTarget('#!/bin/sh\nexec /usr/bin/mmap "$@"\n')).toBeUndefined();
+  });
+
+  it('owns a shim under any directory name once the marker is on it', () => {
+    const arbitrary = 'C:\\Users\\ada\\Downloads\\mm-2.0\\dist\\mmap.mjs';
+    expect(shimIsOurs(cmdShim(arbitrary))).toBe(true);
+    expect(shimIsOurs(shShim(arbitrary))).toBe(true);
+    // shims from before the marker are still recognized by the path that named the plugin
+    expect(shimIsOurs('@echo off\r\nnode "C:\\x\\mellos-mapping\\dist\\mmap.mjs" %*\r\n')).toBe(true);
   });
 });

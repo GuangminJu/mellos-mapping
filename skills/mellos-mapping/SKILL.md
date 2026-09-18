@@ -42,11 +42,14 @@ spelled out here. Report honestly — an unflattering map is doing its job.
 ## When to open a map
 
 The USER chooses how eager mapping is — once, for themselves, not once per
-project. In Claude Code the answer is already in this session's context: a
-`SessionStart` hook reads it and states it before the conversation begins, so
-there is nothing to probe. In hosts without hooks (Codex CLI, a bare MCP
-client) call `mmap_setup` with no arguments before the first map decision of
-the session; the reply names both scopes and which one governs.
+project. Where the host runs a session adapter, the answer is already in this
+session's context, stated before the conversation begins, so there is nothing to
+probe: Claude Code runs the plugin's `SessionStart` hook, and omp (Oh My Pi)
+loads the same paragraph through the plugin's host adapter
+(`dist/omp-extension.mjs`, declared in `package.json#omp.extensions`, read from
+the same store). In hosts without one (Codex CLI, a bare MCP client) call
+`mmap_setup` with no arguments before the first map decision of the session; the
+reply names both scopes and which one governs.
 
 - `always` — map every structured task: workflows, designs, architecture,
   technical dependencies. Small effort, small map — but a map.
@@ -200,6 +203,11 @@ confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle de
    attached sessions require `MELLOS_MAPPING_TMUX_TARGET`; custom sockets use
    `MELLOS_MAPPING_TMUX_SOCKET` in the MCP server environment. `window: true`
    requests a new tmux window. Do not guess between attached sessions.
+   Under omp (Oh My Pi) nothing about this changes: the same tool runs the same
+   launcher, splitting the Windows Terminal window hosting the omp session
+   (tmux split on Linux/macOS) and reusing the pane already bound to it. omp has
+   no pane of its own inside its TUI, so the split IS the map's home there —
+   never claim a map is visible when the tool reported it could not open one.
    Where the tool cannot help — a client without it, or a machine without
    Windows Terminal or an attached tmux session — relay the launcher's complete
    quoted watcher command for a visible terminal, or use:

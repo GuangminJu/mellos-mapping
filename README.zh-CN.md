@@ -84,6 +84,30 @@ claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install
 钩子），以及 `dist/store-paths.mjs`（存储的路径词汇；纯 node 的面板启动
 脚本从这里导入，而不是自己抄一份文件名）。
 
+**omp（Oh My Pi）** 读的是 Claude Code 版本用的同一套插件布局——同一份市场
+目录、`.mcp.json`、技能与斜杠命令——一份发行包同时服务两个宿主：
+
+```
+omp plugin marketplace add GuangminJu/mellos-mapping
+omp plugin install mellos-mapping@mellos-mapping
+```
+
+这样装跟的是 `main`，而发布就是它上面的版本号提升。要冻结版本，就改把某个
+版本的检出目录加为市场——GitHub Release 里的 Claude Code 版本 ZIP，或按
+tag 检出的克隆：
+
+```
+omp plugin marketplace add "<检出或解压出来的发行目录>"
+omp plugin install mellos-mapping@mellos-mapping
+```
+
+omp 不读 `hooks/hooks.json`，所以那段会话说明由插件的 omp 宿主适配器送达
+（`dist/omp-extension.mjs`，在 `package.json#omp.extensions` 里声明）：同一个
+存储、同一段策略文字，Windows 上的 `mmap` shim 也由它安装。面板仍旧是会话
+旁边的终端分屏。请把它**当插件**安装——`omp plugin link` 与 npm 包都不是插
+件，用它们装会只剩适配器、没有工具。见
+[omp 安装与限制](docs/distributions/omp.md)。
+
 装完之后的第一个会话只会问你**一个**问题——建图要多积极——并把答案记成
 你以后打开的每一个项目的默认。此后钩子会自己把它带进每个新会话；再也没有
 "每个项目设置一遍"这回事。见
@@ -97,7 +121,13 @@ PowerShell）和 `mmap`（git-bash）写进 `%LOCALAPPDATA%\mellos-mapping\bin`�
 所以第一次敲 `mmap` 之前要把终端应用整个关掉重开。PATH 的编辑保持安装器
 原有的承诺：条目已经在里面
 就什么都不做；遇到 `setx` 会损坏的 PATH（`%VARIABLE%` 被展平、超长被截
-断），它干脆拒绝，改为把要手动添加的条目说清楚。
+断），它干脆拒绝。
+
+PATH 被拒绝不等于没命令可用：同样两个 shim 会再写一份到
+`%LOCALAPPDATA%\Microsoft\WindowsApps`（或 `~/.local/bin`）——一个你的 PATH
+本来就有名字的目录——于是**新终端里直接敲 `mmap` 就能用，完全不用改 PATH**。
+PATH 很长的机器正是这种情况，也最需要它。命令可以带要打开的页名
+（`mmap omp-host-support`）；面板已经开着时再敲一次就是关掉它。
 
 它背后的那一步仍然是个独立命令，留给钩子管不到的情形——`--uninstall`，
 或者 shim 还在、PATH 条目却被你删掉之后重新加回去：
@@ -119,6 +149,22 @@ claude plugin marketplace update mellos-mapping && claude plugin update mellos-m
 要两步是因为 `plugin update` 只对比本地缓存的 marketplace 克隆——真正
 拉取本仓库的是第一条命令。重启 Claude Code 生效。发布即 `main` 分支
 上的版本号提升。（在对话里输入 `/plugin` 也能打开同一个管理界面。）
+
+omp 也有自己的两步：
+
+```
+omp plugin marketplace update mellos-mapping && omp plugin upgrade mellos-mapping@mellos-mapping
+```
+
+**先关面板**（面板里按 `q`）：watcher 跑的就是插件副本里的文件，而 Windows 不
+允许改名一个正被打开的文件——开着面板升级会以 `EPERM` 失败并把插件缓存清空
+（旧副本已删、新副本未就位），用 `omp plugin install mellos-mapping@mellos-mapping
+--force` 修回来。然后：第一条刷新市场目录，第二条按目录重装。omp 还会在启动时尽力刷新超过一天没更新过
+的目录条目——除非 `marketplace.autoUpdate` 设为 `off`；默认的 `notify` 模式只把
+"有可用更新"写进 debug 日志，所以让更新**看得见**的是 `marketplace update` 这一
+步。`upgrade` 不比较版本：它按目录里现在指的内容强制重装，同版本号也会重下——
+因此版本号提升是给发行**贴标签**，而不是送达的门槛。之后重启 omp，并把仍显示旧
+运行文件的面板关掉重开（面板里按 `q`，再 `mmap_open`）。
 
 ### 从 0.19 升级
 

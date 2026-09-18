@@ -1,5 +1,7 @@
-#!/usr/bin/env node
-import { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);
+// src/host/omp/extension.ts
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname5, join as join5 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/hook/session-start.ts
 import { spawnSync } from "node:child_process";
@@ -285,19 +287,73 @@ function launchedAsEntry(argv1, moduleUrl) {
 if (launchedAsEntry(process.argv[1], import.meta.url)) {
   main().catch(() => process.exit(0));
 }
+
+// src/host/omp/extension.ts
+var SESSION_CONTEXT_TYPE = "mellos-mapping.session-context";
+function sessionParagraph(projectDir) {
+  const stateFile = join5(projectDir, STATE_FILE_RELATIVE_PATH);
+  const scopes = effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir2()));
+  if (!scopes.ok) return void 0;
+  return sessionStartContext({ policy: scopes.value.effective, hasStore: hasMap(stateFile) });
+}
+function mellosMappingOmp(pi) {
+  const pluginRoot = dirname5(dirname5(fileURLToPath2(import.meta.url)));
+  let armed = true;
+  let installNote;
+  let told;
+  const rearm = async () => {
+    armed = true;
+  };
+  pi.setLabel?.("Mellos Mapping");
+  pi.on("session_start", async () => {
+    armed = true;
+    try {
+      installNote = ensureMmapCommand(pluginRoot);
+    } catch {
+      installNote = void 0;
+    }
+  });
+  pi.on("session_switch", rearm);
+  pi.on("session_branch", rearm);
+  pi.on("session_compact", rearm);
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const cwd = ctx !== null && typeof ctx === "object" && "cwd" in ctx ? ctx.cwd : void 0;
+    const projectDir = typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
+    let paragraph;
+    let broken = false;
+    try {
+      paragraph = sessionParagraph(projectDir);
+    } catch {
+      paragraph = void 0;
+    }
+    if (paragraph === void 0) {
+      broken = !storeIsReadable(projectDir);
+    }
+    const content = [paragraph, installNote].filter((part) => part !== void 0).join("\n\n");
+    const owed = armed || paragraph !== void 0 && paragraph !== told;
+    if (!owed || broken || content === "") {
+      if (!broken) armed = false;
+      return void 0;
+    }
+    armed = false;
+    told = paragraph;
+    const message = {
+      customType: SESSION_CONTEXT_TYPE,
+      content,
+      // Standing instruction, not conversation: the model reads it, and the
+      // transcript does not grow a message the user never sent.
+      display: false,
+      attribution: "agent"
+    };
+    return { message };
+  });
+}
+function storeIsReadable(projectDir) {
+  const stateFile = join5(projectDir, STATE_FILE_RELATIVE_PATH);
+  return effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir2())).ok;
+}
 export {
-  ensureMmapCommand,
-  hasMap,
-  hookOutput,
-  installContextLine,
-  launchedAsEntry,
-  mmapBinDir,
-  mmapCommandResolves,
-  mmapFallbackDirs,
-  mmapShimCurrent,
-  mmapShimFilePath,
-  parseHookInput,
-  pathNames,
-  sessionStartContext,
-  shimIsOurs
+  SESSION_CONTEXT_TYPE,
+  mellosMappingOmp as default,
+  sessionParagraph
 };

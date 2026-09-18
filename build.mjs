@@ -102,6 +102,13 @@ await build({ ...shared, banner: {}, entryPoints: ['scripts/mmap.mjs'], outfile:
 await build({ ...shared, entryPoints: ['src/hook/session-start.ts'], outfile: 'dist/hook-session-start.mjs' });
 
 /**
+ * The omp host adapter. `package.json#omp.extensions` names this exact path,
+ * and omp loads extension modules as IMPORTS — so no shebang (the banner is
+ * dropped), and the entry must keep default-exporting the factory.
+ */
+await build({ ...shared, banner: {}, entryPoints: ['src/host/omp/extension.ts'], outfile: 'dist/omp-extension.mjs' });
+
+/**
  * The store's own path vocabulary, for the plain-node launcher scripts.
  *
  * scripts/open-pane.mjs runs on bare node and cannot import the TypeScript
@@ -146,5 +153,5 @@ for (const file of ['server.mjs', 'watch.mjs', 'preview.mjs', 'web.mjs', 'mmap.m
 
 console.log(`cleaned: ${OUTPUT_DIRS.join(', ')}`);
 console.log(
-  'bundled: dist/server.mjs, dist/watch.mjs, dist/preview.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/store-paths.mjs',
+  'bundled: dist/server.mjs, dist/watch.mjs, dist/preview.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/omp-extension.mjs, dist/store-paths.mjs',
 );

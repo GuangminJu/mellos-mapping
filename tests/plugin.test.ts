@@ -113,3 +113,26 @@ describe('nothing drops the registration on the way to a user', () => {
     expect(manifest.files).not.toContain('hooks');
   });
 });
+
+/**
+ * omp has no `hooks/hooks.json`, so its session paragraph comes from an
+ * extension module — and an extension module is named by a MANIFEST FIELD
+ * pointing at a bundle the build must have produced. Drift between the two
+ * fails the same silent way the hook registration does: the host imports a
+ * path that is not there, mapping simply stops being mentioned, and nothing
+ * reports it. Same contract, second host.
+ */
+describe('the omp session adapter is declared where omp looks', () => {
+  interface OmpManifest {
+    readonly omp?: { readonly extensions?: readonly string[] };
+  }
+
+  it('names, in package.json#omp.extensions, a bundle the build emits', () => {
+    const manifest = JSON.parse(read('package.json')) as OmpManifest;
+    const entry = manifest.omp?.extensions?.[0];
+    expect(entry, 'package.json no longer declares an omp extension').toBeDefined();
+    const relative = (entry ?? '').replace(/^\.\//, '');
+    expect(relative).not.toBe('');
+    expect(read('build.mjs')).toContain(`outfile: '${relative}'`);
+  });
+});

@@ -37,6 +37,11 @@ try {
     } else {
       assert.equal(existsSync(join(runtime, '.codex-plugin')), false);
       assert.ok(existsSync(join(runtime, 'dist/hook-session-start.mjs')));
+      // omp installs this same edition: its adapter must be declared AND packed,
+      // or the host imports a manifest entry that resolves to nothing.
+      const ompEntry = JSON.parse(readFileSync(join(runtime, 'package.json'), 'utf8')).omp?.extensions?.[0];
+      assert.equal(typeof ompEntry, 'string', 'the Claude edition no longer declares package.json#omp.extensions');
+      assert.ok(existsSync(join(runtime, ompEntry.replace(/^\.\//, ''))), `the Claude edition is missing ${ompEntry}`);
     }
     console.log(`${edition}: complete clone, checksums, dependency-free installer and eight-tool MCP handshake passed.`);
   }
