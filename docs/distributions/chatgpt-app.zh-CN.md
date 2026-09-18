@@ -8,8 +8,11 @@
 
 ## 一次安装
 
-先装好 Node.js 18+，以及支持 `codex plugin add` 的 Codex CLI（实测版本
-0.153.4）；确保终端能找到 `node` 和 `codex`。在克隆或解压后的目录运行：
+先装好 Node.js 18.17 及以上的 18.x，或 20.3 及以上版本，以及支持 `codex plugin add`
+的 Codex CLI（实测版本 0.153.4）。支持 Windows 10+、macOS 13.0+ 和 glibc 2.28+ 的
+Linux，均支持 x64 与 arm64；系统还须满足所选 Node.js 版本的更高要求。
+发行包自带原生锁绑定，无需本地编译。确保终端能找到 `node` 和
+`codex`。在克隆或解压后的目录运行：
 
 ```sh
 node install.mjs
@@ -17,7 +20,7 @@ node install.mjs
 
 不需要 `npm install`、构建、Python 或手改 JSON/TOML。安装器会检查文件校验值和
 真实 MCP 连接，将运行文件复制到 `~/.mellos/installations/chatgpt-app/`，注册专用
-插件市场、安装技能并注册六个工具。其他插件、项目地图和既有使用偏好均保留。
+插件市场、安装技能并注册八个工具。其他插件、项目地图和既有使用偏好均保留。
 完成后可移动或删除克隆目录。缺少前置软件时会明确报错。
 
 安装后在 Codex 模式开启**新对话**，直接说：

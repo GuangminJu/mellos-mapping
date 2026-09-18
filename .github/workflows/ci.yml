@@ -40,3 +40,26 @@ jobs:
       - name: committed dist matches src
         if: runner.os == 'Linux'
         run: git diff --exit-code -- dist
+
+  lock-runtime:
+    name: lock runtime (${{ matrix.os }}, Node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['18.17.0', '20.3.0', '24']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      # Build tools use the development runtime. The shipped code and native
+      # addons are then exercised under each supported runtime floor/current.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node scripts/check-store-lock.mjs

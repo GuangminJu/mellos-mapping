@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Use an OS exclusive lock on a permanent `.mellos/.write-lock` file for all
+  cooperating map writers. Process termination releases ownership without PID
+  recovery or recursive directory deletion; contention still returns `BUSY`.
+- Refuse legacy lock directories and running viewers with the old locking
+  protocol. Stop old writers before migrating their directory; never remove the
+  new regular lock file. See [project locking](docs/locking.md) for upgrade steps.
+- Bundle native locks for Windows, macOS and glibc Linux on x64 and arm64, with
+  no installation-time compilation. Runtime Node.js now requires
+  `^18.17.0 || >=20.3.0`; OS minimums are documented in the locking guide.
+- Clarify that stale-write rejection requires `expectedRevision`; omitting it
+  retains compatibility but does not protect edits based on an earlier read.
+
 ## 0.24.0
 
 - Added an optional, one-time GitHub Star reminder for npm/npx installations

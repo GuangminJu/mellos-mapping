@@ -71,6 +71,7 @@
     "README.zh-CN.md",
     "docs/codex.md",
     "docs/map-api.md",
+    "docs/locking.md",
     "scripts/codex-register.mjs",
     "scripts/codex-cli.mjs",
     "scripts/install-mmap-command.mjs",
@@ -82,7 +83,7 @@
     "scripts/watcher-command.mjs"
   ],
   "engines": {
-    "node": ">=18"
+    "node": "^18.17.0 || >=20.3.0"
   },
   "scripts": {
     "test": "vitest run",
@@ -94,9 +95,10 @@
     "check:package": "node scripts/check-package-surface.mjs",
     "check:codex": "node scripts/check-codex-package.mjs",
     "check:reuse": "node scripts/check-reuse.mjs",
+    "check:locks": "node scripts/check-store-lock.mjs",
     "benchmark:render": "node scripts/benchmark-render.mjs",
     "prepack": "npm run build",
-    "verify": "npm run typecheck && npm run test && npm run build && npm run check:reuse && npm run check:package && npm run check:codex && npm run check:release"
+    "verify": "npm run typecheck && npm run test && npm run build && npm run check:locks && npm run check:reuse && npm run check:package && npm run check:codex && npm run check:release"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -105,6 +107,7 @@
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "esbuild": "^0.25.0",
+    "fs-native-extensions": "1.5.1",
     "typescript": "^5.8.0",
     "vitest": "^4.1.11",
     "ws": "8.21.3",

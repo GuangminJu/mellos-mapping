@@ -12,8 +12,12 @@ npm run verify
 ```
 
 Use Node.js 22.12+ for development. `verify` runs `typecheck`, `test`, `build`,
-`check:reuse`, `check:package`, `check:codex`, and `check:release`, in that order. CI runs
+`check:locks`, `check:reuse`, `check:package`, `check:codex`, and `check:release`, in that order. CI runs
 the same command on Linux, macOS and Windows against Node 22.
+
+CI also exercises the built OS lock protocol on those three systems using
+Node 18.17, 20.3 and 24. `check:locks` coordinates real processes through
+completion messages, including forced termination; it does not poll for locks.
 
 For model-driven map reuse acceptance, first build the release editions with
 `npm run check:release`, then run `node scripts/check-codex-dialogue.mjs cli`.

@@ -9,9 +9,12 @@ The ordinary web chat surface is not an installation target for this package.
 
 ## Install once
 
-Install Node.js 18+ and a Codex CLI that supports `codex plugin add` (tested with
-0.153.4). Make `node` and `codex` available on PATH. From this clone or extracted
-release folder, run:
+Install Node.js 18.17+ on the 18.x line, or 20.3+, and a Codex CLI that supports
+`codex plugin add` (tested with 0.153.4). Supported platforms are Windows 10+,
+macOS 13.0+ and Linux with glibc 2.28+, each on x64 or arm64. The OS must also meet
+the selected Node.js version's requirements. Native lock bindings are included;
+no local compilation is needed. Make `node` and `codex` available on PATH.
+From this clone or extracted release folder, run:
 
 ```sh
 node install.mjs

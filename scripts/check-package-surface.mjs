@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NATIVE_LOCK_FILES } from './native-lock-assets.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -72,7 +73,10 @@ if (documentStart < 0) {
 const [tarball] = JSON.parse(lines.slice(documentStart).join('\n'));
 const files = new Set(tarball.files.map((entry) => entry.path));
 
-const promised = [...new Set([...exportTargets(manifest.exports), ...Object.values(manifest.bin)])];
+const promised = [...new Set([
+  ...exportTargets(manifest.exports), ...Object.values(manifest.bin),
+  ...NATIVE_LOCK_FILES, 'docs/locking.md',
+])];
 const missing = promised.filter((path) => !files.has(path));
 
 /** A packed path is declared when it is a `files` entry or lives under one. */
@@ -94,5 +98,5 @@ if (undeclared.length > 0) {
 if (missing.length > 0 || undeclared.length > 0) process.exit(1);
 
 console.log(
-  `${tarball.filename}: ${files.size} files, all ${promised.length} exports/bin targets present, nothing undeclared.`,
+  `${tarball.filename}: ${files.size} files, all ${promised.length} exports/bin/runtime targets present, nothing undeclared.`,
 );

@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchedAsEntry } from './codex-cli.mjs';
+import { NATIVE_LOCK_FILES } from './native-lock-assets.mjs';
 
 /** Explicit allowlist: never copy project maps, dependencies or Claude hooks. */
 export const CODEX_FILES = [
@@ -24,6 +25,7 @@ export const CODEX_FILES = [
   'dist/web/TERMINAL-LICENSES.txt',
   'dist/mmap.mjs',
   'dist/store-paths.mjs',
+  ...NATIVE_LOCK_FILES,
   'scripts/codex-cli.mjs',
   'scripts/codex-register.mjs',
   'scripts/install-mmap-command.mjs',
@@ -35,6 +37,7 @@ export const CODEX_FILES = [
   'scripts/watcher-command.mjs',
   'docs/codex.md',
   'docs/map-api.md',
+  'docs/locking.md',
   'LICENSE',
 ];
 
