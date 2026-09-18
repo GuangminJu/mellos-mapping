@@ -64,20 +64,35 @@ a group does not silently move members: include their intended node moves in
 the same update or transaction. Normal single-field changes keep the old graph
 constraints; use a batch for changes that require a coordinated final graph.
 
-Every graph writer in the current MCP, HTTP viewer and watcher uses a cooperative
-cross-process project lock. MCP expectedRevision is compared inside that lock
-before loading the proposed changes into the saved map. `CONFLICT` requires a
-fresh read and reconsideration of the edit. `BUSY` means another transaction is
-active; retry after it completes. There is no background lock polling. Locks are
-released on normal completion/error; a confirmed dead PID can be recovered.
-An incomplete owner file after an abrupt crash is refused for manual inspection,
-not guessed stale from its age.
+Every graph writer in the current MCP, HTTP viewer and watcher uses the same
+`withStoreLock` boundary. It takes a non-blocking OS exclusive lock on one fixed
+regular file, `.mellos/.write-lock`; named pages and the default page share it.
+That file is separate from the map JSON files and is never removed or renamed
+as part of locking. The read, revision check, change and save happen while the
+lock is held.
+Contention returns `BUSY`; retry after the other operation completes. There is
+no background lock polling. `LOCK_MIGRATION_REQUIRED` means the lock path is
+still a directory from the old protocol; `LOCK_UNAVAILABLE` means the required
+native binding or supported platform is unavailable. Neither error permits an
+unlocked write. Normal completion/error releases the lock, and the OS also
+releases it when the owning process exits or crashes. A leftover lock
+file is expected and does not indicate a live or stale owner.
+
+MCP `expectedRevision` is optional. When supplied, it is compared inside the
+lock; `CONFLICT` requires a fresh read and reconsideration of the edit. Omitting
+it still serializes the operation against other writers, but does not check
+whether its inputs came from an older read. A later update can overwrite the
+same field or replace an entire `context` or `sources` value. Pass the revision
+from the page read whenever an edit depends on that read.
 
 Low-level library saveMapFile, hand edits, and older running processes do not
-participate in this contract. Restart MCP processes and native watchers after
-upgrading. Opening a Web surface upgrades services that lack format-2 support;
-existing tabs must reconnect with the newly returned URL. Atomic file
-replacement alone does not make a caller's stale read/modify/write safe.
+participate in this contract. Atomic file replacement alone does not make a
+caller's stale read/modify/write safe. Stop all old MCP, HTTP viewer and watcher
+processes for the project before upgrading; restart the HTTP service as well
+as reopening its tabs. A leftover old lock directory requires the manual
+[migration steps](locking.md#upgrade-from-directory-locks). There is no hot
+upgrade of the lock protocol, and supporting map format 2 alone does not
+establish that all writers use the new lock.
 
 Legacy `mmap_remove {pages:[...]}` remains a separately documented batch of file
 deletions, with explicit partial success and historical reference behavior. It
@@ -106,7 +121,8 @@ and the page is saved once; a refusal preserves the original file bytes.
 ```
 
 Machine-readable error codes include NOT_FOUND, INVALID_STORE, REFUSED,
-CONFLICT, BUSY, INVALID_CURSOR, INVALID_ARGUMENT, REFERENCED and SAVE_FAILED.
+CONFLICT, BUSY, LOCK_MIGRATION_REQUIRED, LOCK_UNAVAILABLE, INVALID_CURSOR,
+INVALID_ARGUMENT, REFERENCED and SAVE_FAILED.
 Malformed schema inputs remain MCP invalid-argument errors. Read calls do not
 open panels or create page files.
 

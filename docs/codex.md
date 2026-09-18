@@ -6,7 +6,10 @@ has its own skill and includes no Claude SessionStart hook or MCP configuration.
 
 ## Install and update
 
-Requires Node.js 18+ and a Codex CLI with plugin commands (tested with 0.153.4).
+Requires Node.js 18.17+ on the 18.x line, or 20.3+, and a Codex CLI with plugin
+commands (tested with 0.153.4). Supported platforms are Windows 10+, macOS 13.0+
+and Linux with glibc 2.28+, each on x64 or arm64. The OS must also meet the selected
+Node.js version's requirements. Native lock bindings ship with the package.
 From the `chatgpt-app` branch run `node install.mjs`; from `main` run
 `node install.mjs chatgpt-app`. Committed bundles need no build or npm dependencies.
 

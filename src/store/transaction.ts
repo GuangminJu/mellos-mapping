@@ -1,9 +1,13 @@
 /** Cooperative, cross-process transactions for MCP and HTTP writers. */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { serializeMap } from './format.js';
+import { nativeLock } from './native-lock.js';
 import type { MellosMap } from '../domain/types.js';
+
+/** Viewer health must identify the writer protocol before a new client reuses it. */
+export const STORE_LOCK_PROTOCOL = 'os-file-v1';
 
 export class LedgerError extends Error {
   constructor(public readonly code: string, message: string, public readonly details: Record<string, unknown> = {}) { super(message); }
@@ -19,42 +23,65 @@ export function storeDirectory(file: string): string {
   return dir.endsWith('/pages') || dir.endsWith('\\pages') ? dirname(dir) : dir;
 }
 
-function deadOwner(lock: string): boolean {
-  try {
-    const owner = JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')) as { pid?: number };
-    if (!Number.isSafeInteger(owner.pid) || owner.pid! <= 0) return false;
-    try { process.kill(owner.pid!, 0); return false; }
-    catch (e) { return (e as NodeJS.ErrnoException).code === 'ESRCH'; }
-  } catch { return false; }
+function checkLockPath(lock: string): void {
+  const entry = lstatSync(lock, { throwIfNoEntry: false });
+  if (entry?.isDirectory()) {
+    throw new LedgerError('LOCK_MIGRATION_REQUIRED',
+      `Legacy directory lock at ${lock}. Stop all old MCP servers, viewers and watchers for this project, then move that directory aside for inspection and retry. Never remove the new regular lock file.`,
+      { path: lock });
+  }
+  if (entry && !entry.isFile()) {
+    throw new LedgerError('LOCK_UNAVAILABLE', `Project lock must be a regular file, not a symlink or special file: ${lock}`, { path: lock });
+  }
 }
 
-/** No timed polling: contention is an explicit retryable BUSY result. Never steal a live lock. */
-export function withStoreLock<T>(file: string, action: () => T): T {
+/**
+ * A synchronous transaction on a permanent, independent OS lock file.
+ * The action must finish synchronously; all cooperating writers use this entry.
+ * Never unlink/rename this file: another opener must reach the same lock object.
+ * Contention is BUSY immediately, with no timer, stale lease or PID recovery.
+ */
+export function withStoreLock<T>(file: string, action: () => T & (T extends PromiseLike<unknown> ? never : unknown)): T {
+  let backend;
+  try { backend = nativeLock(); }
+  catch (error) {
+    throw new LedgerError('LOCK_UNAVAILABLE', `Cannot load the operating-system lock backend: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const dir = storeDirectory(file);
   mkdirSync(dir, { recursive: true });
   const lock = join(dir, '.write-lock');
-  const owner = join(lock, 'owner.json');
-  const token = randomUUID();
-  try { mkdirSync(lock); }
+  checkLockPath(lock);
+  let fd: number;
+  // a+ atomically opens/creates without truncation. At a legacy/new startup
+  // race, either old mkdir wins (we refuse its directory), or our file wins
+  // (old mkdir gets EEXIST and cannot find owner.json, so refuses to write).
+  try { fd = openSync(lock, 'a+', 0o600); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    // Reapers serialize inside the old directory and recheck its owner after acquiring.
-    // Missing/invalid owners are deliberately not reclaimed on an age heuristic.
-    if (!deadOwner(lock)) throw new LedgerError('BUSY', `Another writer owns ${lock}; retry after it completes. An orphan without owner metadata needs manual inspection.`);
-    try { mkdirSync(join(lock, '.reap')); }
-    catch { throw new LedgerError('BUSY', 'Another process is recovering the writer lock.'); }
-    if (!deadOwner(lock)) { rmSync(join(lock, '.reap'), { recursive: true, force: true }); throw new LedgerError('BUSY', 'Writer ownership changed.'); }
-    rmSync(lock, { recursive: true });
-    try { mkdirSync(lock); } catch { throw new LedgerError('BUSY', 'Another writer acquired the recovered lock.'); }
+    checkLockPath(lock);
+    throw new LedgerError('LOCK_UNAVAILABLE', `Cannot open project lock ${lock}: ${error instanceof Error ? error.message : String(error)}`, { path: lock });
   }
-  let initialized = false;
+  let acquired = false;
   try {
-    writeFileSync(owner, JSON.stringify({ pid: process.pid, token }), { flag: 'wx' });
-    initialized = true;
+    checkLockPath(lock);
+    if (!fstatSync(fd).isFile()) throw new LedgerError('LOCK_UNAVAILABLE', `Project lock is not a regular file: ${lock}`);
+    try { acquired = backend.tryLock(fd); }
+    catch (error) {
+      throw new LedgerError('LOCK_UNAVAILABLE', `Cannot acquire project lock ${lock}: ${error instanceof Error ? error.message : String(error)}`, { path: lock });
+    }
+    if (!acquired) throw new LedgerError('BUSY', `Another writer owns ${lock}; retry after it completes.`);
     return action();
   } finally {
-    // Only remove the directory still owned by this invocation.
-    try { if (!initialized || (JSON.parse(readFileSync(owner, 'utf8')) as { token: string }).token === token) rmSync(lock, { recursive: true }); }
-    catch { /* A cleanup error must not misreport a successfully committed map as unsaved. */ }
+    // Closing also releases this descriptor's lock if explicit unlock fails.
+    // Cleanup must not misreport an already committed map as unsaved.
+    try { if (acquired) backend.unlock(fd); }
+    catch { warnLockCleanup(`Could not explicitly unlock ${lock}; closing its file handle.`); }
+    finally {
+      try { closeSync(fd); }
+      catch { warnLockCleanup(`Could not close the project lock handle for ${lock}; restart this process before retrying writes.`); }
+    }
   }
+}
+
+function warnLockCleanup(message: string): void {
+  try { process.stderr.write(`mellos-mapping: ${message}\n`); } catch { /* Preserve the action's result. */ }
 }

@@ -14,6 +14,7 @@ import { rm, mkdir, copyFile, chmod, readFile, writeFile } from 'node:fs/promise
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { buildNativeLock } from './scripts/build-native-lock.mjs';
 
 /** Anchor every path at this file, so the build does not depend on the caller's cwd. */
 const root = dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,8 @@ for (const dir of OUTPUT_DIRS) {
   await rm(join(root, dir), { recursive: true, force: true });
 }
 
+await buildNativeLock();
+
 const shared = {
   // Resolve entry points and outfiles against the repo root, not the cwd.
   absWorkingDir: root,
@@ -48,14 +51,14 @@ const shared = {
   banner: {
     // Shebang first so npm bin shims can exec the bundles directly on POSIX;
     // then the createRequire shim: some deps resolve optional requires at runtime.
-    js: "#!/usr/bin/env node\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+    js: "#!/usr/bin/env node\nimport { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);",
   },
 };
 
 await build({ ...shared, entryPoints: ['src/server/server.ts'], outfile: 'dist/server.mjs' });
 await build({ ...shared, entryPoints: ['src/watch/cli.ts'], outfile: 'dist/watch.mjs' });
 await build({ ...shared, banner: {}, entryPoints: ['src/preview/cli.ts'], outfile: 'dist/preview.mjs' });
-await build({ ...shared, banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" }, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
+await build({ ...shared, banner: { js: "import { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);" }, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
 await build({ ...shared, banner: {}, entryPoints: ['src/web/terminal-worker.ts'], outfile: 'dist/terminal-worker.mjs' });
 await build({ absWorkingDir: root, bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
   entryPoints: ['src/web/app.ts'], outfile: 'dist/web/app.js', legalComments: 'none' });

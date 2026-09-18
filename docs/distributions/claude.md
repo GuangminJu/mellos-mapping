@@ -7,7 +7,11 @@ drawn as ghost nodes; active work spins; verified work turns green with evidence
 
 ## Install once
 
-Requires Node.js 18+ and Claude Code on PATH. From this clone or extracted release:
+Requires Node.js 18.17+ on the 18.x line, or 20.3+, and Claude Code on PATH.
+Supported platforms are Windows 10+, macOS 13.0+ and Linux with glibc 2.28+,
+each on x64 or arm64. The OS must also meet the selected Node.js version's
+requirements. Native lock bindings are included; no local compilation is needed.
+From this clone or extracted release:
 
 ```sh
 node install.mjs

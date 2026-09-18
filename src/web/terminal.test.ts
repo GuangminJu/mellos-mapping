@@ -48,7 +48,7 @@ describe('web terminal transport', () => {
     const project = mkdtempSync(join(tmpdir(), 'mellos-web-alias-')); temporary.push(project);
     const alias = join(project, 'runtime'); symlinkSync(join(root, 'dist'), alias, process.platform === 'win32' ? 'junction' : 'dir');
     const result = spawnSync(process.execPath, [join(alias, 'web.mjs'), '--help'], { encoding: 'utf8', windowsHide: true });
-    expect(result.status).toBe(0); expect(result.stdout).toContain('--terminal');
+    expect(result.status, result.stderr).toBe(0); expect(result.stdout).toContain('--terminal');
   });
   it('strictly bounds sizes, input and messages', () => {
     for (const value of [{ type: 'start', cols: 19, rows: 20 }, { type: 'resize', cols: 100, rows: 201 }, { type: 'input', data: 'a'.repeat(4097) }, { type: 'start', cols: 80, rows: 24, command: 'anything' }, { type: 'exec', data: 'anything' }, null]) expect(parseTerminalInput(JSON.stringify(value))).toBeUndefined();

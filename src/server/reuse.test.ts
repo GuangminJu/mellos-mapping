@@ -133,7 +133,7 @@ it('deletes default and named pages with revision and inbound-reference checks',
 
 it('holds a cooperative lock, refuses another owner and releases after an exception', () => {
   expect(() => withStoreLock(file, () => withStoreLock(file, () => 1))).toThrow('Another writer');
-  expect(existsSync(join(dir, '.mellos/.write-lock'))).toBe(false);
+  expect(existsSync(join(dir, '.mellos/.write-lock'))).toBe(true);
   expect(withStoreLock(file, () => 2)).toBe(2);
 });
 

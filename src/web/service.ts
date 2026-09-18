@@ -5,7 +5,7 @@ import { deletePageFile, describeStoreError, pageFilePath, type PageId } from '.
 import { createPreviewPublisher } from '../preview/publisher.js';
 import { readWebSnapshot } from './source.js';
 import { attachTerminalService } from './terminal-service.js';
-import { LedgerError, withStoreLock } from '../store/transaction.js';
+import { LedgerError, STORE_LOCK_PROTOCOL, withStoreLock } from '../store/transaction.js';
 import { openStarInDefaultBrowser } from '../support/open-star.js';
 
 export interface WebAssets {
@@ -45,7 +45,7 @@ export async function startWebService(defaultFile: string, assets: WebAssets, op
         const asset = new Map<string, readonly [string, string]>([['terminal.js', [assets.terminal.javascript, 'text/javascript']], ['terminal.css', [assets.terminal.css, 'text/css']], ['xterm.css', [assets.terminal.xtermCss, 'text/css']]]).get(route);
         if (asset) { send(res, 200, asset[0], `${asset[1]}; charset=utf-8`); return; }
       }
-      if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, formats: [1, 2], surfaces: terminalService ? ['web', 'web-terminal'] : ['web'] })); return; }
+      if (req.method === 'GET' && route === 'api/health') { send(res, 200, JSON.stringify({ file: defaultFile, pid: process.pid, formats: [1, 2], lockProtocol: STORE_LOCK_PROTOCOL, surfaces: terminalService ? ['web', 'web-terminal'] : ['web'] })); return; }
       if (req.method === 'POST' && route === 'api/star-reminder/open') {
         // A user click sends an empty same-origin POST. This is not an open-URL API.
         if (req.headers.origin !== origin) { send(res, 403, '{"error":"Origin refused"}'); return; }

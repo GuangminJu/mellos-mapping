@@ -61,7 +61,11 @@ Clone the branch for your host, then run one command. No build is required.
 | `claude` | Claude Code | `node install.mjs` |
 | `chatgpt-app` | ChatGPT desktop, Codex mode | `node install.mjs` |
 
-Requires Node.js 18+ and the corresponding host CLI on PATH. The installer checks
+Requires Node.js 18.17+ on the 18.x line, or 20.3+, and the corresponding host CLI
+on PATH. Supported platforms are Windows 10+, macOS 13.0+ and Linux with glibc
+2.28+, each on x64 or arm64. The OS must also meet the selected Node.js version's
+requirements. Native lock bindings ship with the release; no local compilation
+is needed. The installer checks
 release integrity and all eight MCP tools, retains the runtime outside the clone,
 and configures the host. Start a new conversation after installation.
 See [release and branch instructions](docs/releasing.md).
@@ -81,7 +85,9 @@ Or one line in a terminal:
 claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install mellos-mapping@mellos-mapping
 ```
 
-Requires Node.js 18+ on PATH (install Node separately when using native Claude Code). No build step: `dist/` is committed, so a clone runs as-is —
+Requires the same [Node.js and platform versions](#install) on PATH (install
+Node separately when using native Claude Code). No build step: `dist/` is
+committed, so a clone runs as-is —
 `dist/server.mjs` (the MCP server), `dist/watch.mjs` (the pane),
 `dist/mmap.mjs` (the `mmap` toggle), `dist/hook-session-start.mjs` (the
 `SessionStart` hook that `hooks/hooks.json` registers) and
@@ -446,24 +452,31 @@ State lives in the tool-owned `.mellos/` directory at the project root:
 | `.mellos/quit` | one-shot "close yourself" request from the `mmap` toggle, consumed and deleted the same way |
 | `.mellos/viewers/<pid>.json` | one report per live pane — the page it is showing, whether auto-follow is on — refreshed every second while it runs (see [Who is watching](#who-is-watching)) |
 | `<any of the above>.<pid>.<random>.tmp` | a save in flight; it is renamed over its target or removed. A leftover means a write failed (and was reported) and even its cleanup could not run |
+| `.mellos/.write-lock` | permanent regular file for the OS project lock; keep it untracked and never remove, rename or replace it during normal operation |
 
 The map files are plain JSON, safe to commit if you want the maps' history in
-git. The other three are runtime chatter between a pane and whoever is talking
-to it — gitignore `focus`, `quit` and `viewers/` if you commit the store.
+git. Keep `focus`, `quit`, `viewers/` and `.write-lock` out of Git. The first
+three carry runtime messages; the lock file must remain in place, including
+when no process holds its lock.
 
 **Concurrency, stated plainly.** Every save is atomic — written to a private
 sibling temp file and renamed over the target — so a reader polling the store
-sees the previous complete map or the new one, never a torn write. Writers are
-serialized as well: every graph writer (MCP, the HTTP viewer, the watcher)
-takes a cooperative cross-process lock for the project, so two writers saving
-the *same* page do not race. A call that passes `expectedRevision` is checked
-against the map inside that lock, and a stale revision answers `CONFLICT`
-instead of overwriting newer work; a writer that finds the lock held answers a
-retryable `BUSY`. Pages remain the isolation unit for *work* — two unrelated
-efforts belong on two pages — but a page is no longer clobbered by a second
-session writing it. Low-level `saveMapFile`, hand edits and an older
-already-running process take no part in that contract; the
-[persistent-map API guide](docs/map-api.md) states the full boundary.
+sees the previous complete map or the new one, never a torn write. Every graph
+writer (MCP, the HTTP viewer, the watcher) uses the same non-blocking OS
+exclusive lock for the project. The lock has its own fixed file, separate from
+the map files being replaced; it stays in place after the OS releases the lock
+on completion or process exit. Contention returns a retryable `BUSY`.
+
+The lock serializes each operation's read, change and save. To protect an edit
+computed from an earlier read, pass `expectedRevision`: it is compared inside
+the lock, and a stale revision returns `CONFLICT`. Without it, a later write
+can still overwrite the same field or a whole value such as `context`. Pages
+separate unrelated efforts; sharing a page still requires revision-checked
+edits. Low-level `saveMapFile`, hand edits and older running processes do not
+participate in this contract. Stop all old MCP, viewer and watcher processes
+for the project before upgrading; an old lock directory needs a one-time
+migration. See the [persistent-map API guide](docs/map-api.md) and
+[project locking](docs/locking.md) for the boundary and upgrade steps.
 
 ### Diagram kinds
 

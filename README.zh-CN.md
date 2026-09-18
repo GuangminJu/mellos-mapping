@@ -54,7 +54,10 @@ Claude 为你构建系统时，对话旁边的分屏实时显示这个系统的*
 | `claude` | Claude Code | `node install.mjs` |
 | `chatgpt-app` | ChatGPT 桌面 App 的 Codex 模式 | `node install.mjs` |
 
-前置要求为 Node.js 18+ 和对应宿主的 CLI，并确保命令在 PATH 中。安装器检查
+前置要求为 Node.js 18.17 及以上的 18.x，或 20.3 及以上版本，以及对应宿主的 CLI，
+并确保命令在 PATH 中。支持 Windows 10+、macOS 13.0+ 和 glibc 2.28+ 的 Linux，均支持
+x64 与 arm64；系统还须满足所选 Node.js 版本的更高要求。发行包自带原生锁绑定，
+无需用户本地编译。安装器检查
 发行文件和八个 MCP 工具，将运行时保留到克隆目录之外，完成宿主配置。
 安装后开启新对话。详见[发布与分支说明](docs/releasing.md)。
 
@@ -73,7 +76,8 @@ Claude Code 也可以通过插件市场安装：
 claude plugin marketplace add GuangminJu/mellos-mapping && claude plugin install mellos-mapping@mellos-mapping
 ```
 
-需要 PATH 上有 Node.js 18+（Claude Code 本身就依赖 Node，所以你已经有了）。
+需要 PATH 上有符合[安装要求](#安装)的 Node.js；使用原生 Claude Code 安装包时也需
+单独安装 Node.js。
 没有构建步骤：`dist/` 是提交进仓库的，克隆即用——`dist/server.mjs`（MCP
 服务器）、`dist/watch.mjs`（面板）、`dist/mmap.mjs`（`mmap` 开关）、
 `dist/hook-session-start.mjs`（由 `hooks/hooks.json` 注册的 `SessionStart`
@@ -405,20 +409,26 @@ watcher 的：`--file <path>` 指定默认页的状态文件（启动脚本会�
 | `.mellos/quit` | `mmap` 开关发出的一次性"自己关掉"请求，以同样的方式被消费和删除 |
 | `.mellos/viewers/<pid>.json` | 每个活着的面板一份报告——它正显示哪一页、自动跟随是否打开——运行期间每秒刷新一次（见[谁在看](#谁在看)） |
 | `<上面任一文件>.<pid>.<随机>.tmp` | 正在落盘的一次写入；它要么被改名覆盖目标，要么被删掉。留下来说明那次写入失败（并已被报告），连清理都没能跑成 |
+| `.mellos/.write-lock` | 操作系统项目锁使用的永久普通文件；不纳入 Git，正常运行时不得删除、改名或替换 |
 
-地图文件是纯 JSON，想在 git 里留下地图的历史就把它们提交进去。另外三个是
-面板和跟它说话的人之间的运行期闲聊——如果你要提交这个仓库，把 `focus`、
-`quit` 和 `viewers/` 加进 gitignore。
+地图文件是纯 JSON，想在 git 里留下地图的历史就把它们提交进去。`focus`、`quit`、
+`viewers/` 和 `.write-lock` 应加入 gitignore。前三者传递运行期消息；锁文件即使
+没有进程持锁也应保留，不要当作临时文件清理。
 
 **并发模型，直说。** 每次保存都是原子的——先写进一个私有的同级临时文件，
 再改名覆盖目标——所以轮询存储的读者要么看到上一张完整的地图，要么看到新的
-那张，绝不会读到写了一半的。写者之间也是串行的：所有写图的一方（MCP、
-HTTP 查看器、watcher）都要为该项目取一把跨进程协作锁，所以两个写者保存
-*同一页*不会赛跑。传了 `expectedRevision` 的调用会在锁内比对地图，版本过旧的
-返回 `CONFLICT`，而不是覆盖掉更新的改动；发现锁被占用的写者拿到的是可重试的
-`BUSY`。页仍然是**工作**的隔离单位——两件互不相关的事就该在两页上——但同一页
-不会再被第二个会话覆盖。底层 `saveMapFile`、手工编辑，以及升级前就已在运行的
-旧进程不参与这份约定；完整边界写在[持久化地图 API 指南](docs/map-api.md)里。
+那张，绝不会读到写了一半的。所有写图入口（MCP、HTTP 查看器、watcher）都使用
+同一把项目级、非阻塞的操作系统排他锁。锁使用独立的固定文件，与被原子替换的
+地图文件分开；操作结束或进程退出后，操作系统释放锁，锁文件仍保留。锁被占用时
+返回可重试的 `BUSY`。
+
+这把锁串行执行每次操作的读取、修改和保存。基于先前读取计算的改动还应传入
+`expectedRevision`：它在锁内比较，版本过旧返回 `CONFLICT`。省略它时，后续写入
+仍可能覆盖同一字段或 `context` 这样的完整值。不同页面用于分开互不相关的工作；
+共用一页时仍需带版本检查。底层 `saveMapFile`、手工编辑和仍在运行的旧进程不参与
+这份约定。升级前须停掉该项目所有旧 MCP、查看器和 watcher 进程；残留的旧锁目录
+需一次性迁移。完整边界和升级步骤见[持久化地图 API 指南](docs/map-api.md)与
+[项目锁说明](docs/locking.md)。
 
 ### 图种
 
