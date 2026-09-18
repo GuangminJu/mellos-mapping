@@ -7,13 +7,16 @@
 
 ## 一次安装
 
-先装好 Node.js 18+ 和 Claude Code，并确保命令在 PATH 中。在克隆或解压目录运行：
+先装好 Node.js 18.17 及以上的 18.x，或 20.3 及以上版本，以及 Claude Code，并确保
+命令在 PATH 中。支持 Windows 10+、macOS 13.0+ 和 glibc 2.28+ 的 Linux，均支持
+x64 与 arm64；系统还须满足所选 Node.js 版本的更高要求。
+发行包自带原生锁绑定，无需本地编译。在克隆或解压目录运行：
 
 ```sh
 node install.mjs
 ```
 
-无需 npm 依赖或构建。安装器检查文件校验值和六个工具的真实 MCP 连接，将成品
+无需 npm 依赖或构建。安装器检查文件校验值和八个工具的真实 MCP 连接，将成品
 保留在 `~/.mellos/installations/claude/`，通过 Claude 插件命令完成安装。
 开启新 Claude Code 对话，输入 `/mellos-mapping:mmap` 或要求展示分层计划。
 首次使用时选择何时自动开图。
