@@ -2,7 +2,7 @@
 import { PassThrough, Writable } from "node:stream";
 
 // src/watch/watch.ts
-import { realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
+import { realpathSync as realpathSync3, statSync as statSync2 } from "node:fs";
 import { dirname as dirname9, join as join8 } from "node:path";
 
 // src/domain/types.ts
@@ -262,9 +262,8 @@ function resolveProjectDirectory(cwd, stopAt = [homedir(), tmpdir()]) {
 }
 
 // src/store/transaction.ts
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname as dirname2, join as join2 } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync as realpathSync2 } from "node:fs";
+import { basename, dirname as dirname2, join as join2 } from "node:path";
 
 // src/domain/context.ts
 function sourceError(raw) {
@@ -554,6 +553,30 @@ function parseMap(raw, path) {
   return textError ? err({ kind: "bad-shape", path, detail: textError }) : ok(map);
 }
 
+// src/store/native-lock.ts
+import { existsSync as existsSync2 } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+var loaded;
+function nativeLock() {
+  if (loaded) return loaded;
+  if (Number(process.versions.napi ?? 0) < 9) {
+    throw new Error("Project locks require Node-API 9 (Node 18.17+ or 20.3+).");
+  }
+  const candidates = [
+    new URL("./native-lock.cjs", import.meta.url),
+    new URL("../../dist/native-lock.cjs", import.meta.url)
+  ];
+  const entry = candidates.find((candidate) => existsSync2(candidate));
+  if (!entry) throw new Error("The installed package is missing dist/native-lock.cjs; reinstall the complete package.");
+  const backend = createRequire(import.meta.url)(fileURLToPath(entry));
+  if (typeof backend.tryLock !== "function" || typeof backend.unlock !== "function") {
+    throw new Error("The installed native lock backend is invalid.");
+  }
+  loaded = backend;
+  return backend;
+}
+
 // src/store/transaction.ts
 var LedgerError = class extends Error {
   constructor(code, message, details = {}) {
@@ -564,59 +587,76 @@ var LedgerError = class extends Error {
 };
 function storeDirectory(file) {
   const dir = dirname2(file);
-  return dir.endsWith("/pages") || dir.endsWith("\\pages") ? dirname2(dir) : dir;
-}
-function deadOwner(lock) {
+  if (basename(dir).toLowerCase() === "pages") return dirname2(dir);
+  let canonical = dir;
   try {
-    const owner = JSON.parse(readFileSync(join2(lock, "owner.json"), "utf8"));
-    if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
-    try {
-      process.kill(owner.pid, 0);
-      return false;
-    } catch (e) {
-      return e.code === "ESRCH";
-    }
-  } catch {
-    return false;
+    canonical = realpathSync2.native(dir);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return basename(canonical).toLowerCase() === "pages" ? dirname2(canonical) : canonical;
+}
+function checkLockPath(lock) {
+  const entry = lstatSync(lock, { throwIfNoEntry: false });
+  if (entry?.isDirectory()) {
+    throw new LedgerError(
+      "LOCK_MIGRATION_REQUIRED",
+      `Legacy directory lock at ${lock}. Stop all old MCP servers, viewers and watchers for this project, then move that directory aside for inspection and retry. Never remove the new regular lock file.`,
+      { path: lock }
+    );
+  }
+  if (entry && !entry.isFile()) {
+    throw new LedgerError("LOCK_UNAVAILABLE", `Project lock must be a regular file, not a symlink or special file: ${lock}`, { path: lock });
   }
 }
 function withStoreLock(file, action) {
+  let backend;
+  try {
+    backend = nativeLock();
+  } catch (error) {
+    throw new LedgerError("LOCK_UNAVAILABLE", `Cannot load the operating-system lock backend: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const dir = storeDirectory(file);
   mkdirSync(dir, { recursive: true });
   const lock = join2(dir, ".write-lock");
-  const owner = join2(lock, "owner.json");
-  const token = randomUUID();
+  checkLockPath(lock);
+  let fd;
   try {
-    mkdirSync(lock);
+    fd = openSync(lock, "a+", 384);
   } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    if (!deadOwner(lock)) throw new LedgerError("BUSY", `Another writer owns ${lock}; retry after it completes. An orphan without owner metadata needs manual inspection.`);
-    try {
-      mkdirSync(join2(lock, ".reap"));
-    } catch {
-      throw new LedgerError("BUSY", "Another process is recovering the writer lock.");
-    }
-    if (!deadOwner(lock)) {
-      rmSync(join2(lock, ".reap"), { recursive: true, force: true });
-      throw new LedgerError("BUSY", "Writer ownership changed.");
-    }
-    rmSync(lock, { recursive: true });
-    try {
-      mkdirSync(lock);
-    } catch {
-      throw new LedgerError("BUSY", "Another writer acquired the recovered lock.");
-    }
+    checkLockPath(lock);
+    throw new LedgerError("LOCK_UNAVAILABLE", `Cannot open project lock ${lock}: ${error instanceof Error ? error.message : String(error)}`, { path: lock });
   }
-  let initialized = false;
+  let acquired = false;
   try {
-    writeFileSync(owner, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
-    initialized = true;
+    checkLockPath(lock);
+    if (!fstatSync(fd).isFile()) throw new LedgerError("LOCK_UNAVAILABLE", `Project lock is not a regular file: ${lock}`);
+    try {
+      acquired = backend.tryLock(fd);
+    } catch (error) {
+      throw new LedgerError("LOCK_UNAVAILABLE", `Cannot acquire project lock ${lock}: ${error instanceof Error ? error.message : String(error)}`, { path: lock });
+    }
+    if (!acquired) throw new LedgerError("BUSY", `Another writer owns ${lock}; retry after it completes.`);
     return action();
   } finally {
     try {
-      if (!initialized || JSON.parse(readFileSync(owner, "utf8")).token === token) rmSync(lock, { recursive: true });
+      if (acquired) backend.unlock(fd);
     } catch {
+      warnLockCleanup(`Could not explicitly unlock ${lock}; closing its file handle.`);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {
+        warnLockCleanup(`Could not close the project lock handle for ${lock}; restart this process before retrying writes.`);
+      }
     }
+  }
+}
+function warnLockCleanup(message) {
+  try {
+    process.stderr.write(`mellos-mapping: ${message}
+`);
+  } catch {
   }
 }
 
@@ -1748,7 +1788,7 @@ function paint(scene, opts) {
 }
 
 // src/store/atomic.ts
-import { mkdirSync as mkdirSync2, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync2, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 var RENAME_BACKOFF_STEP_MS = 10;
 var TRANSIENT_RENAME_CODES = /* @__PURE__ */ new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
@@ -1757,7 +1797,7 @@ function sleepSync(ms) {
 }
 function discardTemp(tmp) {
   try {
-    rmSync2(tmp, { force: true });
+    rmSync(tmp, { force: true });
   } catch {
   }
 }
@@ -1768,7 +1808,7 @@ function writeAtomic(path, contents, maxAttempts) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
     mkdirSync2(dirname3(path), { recursive: true });
-    writeFileSync2(tmp, contents, "utf8");
+    writeFileSync(tmp, contents, "utf8");
   } catch (e) {
     discardTemp(tmp);
     return err({ kind: "save-failed", path, detail: `writing the temp file failed: ${errnoOf(e)}` });
@@ -1791,8 +1831,8 @@ function writeAtomic(path, contents, maxAttempts) {
 }
 
 // src/store/pages.ts
-import { existsSync as existsSync2, readdirSync, rmSync as rmSync3 } from "node:fs";
-import { basename, dirname as dirname4, join as join3 } from "node:path";
+import { existsSync as existsSync3, readdirSync, rmSync as rmSync2 } from "node:fs";
+import { basename as basename2, dirname as dirname4, join as join3 } from "node:path";
 var STORE_DIR_NAME = ".mellos";
 var STATE_FILE_RELATIVE_PATH = join3(STORE_DIR_NAME, "map.json");
 var PAGES_DIR_NAME = "pages";
@@ -1801,12 +1841,12 @@ function pageFilePath(defaultFile, page) {
 }
 function pageIdOfFile(defaultFile, path) {
   if (path === defaultFile) return void 0;
-  const name = basename(path);
+  const name = basename2(path);
   return name.endsWith(".json") ? name.slice(0, -".json".length) : name;
 }
 function listPageFiles(defaultFile) {
   const out = [];
-  if (existsSync2(defaultFile)) out.push(defaultFile);
+  if (existsSync3(defaultFile)) out.push(defaultFile);
   let entries = [];
   try {
     entries = readdirSync(join3(dirname4(defaultFile), PAGES_DIR_NAME));
@@ -1819,7 +1859,7 @@ function listPageFiles(defaultFile) {
 }
 function deletePageFile(path) {
   try {
-    rmSync3(path, { force: true });
+    rmSync2(path, { force: true });
     return ok(void 0);
   } catch (e) {
     return err({ kind: "delete-failed", path, detail: errnoOf(e) });
@@ -1827,7 +1867,7 @@ function deletePageFile(path) {
 }
 
 // src/store/channels.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3, rmSync as rmSync5 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync2, rmSync as rmSync4 } from "node:fs";
 import { dirname as dirname6, join as join5 } from "node:path";
 
 // src/store/json-text.ts
@@ -1839,7 +1879,7 @@ function stripBom(text) {
 }
 
 // src/store/viewers.ts
-import { readdirSync as readdirSync2, readFileSync as readFileSync2, statSync, rmSync as rmSync4 } from "node:fs";
+import { readdirSync as readdirSync2, readFileSync, statSync, rmSync as rmSync3 } from "node:fs";
 import { dirname as dirname5, join as join4 } from "node:path";
 var VIEWERS_DIR_NAME = "viewers";
 var VIEWER_FILE_VERSION = 1;
@@ -1857,7 +1897,7 @@ function publishViewer(defaultFile, pid, report) {
 }
 function retireViewer(defaultFile, pid) {
   try {
-    rmSync4(viewerFilePath(defaultFile, pid), { force: true });
+    rmSync3(viewerFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
@@ -1874,15 +1914,15 @@ function paneChannelPath(defaultFile, channel, pid) {
 }
 function takeFocusRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : focusFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync3(targeted) ? targeted : focusFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync4(targeted) ? targeted : focusFilePath(defaultFile);
   let raw;
   try {
-    raw = readFileSync3(path, "utf8");
+    raw = readFileSync2(path, "utf8");
   } catch {
     return void 0;
   }
   try {
-    rmSync5(path, { force: true });
+    rmSync4(path, { force: true });
   } catch {
   }
   let parsed;
@@ -1904,10 +1944,10 @@ function quitFilePath(defaultFile, pid) {
 }
 function takeQuitRequest(defaultFile, pid) {
   const targeted = pid === void 0 ? void 0 : quitFilePath(defaultFile, pid);
-  const path = targeted !== void 0 && existsSync3(targeted) ? targeted : quitFilePath(defaultFile);
+  const path = targeted !== void 0 && existsSync4(targeted) ? targeted : quitFilePath(defaultFile);
   let raw;
   try {
-    raw = readFileSync3(path, "utf8");
+    raw = readFileSync2(path, "utf8");
   } catch {
     return false;
   }
@@ -1922,7 +1962,7 @@ function takeQuitRequest(defaultFile, pid) {
 }
 function sweepQuitRequest(defaultFile, pid) {
   try {
-    rmSync5(quitFilePath(defaultFile, pid), { force: true });
+    rmSync4(quitFilePath(defaultFile, pid), { force: true });
   } catch {
   }
 }
@@ -1935,7 +1975,7 @@ function configFilePath(defaultFile) {
 }
 
 // src/store/migration.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, renameSync as renameSync2 } from "node:fs";
+import { existsSync as existsSync5, renameSync as renameSync2 } from "node:fs";
 import { dirname as dirname8, join as join7 } from "node:path";
 var LEGACY_STATE_FILE_RELATIVE_PATH = join7(".claude", "mellos-mapping.json");
 var LEGACY_PAGES_DIR_NAME = "mellos-mapping.pages";
@@ -1945,22 +1985,24 @@ function migrateLegacyStore(defaultFile) {
   const legacyDefault = join7(projectRoot, LEGACY_STATE_FILE_RELATIVE_PATH);
   const legacyPages = join7(dirname8(legacyDefault), LEGACY_PAGES_DIR_NAME);
   const legacyConfig = join7(dirname8(legacyDefault), LEGACY_CONFIG_FILE_NAME);
-  const hasLegacy = existsSync4(legacyDefault) || existsSync4(legacyPages) || existsSync4(legacyConfig);
-  const hasCurrent = existsSync4(defaultFile) || existsSync4(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync4(configFilePath(defaultFile));
-  if (!hasLegacy || hasCurrent) return false;
-  mkdirSync3(dirname8(defaultFile), { recursive: true });
-  if (existsSync4(legacyDefault)) renameSync2(legacyDefault, defaultFile);
-  if (existsSync4(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
-  if (existsSync4(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
-  return true;
+  const hasLegacy = () => existsSync5(legacyDefault) || existsSync5(legacyPages) || existsSync5(legacyConfig);
+  const hasCurrent = () => existsSync5(defaultFile) || existsSync5(join7(dirname8(defaultFile), PAGES_DIR_NAME)) || existsSync5(configFilePath(defaultFile));
+  if (!hasLegacy() || hasCurrent()) return false;
+  return withStoreLock(defaultFile, () => {
+    if (!hasLegacy() || hasCurrent()) return false;
+    if (existsSync5(legacyDefault)) renameSync2(legacyDefault, defaultFile);
+    if (existsSync5(legacyPages)) renameSync2(legacyPages, join7(dirname8(defaultFile), PAGES_DIR_NAME));
+    if (existsSync5(legacyConfig)) renameSync2(legacyConfig, configFilePath(defaultFile));
+    return true;
+  });
 }
 
 // src/store/maps.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
 function loadMapFile(path) {
   let text;
   try {
-    text = readFileSync4(path, "utf8");
+    text = readFileSync3(path, "utf8");
   } catch (e) {
     const code = e.code;
     if (code === "ENOENT") return err({ kind: "not-found", path });
@@ -2345,22 +2387,22 @@ function scan(state, input2) {
       pages.push(held);
       continue;
     }
-    const loaded = input2.load(file);
-    if (loaded.ok) {
+    const loaded2 = input2.load(file);
+    if (loaded2.ok) {
       if (!first) changed.push(file);
       const fresh = !first && file !== previousActive;
       if (fresh) freshened.push(file);
-      pages.push({ file, state: { kind: "loaded", map: loaded.value, mtimeMs }, fresh });
+      pages.push({ file, state: { kind: "loaded", map: loaded2.value, mtimeMs }, fresh });
       continue;
     }
     pages.push({
       file,
       state: {
         kind: "faulted",
-        fault: loaded.error,
+        fault: loaded2.error,
         lastGood: mapOf(held),
         mtimeMs,
-        transient: isTransient(loaded.error)
+        transient: isTransient(loaded2.error)
       },
       fresh: held?.fresh ?? false
     });

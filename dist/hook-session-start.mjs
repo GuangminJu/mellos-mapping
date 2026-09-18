@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
+import { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);
 
 // src/hook/session-start.ts
 import { spawnSync } from "node:child_process";
