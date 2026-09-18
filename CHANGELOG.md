@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.25.0
 
 - Use an OS exclusive lock on a permanent `.mellos/.write-lock` file for all
   cooperating map writers. Process termination releases ownership without PID
