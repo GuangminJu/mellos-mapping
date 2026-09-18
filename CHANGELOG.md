@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.26.0
+
+- Run the mapping policy in omp (Oh My Pi) sessions through a host adapter
+  (`package.json#omp.extensions` → `dist/omp-extension.mjs`): the same store
+  and the same paragraph the Claude Code hook prints. The Claude edition ships
+  the manifest and the bundle, so one release serves both hosts.
+- Keep one `mmap` command per machine across hosts: the canonical pair plus
+  copies in directories the PATH already names when a long PATH makes `setx`
+  refuse the edit. Ownership is written into the shims; upgrades refresh both
+  copies and uninstall removes only the files of the install it belongs to.
+- Re-run the shim installer at session start when the copy a terminal would
+  resolve is stale, instead of trusting the canonical file alone.
+
 ## 0.25.0
 
 - Use an OS exclusive lock on a permanent `.mellos/.write-lock` file for all
