@@ -9289,12 +9289,11 @@ font.addEventListener("change", () => {
   } catch {
   }
   resize();
-  terminal.focus();
 });
 var help = element("help-dialog");
 element("help").addEventListener("click", () => help.showModal());
-help.addEventListener("close", () => terminal.focus());
 terminal.attachCustomKeyEventHandler((event) => {
+  if (event.isComposing || event.keyCode === 229) return true;
   if (event.key === "?") {
     if (event.type === "keydown" && !help.open) help.showModal();
     return false;
@@ -9302,6 +9301,7 @@ terminal.attachCustomKeyEventHandler((event) => {
   return true;
 });
 restart.addEventListener("click", () => {
+  terminal.focus();
   retries = 0;
   connect();
 });
@@ -9322,7 +9322,6 @@ function connect() {
     if (socket !== connection) return;
     connection.send(JSON.stringify({ type: "start", ...dimensions() }));
     setStatus("\u5DF2\u8FDE\u63A5 \xB7 \u7EC8\u7AEF\u5730\u56FE", "connected");
-    terminal.focus();
   });
   connection.addEventListener("message", (event) => {
     if (socket !== connection) return;
