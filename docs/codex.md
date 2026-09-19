@@ -66,6 +66,11 @@ changes remeasure terminal cells rather than stretching an image, and do not
 change the host's global terminal font. The terminal uses xterm.js cell rendering;
 the graphical mode remains native SVG and supports SVG export.
 
+Click the map or Tab into it to use map keyboard shortcuts. Loading, automatic
+reconnection and page restoration preserve the current keyboard focus, so the
+viewer can remain open while typing in the conversation. Font selection keeps
+its own focus, and closing help returns to the control that opened it.
+
 Both modes use the same project maps. Terminal input/output goes over a local
 WebSocket to a dedicated mmap worker. Each connected browser owns its own
 page/zoom/selection state and renderer; there is no shared shell. Closing the

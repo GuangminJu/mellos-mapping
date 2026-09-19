@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.26.1
+
+- Keep keyboard focus where the user left it when the web terminal loads,
+  reconnects or restores a cached page. Manual reconnect transfers focus during
+  the button action, without reclaiming it when the connection finishes.
+- Preserve keyboard navigation in the font selector and native help-dialog
+  focus restoration. Leave IME composition events to the terminal input handler.
+- Cover connection and control focus behavior with browser-entry regression
+  tests while retaining unfocused mouse interaction and terminal rendering.
+
 ## 0.26.0
 
 - Run the mapping policy in omp (Oh My Pi) sessions through a host adapter
