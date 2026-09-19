@@ -44,20 +44,23 @@ terminal.onData(data => {
   // Keep every message under the transport limit, including pasted text.
   for (let i = 0; i < data.length; i += 1024) send({ type: 'input', data: data.slice(i, i + 1024) });
 });
-// Buttons keep keyboard input directed at the map after the action completes.
+// Native controls keep their focus; changing a value must not interrupt keyboard use.
 font.addEventListener('change', () => {
   terminal.options.fontSize = Number(font.value);
   try { localStorage.setItem('mellos-terminal-font', font.value); } catch { /* Optional preference. */ }
-  resize(); terminal.focus();
+  resize();
 });
 const help = element<HTMLDialogElement>('help-dialog');
 element('help').addEventListener('click', () => help.showModal());
-help.addEventListener('close', () => terminal.focus());
+// The dialog restores its opener (the help button or terminal) when it closes.
 terminal.attachCustomKeyEventHandler(event => {
+  if (event.isComposing || event.keyCode === 229) return true;
   if (event.key === '?') { if (event.type === 'keydown' && !help.open) help.showModal(); return false; }
   return true;
 });
-restart.addEventListener('click', () => { retries = 0; connect(); });
+// Hand off focus during the user's action, before connect hides the button.
+// A later connection event must respect any focus change made while waiting.
+restart.addEventListener('click', () => { terminal.focus(); retries = 0; connect(); });
 function connect(): void {
   if (disposed) return;
   clearTimeout(retryTimer); socket?.close();
@@ -68,7 +71,7 @@ function connect(): void {
   connection.addEventListener('open', () => {
     if (socket !== connection) return;
     connection.send(JSON.stringify({ type: 'start', ...dimensions() }));
-    setStatus('已连接 · 终端地图', 'connected'); terminal.focus();
+    setStatus('已连接 · 终端地图', 'connected');
   });
   connection.addEventListener('message', event => {
     if (socket !== connection) return;
