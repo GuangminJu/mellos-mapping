@@ -5,6 +5,7 @@
 [![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
 [![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=main&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
+[![LINUX DO](https://img.shields.io/badge/LINUX%20DO-community-ffb400?logo=discourse&logoColor=white)](https://linux.do)
 
 [English](README.md) | 简体中文
 
@@ -670,6 +671,10 @@ Star 按钮会调用系统默认浏览器打开 GitHub，方便沿用已有登�
 仅在 `~/.mellos/support/star-reminder.json` 本地记录首次使用时间、最后一个
 UTC 日期、最多 3 天的计数和已提醒标记，不上传数据，不查询是否点过 Star；
 只有用户主动点击链接时才访问 GitHub。设置损坏、不可写或锁忙时静默跳过。
+
+## 社区
+
+本项目积极参与并认可 [LINUX DO 社区](https://linux.do)。
 
 ## 许可证
 

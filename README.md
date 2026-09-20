@@ -5,6 +5,7 @@
 [![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
 [![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=main&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
+[![LINUX DO](https://img.shields.io/badge/LINUX%20DO-community-ffb400?logo=discourse&logoColor=white)](https://linux.do)
 
 English | [简体中文](README.zh-CN.md)
 
@@ -750,6 +751,11 @@ Only the first-use time, last UTC day, a capped day count and the one-time flag
 are stored in `~/.mellos/support/star-reminder.json`; nothing is uploaded and
 GitHub is contacted only when the user follows the link. Unreadable settings
 or a busy store silently skip the reminder.
+
+## Community
+
+This project takes part in and endorses the
+[LINUX DO](https://linux.do) community.
 
 ## License
 
