@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.26.2
+
+- Keep the web terminal's hidden input disabled until the user explicitly enables
+  keyboard shortcuts. Release keyboard ownership on blur, pointer exit, page
+  hiding or Escape, including late keyup events that otherwise refocus xterm.
+- Preserve mouse zoom, dragging and selection without keyboard activation.
+  Reconnection never enables keyboard input; help restores a visible activation
+  button instead of reactivating the hidden input.
+- Verify disabled input focus protection, release and page lifecycle behavior,
+  plus browser mouse interactions. These checks cover terminal input ownership,
+  not the host's native Chinese IME composition across separate webviews.
+- Known limitation: intermittent premature Pinyin composition completion was
+  reported during testing. It was not reproduced in a later idle check, but its
+  root cause remains unconfirmed; this release does not claim a complete IME fix.
+
 ## 0.26.1
 
 - Keep keyboard focus where the user left it when the web terminal loads,

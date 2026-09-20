@@ -66,10 +66,13 @@ changes remeasure terminal cells rather than stretching an image, and do not
 change the host's global terminal font. The terminal uses xterm.js cell rendering;
 the graphical mode remains native SVG and supports SVG export.
 
-Click the map or Tab into it to use map keyboard shortcuts. Loading, automatic
-reconnection and page restoration preserve the current keyboard focus, so the
-viewer can remain open while typing in the conversation. Font selection keeps
-its own focus, and closing help returns to the control that opened it.
+Mouse zoom, dragging and selection work immediately. To use keyboard shortcuts,
+click **启用快捷键**, or Tab to that button and press Enter. The hidden terminal
+input stays disabled until this explicit action. Escape, leaving the map, losing
+focus or hiding the page releases keyboard input; enable it again when needed.
+Loading, reconnecting and restoring the page do not activate keyboard input.
+Font selection keeps its own focus; closing keyboard help returns to the
+activation button without reactivating the terminal.
 
 Both modes use the same project maps. Terminal input/output goes over a local
 WebSocket to a dedicated mmap worker. Each connected browser owns its own
