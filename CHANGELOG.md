@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.26.2
+
+- Keep the web terminal's hidden input disabled until the user explicitly enables
+  keyboard shortcuts. Release keyboard ownership on blur, pointer exit, page
+  hiding or Escape, including late keyup events that otherwise refocus xterm.
+- Preserve mouse zoom, dragging and selection without keyboard activation.
+  Reconnection leaves keyboard input disabled; help restores a visible activation
+  button instead of reactivating the hidden input.
+- Verify disabled input focus protection, release and page lifecycle behavior,
+  plus browser mouse interactions. User testing confirmed conversation input and
+  the adjacent map both work normally with the page open.
+
 ## 0.26.1
 
 - Keep keyboard focus where the user left it when the web terminal loads,

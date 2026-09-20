@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import type { TerminalInput, TerminalOutput } from './terminal-protocol.js';
 import { createStarNotice } from './star-reminder.js';
+import { bindTerminalInput } from './terminal-input.js';
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const container = element('terminal'), status = element('connection'), restart = element<HTMLButtonElement>('restart');
@@ -20,6 +21,8 @@ const terminal = new Terminal({
   theme: { background: '#10151c', foreground: '#d9e2ed', brightBlack: '#bec8d8', cursor: '#81dbae', selectionBackground: '#3c5670' },
 });
 const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(container);
+const keyboard = element<HTMLButtonElement>('keyboard');
+const input = bindTerminalInput(terminal.textarea!, keyboard, container);
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
 function syncPage(): void {
   const url = new URL(location.href), link = new URL(base);
@@ -52,15 +55,21 @@ font.addEventListener('change', () => {
 });
 const help = element<HTMLDialogElement>('help-dialog');
 element('help').addEventListener('click', () => help.showModal());
-// The dialog restores its opener (the help button or terminal) when it closes.
+// The dialog restores a visible button; closing it never reactivates terminal input.
 terminal.attachCustomKeyEventHandler(event => {
+  // xterm refocuses its textarea on keyup, including a late event after leaving.
+  if (terminal.textarea!.disabled || !document.hasFocus()) return false;
   if (event.isComposing || event.keyCode === 229) return true;
-  if (event.key === '?') { if (event.type === 'keydown' && !help.open) help.showModal(); return false; }
+  if (event.key === 'Escape' || event.key === '?') {
+    if (event.type === 'keydown') {
+      input.release(); keyboard.focus();
+      if (event.key === '?' && !help.open) help.showModal();
+    }
+    return false;
+  }
   return true;
 });
-// Hand off focus during the user's action, before connect hides the button.
-// A later connection event must respect any focus change made while waiting.
-restart.addEventListener('click', () => { terminal.focus(); retries = 0; connect(); });
+restart.addEventListener('click', () => { input.release(); retries = 0; connect(); });
 function connect(): void {
   if (disposed) return;
   clearTimeout(retryTimer); socket?.close();
@@ -93,8 +102,9 @@ function connect(): void {
   });
 }
 window.addEventListener('pagehide', event => {
+  input.release();
   disposed = true; clearTimeout(retryTimer); cancelAnimationFrame(resizeFrame); observer.disconnect(); socket?.close();
-  if (!event.persisted) terminal.dispose();
+  if (!event.persisted) { input.dispose(); terminal.dispose(); }
 });
 window.addEventListener('pageshow', event => {
   if (event.persisted) { disposed = false; observer.observe(container); connect(); }

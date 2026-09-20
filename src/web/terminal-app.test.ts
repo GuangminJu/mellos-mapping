@@ -6,18 +6,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * IME behavior, or focus transfer between the host's separate webviews.
  */
 function browser() {
-  const document = { activeElement: undefined as ElementStub | undefined, hasFocus: vi.fn(() => false), visibilityState: 'visible', getElementById: (id: string) => elements.get(id) };
+  const document = Object.assign(new EventTarget(), { documentElement: new EventTarget(), activeElement: undefined as ElementStub | undefined, hasFocus: vi.fn(() => false), visibilityState: 'visible', getElementById: (id: string) => elements.get(id) });
   class ElementStub extends EventTarget {
     value = '13';
     options = [{ value: '13' }];
     dataset: Record<string, string> = {};
     hidden = false;
+    disabled = false;
     open = false;
     textContent = '';
-    focus() { document.activeElement = this; document.hasFocus.mockReturnValue(true); }
+    focus() {
+      if (this.disabled) return;
+      if (document.activeElement !== this) document.activeElement?.blur();
+      document.activeElement = this; document.hasFocus.mockReturnValue(true);
+    }
+    blur() {
+      if (document.activeElement !== this) return;
+      document.activeElement = undefined; this.dispatchEvent(new Event('blur'));
+    }
     showModal() { this.open = true; }
   }
-  const elements = new Map(['terminal', 'connection', 'restart', 'font-size', 'graphic', 'help', 'help-dialog'].map(id => [id, new ElementStub()]));
+  const elements = new Map(['terminal', 'connection', 'restart', 'keyboard', 'font-size', 'graphic', 'help', 'help-dialog'].map(id => [id, new ElementStub()]));
   const element = (id: string) => elements.get(id)!;
   const textarea = new ElementStub();
   let dataListener: (data: string) => void;
@@ -60,6 +69,7 @@ function browser() {
   return {
     document, window, terminal, connections, element, starNotice,
     input: (data: string) => dataListener(data),
+    activate: () => element('keyboard').dispatchEvent(new Event('click')),
     key: (properties: Partial<KeyboardEvent> = {}) => keyHandler({ type: 'keydown', key: '?', isComposing: false, keyCode: 191, ...properties } as KeyboardEvent),
   };
 }
@@ -84,6 +94,9 @@ describe('terminal browser input ownership', () => {
     expect(page.connections[0]!.sent).toContainEqual({ type: 'start', cols: 80, rows: 24 });
     expect(page.terminal.focus).not.toHaveBeenCalled();
     expect(page.document.hasFocus()).toBe(false);
+    page.terminal.textarea.focus();
+    expect(page.document.activeElement).toBeUndefined();
+    expect(page.terminal.textarea.disabled).toBe(true);
   });
 
   it('does not take focus when an interrupted connection recovers', () => {
@@ -97,7 +110,7 @@ describe('terminal browser input ownership', () => {
   });
 
   it('preserves existing terminal focus through reset and reconnection', () => {
-    page.terminal.textarea.focus();
+    page.activate();
     page.connections[0]!.open();
     page.connections[0]!.disconnect();
     vi.advanceTimersByTime(1000);
@@ -110,25 +123,27 @@ describe('terminal browser input ownership', () => {
 
   it('restores a cached page without taking focus', () => {
     page.connections[0]!.open();
+    page.activate();
     page.window.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: true }));
     page.window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
     expect(page.connections).toHaveLength(2);
     page.connections[1]!.open();
     expect(page.terminal.dispose).not.toHaveBeenCalled();
     expect(page.terminal.focus).not.toHaveBeenCalled();
+    expect(page.terminal.textarea.disabled).toBe(true);
   });
 
-  it('focuses immediately on manual reconnect but not after the user leaves', () => {
+  it('reconnects without activating keyboard input', () => {
     page.connections[0]!.open();
     page.connections[0]!.disconnect(1000);
     page.element('restart').focus();
     page.element('restart').dispatchEvent(new Event('click'));
-    expect(page.terminal.focus).toHaveBeenCalledTimes(1);
-    expect(page.document.activeElement).toBe(page.terminal.textarea);
+    expect(page.terminal.focus).not.toHaveBeenCalled();
+    expect(page.terminal.textarea.disabled).toBe(true);
     // A background document can retain its remembered active element.
     page.document.hasFocus.mockReturnValue(false);
     page.connections[1]!.open();
-    expect(page.terminal.focus).toHaveBeenCalledTimes(1);
+    expect(page.terminal.focus).not.toHaveBeenCalled();
     expect(page.document.hasFocus()).toBe(false);
   });
 
@@ -152,8 +167,10 @@ describe('terminal browser input ownership', () => {
   });
 
   it('does not steal focus through a delayed dialog close notification', () => {
-    page.terminal.textarea.focus();
+    page.activate();
     expect(page.key()).toBe(false);
+    expect(page.document.activeElement).toBe(page.element('keyboard'));
+    expect(page.terminal.textarea.disabled).toBe(true);
     const dialog = page.element('help-dialog'); expect(dialog.open).toBe(true);
     dialog.open = false; page.document.hasFocus.mockReturnValue(false);
     dialog.dispatchEvent(new Event('close'));
@@ -180,7 +197,45 @@ describe('terminal browser input ownership', () => {
   });
 
   it.each([{ isComposing: true }, { keyCode: 229 }])('leaves composing question marks to xterm: %j', properties => {
+    page.activate();
     expect(page.key(properties)).toBe(true);
     expect(page.element('help-dialog').open).toBe(false);
+  });
+
+  it.each(['window blur', 'textarea blur', 'pointer leave', 'page pointer leave', 'hidden page'])('revokes keyboard input on %s and rejects late keyup', reason => {
+    page.activate();
+    expect(page.document.activeElement).toBe(page.terminal.textarea);
+    if (reason === 'window blur') {
+      page.document.hasFocus.mockReturnValue(false); page.window.dispatchEvent(new Event('blur'));
+    } else if (reason === 'textarea blur') page.element('font-size').focus();
+    else if (reason === 'pointer leave') page.element('terminal').dispatchEvent(new Event('pointerleave'));
+    else if (reason === 'page pointer leave') page.document.documentElement.dispatchEvent(new Event('pointerleave'));
+    else { page.document.visibilityState = 'hidden'; page.document.dispatchEvent(new Event('visibilitychange')); }
+    const owner = page.document.activeElement;
+    expect(page.terminal.textarea.disabled).toBe(true);
+    expect(page.key({ type: 'keyup', key: 'a' })).toBe(false);
+    // xterm or the host may still attempt focus even with application calls removed.
+    page.terminal.textarea.focus();
+    expect(page.document.activeElement).toBe(owner);
+    page.document.visibilityState = 'visible'; page.window.dispatchEvent(new Event('focus'));
+    expect(page.terminal.textarea.disabled).toBe(true);
+    page.activate();
+    expect(page.document.activeElement).toBe(page.terminal.textarea);
+  });
+
+  it('releases keyboard ownership with Escape and leaves an accessible activation button', () => {
+    page.activate();
+    expect(page.key({ key: 'Escape' })).toBe(false);
+    expect(page.terminal.textarea.disabled).toBe(true);
+    expect(page.document.activeElement).toBe(page.element('keyboard'));
+    expect(page.element('keyboard').disabled).toBe(false);
+  });
+
+  it('removes activation listeners when the page is disposed', () => {
+    page.activate();
+    page.window.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: false }));
+    page.activate();
+    expect(page.terminal.textarea.disabled).toBe(true);
+    expect(page.terminal.dispose).toHaveBeenCalledOnce();
   });
 });
