@@ -9213,6 +9213,36 @@ function createStarNotice(base2) {
   };
 }
 
+// src/web/terminal-input.ts
+function bindTerminalInput(textarea, button, surface) {
+  const listeners = new AbortController();
+  const options = { signal: listeners.signal };
+  const release = () => {
+    textarea.blur();
+    textarea.disabled = true;
+    button.disabled = false;
+    button.textContent = "\u542F\u7528\u5FEB\u6377\u952E";
+  };
+  button.addEventListener("click", () => {
+    textarea.disabled = false;
+    textarea.focus({ preventScroll: true });
+    button.disabled = true;
+    button.textContent = "\u5FEB\u6377\u952E\u5DF2\u542F\u7528";
+  }, options);
+  textarea.addEventListener("blur", release, options);
+  window.addEventListener("blur", release, options);
+  surface.addEventListener("pointerleave", release, options);
+  document.documentElement.addEventListener("pointerleave", release, options);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") release();
+  }, options);
+  release();
+  return { release, dispose: () => {
+    release();
+    listeners.abort();
+  } };
+}
+
 // src/web/terminal-app.ts
 var element = (id) => document.getElementById(id);
 var container = element("terminal");
@@ -9246,6 +9276,8 @@ var terminal = new Dl({
 var fit = new o();
 terminal.loadAddon(fit);
 terminal.open(container);
+var keyboard = element("keyboard");
+var input = bindTerminalInput(terminal.textarea, keyboard, container);
 function setStatus(text, state) {
   status.textContent = text;
   status.dataset.state = state;
@@ -9293,15 +9325,20 @@ font.addEventListener("change", () => {
 var help = element("help-dialog");
 element("help").addEventListener("click", () => help.showModal());
 terminal.attachCustomKeyEventHandler((event) => {
+  if (terminal.textarea.disabled || !document.hasFocus()) return false;
   if (event.isComposing || event.keyCode === 229) return true;
-  if (event.key === "?") {
-    if (event.type === "keydown" && !help.open) help.showModal();
+  if (event.key === "Escape" || event.key === "?") {
+    if (event.type === "keydown") {
+      input.release();
+      keyboard.focus();
+      if (event.key === "?" && !help.open) help.showModal();
+    }
     return false;
   }
   return true;
 });
 restart.addEventListener("click", () => {
-  terminal.focus();
+  input.release();
   retries = 0;
   connect();
 });
@@ -9352,12 +9389,16 @@ function connect() {
   });
 }
 window.addEventListener("pagehide", (event) => {
+  input.release();
   disposed = true;
   clearTimeout(retryTimer);
   cancelAnimationFrame(resizeFrame);
   observer.disconnect();
   socket?.close();
-  if (!event.persisted) terminal.dispose();
+  if (!event.persisted) {
+    input.dispose();
+    terminal.dispose();
+  }
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
