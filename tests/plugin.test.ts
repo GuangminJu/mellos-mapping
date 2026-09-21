@@ -136,3 +136,56 @@ describe('the omp session adapter is declared where omp looks', () => {
     expect(read('build.mjs')).toContain(`outfile: '${relative}'`);
   });
 });
+
+/**
+ * pi has neither `hooks/hooks.json` nor `.mcp.json`: its tools and its session
+ * paragraph both come from one extension module named by a manifest field, and
+ * the resources beside it are read from the PACKAGE ROOT — pi installs the
+ * package from npm or git and loads what the manifest points at. Three names
+ * therefore have to agree: what `package.json#pi` declares, what `build.mjs`
+ * emits, and what `files` actually packs. Each drifts silently — the host
+ * imports a path that is not there, or packs a resource nobody declares, and
+ * mapping stops being mentioned with nothing reported.
+ *
+ * The `skills`/`prompts` halves are not decoration: pi auto-discovers the
+ * `skills/` and `prompts/` CONVENTIONS only for a package with NO `pi`
+ * manifest, so declaring `extensions` alone would silently drop the skill
+ * (docs/packages.md, "Convention Directories"). Ours arrive as `commands/`,
+ * Claude Code's directory, which is why they are named explicitly.
+ */
+describe('the pi host adapter is declared where pi looks', () => {
+  interface PiManifest {
+    readonly pi?: {
+      readonly extensions?: readonly string[];
+      readonly skills?: readonly string[];
+      readonly prompts?: readonly string[];
+    };
+    readonly files: readonly string[];
+  }
+  const manifest = JSON.parse(read('package.json')) as PiManifest;
+  const declared = (path: string): string => path.replace(/^\.\//, '');
+  /** Whether a packed entry is this path, or a directory that contains it. */
+  const packed = (path: string): boolean =>
+    manifest.files.some((entry) => path === entry || path.startsWith(`${entry}/`));
+
+  it('names, in package.json#pi.extensions, a bundle the build emits', () => {
+    const entry = manifest.pi?.extensions?.[0];
+    expect(entry, 'package.json no longer declares a pi extension').toBeDefined();
+    const relative = declared(entry ?? '');
+    expect(relative).not.toBe('');
+    expect(read('build.mjs')).toContain(`outfile: '${relative}'`);
+  });
+
+  it('names the skill and the prompt it ships, and packs what it names', () => {
+    for (const path of [...(manifest.pi?.skills ?? []), ...(manifest.pi?.prompts ?? [])]) {
+      const relative = declared(path);
+      expect(existsSync(join(repoRoot, relative)), `${relative} is declared but absent`).toBe(true);
+      expect(packed(relative), `${relative} is declared but not packed by \`files\``).toBe(true);
+    }
+  });
+
+  it('declares both, because an empty array reads exactly like a missing key', () => {
+    expect(manifest.pi?.skills?.length ?? 0).toBeGreaterThan(0);
+    expect(manifest.pi?.prompts?.length ?? 0).toBeGreaterThan(0);
+  });
+});
