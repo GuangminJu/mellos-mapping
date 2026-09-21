@@ -150,11 +150,50 @@ function fakeHost(): {
         registered.push(definition.name);
         tools.set(definition.name, definition);
       },
-      setLabel() {},
     },
     tools,
     registered,
     async fire(event, ctx) {
+      const results: unknown[] = [];
+      for (const handler of handlers[event] ?? []) results.push(await handler({ type: event }, ctx));
+      return results;
+    },
+  };
+}
+
+/**
+ * A host that enforces pi's LOAD contract, which a real session taught us the
+ * hard way: while a factory runs, pi 0.86.1 has replaced every action method
+ * with a stub that throws the exact text below, and a factory that calls one
+ * loses the whole extension — "Failed to load extension", no tools, no
+ * paragraph. `on()` is a registration and the one call that always gets
+ * through; `registerTool` is legal in pi during load, but this host refuses it
+ * too, which pins the narrower rule this adapter keeps: with no session begun
+ * there is no project, so there is nothing to register yet.
+ *
+ * Binding the runtime is what `fire()` stands in for: the first event a host
+ * delivers is delivered after the bind.
+ */
+function strictHost(): {
+  api: Parameters<typeof mellosMappingPi>[0];
+  fire: (event: string, ctx: unknown) => Promise<readonly unknown[]>;
+} {
+  const handlers: Record<string, ((event: unknown, ctx: unknown) => unknown)[]> = {};
+  let bound = false;
+  const notLoaded = (): never => {
+    throw new Error('Extension runtime not initialized. Action methods cannot be called during extension loading.');
+  };
+  return {
+    api: {
+      on(event, handler) {
+        handlers[event] = [...(handlers[event] ?? []), handler];
+      },
+      registerTool() {
+        if (!bound) notLoaded();
+      },
+    },
+    async fire(event, ctx) {
+      bound = true;
       const results: unknown[] = [];
       for (const handler of handlers[event] ?? []) results.push(await handler({ type: event }, ctx));
       return results;
@@ -203,6 +242,25 @@ describe('nothing happens when pi loads the extension', () => {
 
     expect(host.registered).toEqual([]);
     expect(server.starts).toEqual([]);
+  });
+
+  /**
+   * The load contract, pinned against the failure a real pi session produced:
+   * a factory that calls an action method does not lose that call, it loses the
+   * whole extension. So the factory gets through a host that refuses every
+   * action, and the handlers it registered during loading still do their work
+   * once the host has bound its runtime.
+   */
+  it('gets through a host that refuses every action until its runtime is bound', async () => {
+    const server = fakeServer();
+    const host = strictHost();
+
+    expect(() => mellosMappingPi(host.api, server.start)).not.toThrow();
+    expect(server.starts).toEqual([]);
+
+    await host.fire('session_start', { cwd: project });
+
+    expect(server.starts).toHaveLength(1);
   });
 });
 

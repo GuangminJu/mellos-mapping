@@ -311,9 +311,9 @@ function mellosMappingOmp(pi) {
   const rearm = async () => {
     armed = true;
   };
-  pi.setLabel?.("Mellos Mapping");
   pi.on("session_start", async () => {
     armed = true;
+    pi.setLabel?.("Mellos Mapping");
     try {
       installNote = ensureMmapCommand(pluginRoot);
     } catch {

@@ -61,9 +61,9 @@ export interface PiToolResult {
 }
 
 /**
- * The sliver of pi's `ExtensionAPI` this adapter uses — its tool definition,
- * its two registration points, and one optional label. Deliberately structural
- * and minimal: nothing a newer host could not satisfy.
+ * The sliver of pi's `ExtensionAPI` this adapter uses — its tool definition and
+ * its two registration points. Deliberately structural and minimal: nothing a
+ * newer host could not satisfy.
  *
  * `parameters` is typed `unknown` on purpose: it is the MCP server's JSON
  * Schema object travelling to the host untouched, so the one thing this file
@@ -85,12 +85,14 @@ export interface PiToolDefinition {
 
 /** The pi extension surface this adapter registers against. */
 export interface PiExtensionApi {
-  /** Register a handler. Registration only — no runtime actions at load time. */
+  /**
+   * Register a handler. Registration only — and one of exactly two calls this
+   * factory may make while loading: pi replaces every action method with a stub
+   * that throws until its runtime is bound (see the factory).
+   */
   on(event: string, handler: (event: unknown, ctx: unknown) => unknown): unknown;
   /** Register a tool. Valid during load and later; new tools appear at once. */
   registerTool(definition: PiToolDefinition): unknown;
-  /** Optional label for the host's extension listing. */
-  setLabel?(label: string): void;
 }
 
 /** The message pi injects in front of the next turn. */
@@ -110,6 +112,22 @@ interface InjectMessage {
  * told again without repeating an unchanged one every turn, and `server` is the
  * map server child, memoized through `starting` so the first turn's two callers
  * (the paragraph's and the tools') cannot start two of them.
+ *
+ * The factory body is REGISTRATION AND NOTHING ELSE, and that is a hard host
+ * rule, not a style: pi loads an extension in invocations that never begin a
+ * session, and while it does, `createExtensionRuntime()` has replaced every
+ * action method with a stub that throws "Extension runtime not initialized.
+ * Action methods cannot be called during extension loading." A factory that
+ * calls one does not lose that call, it loses the WHOLE extension: `pi` reports
+ * "Failed to load extension" and the session gets neither the tools nor the
+ * paragraph. Only `on()` and `registerTool()` are legal here.
+ *
+ * Two findings from running a real pi session against this bundle, both worth
+ * keeping: that load rule (the first bundle failed to load over exactly one such
+ * call), and the fact that this adapter must not label itself at all — pi's
+ * `setLabel(entryId, label)` names a TRANSCRIPT ENTRY for the session tree, so
+ * `setLabel('Mellos Mapping')` was not merely illegal while loading, it answered
+ * `Entry Mellos Mapping not found`. An extension is named by its package.
  */
 export default function mellosMappingPi(
   pi: PiExtensionApi,
@@ -132,8 +150,6 @@ export default function mellosMappingPi(
   let starting: Promise<MellosServer | undefined> | undefined;
   let serverNote: string | undefined;
   const registered = new Set<string>();
-
-  pi.setLabel?.('Mellos Mapping');
 
   /** The one line the model is told when the map server could not start. */
   const serverFailure = (error: unknown): string =>

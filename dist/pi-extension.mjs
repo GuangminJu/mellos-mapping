@@ -15349,7 +15349,6 @@ function mellosMappingPi(pi, start = startMellosServer) {
   let starting;
   let serverNote;
   const registered = /* @__PURE__ */ new Set();
-  pi.setLabel?.("Mellos Mapping");
   const serverFailure = (error2) => `mellos-mapping: the map tools could not start (${firstLineOf(error2)}) \u2014 tell the user; maps cannot be opened or read in this session.`;
   const ensureServer = (projectDir) => {
     starting ??= (async () => {
