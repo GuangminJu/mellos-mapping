@@ -109,6 +109,21 @@ omp 不读 `hooks/hooks.json`，所以那段会话说明由插件的 omp 宿主�
 件，用它们装会只剩适配器、没有工具。见
 [omp 安装与限制](docs/distributions/omp.md)。
 
+**pi** 则完全不读那套目录：它加载的是扩展，而且出于设计考虑自己没有 MCP。
+所以这个插件自己跟自己讲 MCP——在 `package.json#pi.extensions` 里声明的扩
+展（`dist/pi-extension.mjs`）会在会话所在目录启动同一个 `dist/server.mjs`，
+八个 `mmap_*` 工具因此就是同样的八个、同名可用，会话说明也来自同一个存储、
+同一段策略文字，与 Claude 钩子打印的一样：
+
+```
+pi install npm:mellos-mapping
+```
+
+加 `-l` 只装到当前项目而不是所有项目，之后开一个新会话：pi 在会话开始时才
+发现包。包里的 `skills/` 与 `commands/` 随之一并生效——同一套建图纪律，
+`/mmap` 也还是同一个斜杠命令。见
+[pi 安装与行为](docs/distributions/pi.md)。
+
 装完之后的第一个会话只会问你**一个**问题——建图要多积极——并把答案记成
 你以后打开的每一个项目的默认。此后钩子会自己把它带进每个新会话；再也没有
 "每个项目设置一遍"这回事。见
@@ -166,6 +181,16 @@ omp plugin marketplace update mellos-mapping && omp plugin upgrade mellos-mappin
 步。`upgrade` 不比较版本：它按目录里现在指的内容强制重装，同版本号也会重下——
 因此版本号提升是给发行**贴标签**，而不是送达的门槛。之后重启 omp，并把仍显示旧
 运行文件的面板关掉重开（面板里按 `q`，再 `mmap_open`）。
+
+pi 更新的则是它装下的那个包，中间没有市场目录：
+
+```
+pi update npm:mellos-mapping
+```
+
+这是 npm 来源；git 来源由 pi 自己的更新流程校准到你 settings 里写的 ref，带版本的
+写法（`npm:mellos-mapping@0.27.0`）会被跳过。之后重启会话：每个会话各自拥有它启动
+的地图服务器进程，仍在运行的会话会一直用开始时的那份副本，直到会话结束。
 
 ### 从 0.19 升级
 
