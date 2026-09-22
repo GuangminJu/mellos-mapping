@@ -62,6 +62,12 @@ session, the server's own JSON Schema is handed to pi as that tool's
 The server's error text travels to the model unchanged — it is the reason the
 model can fix its own call (`expectedRevision`, a page that does not exist).
 
+The supported distribution is the npm one: the server is started with
+`process.execPath`, so it runs on the same Node process pi runs on. A pi installed
+as a compiled binary (the `install.sh` path) is refused in one line instead of
+being left to fail its handshake later — there `process.execPath` is pi itself,
+not an interpreter.
+
 The child process inherits this process's environment, so which terminal
 integration the pane launcher detects is the same fact under pi as under Claude
 Code, and nothing it prints can reach the terminal (stderr is discarded — an

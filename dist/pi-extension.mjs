@@ -15289,9 +15289,11 @@ var StdioClientTransport = class {
 // src/host/pi/mcp-client.ts
 async function startMellosServer(options) {
   const transport = new StdioClientTransport({
-    // `process.execPath`, not 'node': the server must run on the interpreter
-    // the host is already running on, whatever is or is not on PATH.
-    command: process.execPath,
+    command: serverInterpreter({
+      execPath: process.execPath,
+      bun: process.versions.bun,
+      sea: process.features?.sea
+    }),
     args: [join6(options.pluginRoot, "dist", "server.mjs")],
     cwd: options.projectDir,
     env: inheritedEnv(),
@@ -15327,6 +15329,15 @@ async function startMellosServer(options) {
     throw error2;
   }
 }
+function serverInterpreter(runtime) {
+  if (typeof runtime.bun === "string") {
+    throw new Error("this pi is a compiled Bun binary, which cannot host the map server; install pi from npm");
+  }
+  if (runtime.sea === true) {
+    throw new Error("this pi is a single-executable Node build; install pi from npm to use the map server");
+  }
+  return runtime.execPath;
+}
 function structuredOf(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
   return Object.fromEntries(Object.entries(value));
@@ -15348,7 +15359,6 @@ function mellosMappingPi(pi, start = startMellosServer) {
   let server;
   let starting;
   let serverNote;
-  const registered = /* @__PURE__ */ new Set();
   const serverFailure = (error2) => `mellos-mapping: the map tools could not start (${firstLineOf(error2)}) \u2014 tell the user; maps cannot be opened or read in this session.`;
   const ensureServer = (projectDir) => {
     starting ??= (async () => {
@@ -15359,11 +15369,7 @@ function mellosMappingPi(pi, start = startMellosServer) {
           clientVersion: pluginVersion(pluginRoot)
         });
         server = started;
-        for (const tool of started.tools) {
-          if (registered.has(tool.name)) continue;
-          registered.add(tool.name);
-          pi.registerTool(toolDefinition(tool, () => server ?? started));
-        }
+        for (const tool of started.tools) pi.registerTool(toolDefinition(tool, started));
         return started;
       } catch (error2) {
         serverNote = serverFailure(error2);
@@ -15374,8 +15380,6 @@ function mellosMappingPi(pi, start = startMellosServer) {
   };
   pi.on("session_start", async (_event, ctx) => {
     armed = true;
-    starting = void 0;
-    serverNote = void 0;
     try {
       installNote = ensureMmapCommand(pluginRoot);
     } catch {
@@ -15384,6 +15388,7 @@ function mellosMappingPi(pi, start = startMellosServer) {
     await ensureServer(projectDirOf(ctx));
   });
   pi.on("session_shutdown", async () => {
+    await starting?.catch(() => void 0);
     const closing = server;
     server = void 0;
     starting = void 0;
@@ -15423,7 +15428,7 @@ function mellosMappingPi(pi, start = startMellosServer) {
     return { message };
   });
 }
-function toolDefinition(tool, active) {
+function toolDefinition(tool, server) {
   return {
     name: tool.name,
     label: typeof tool.title === "string" && tool.title !== "" ? tool.title : tool.name,
@@ -15431,7 +15436,7 @@ function toolDefinition(tool, active) {
     parameters: inputSchemaOf(tool.inputSchema),
     async execute(_toolCallId, params, signal) {
       try {
-        return await callTool(active(), tool.name, params, signal);
+        return await callTool(server, tool.name, params, signal);
       } catch (error2) {
         if (signal?.aborted === true) {
           return { content: [{ type: "text", text: "Cancelled." }], details: { cancelled: true } };
@@ -15465,8 +15470,7 @@ function inputSchemaOf(schema) {
   return rest;
 }
 function projectDirOf(ctx) {
-  const cwd = typeof ctx === "object" && ctx !== null && "cwd" in ctx ? ctx.cwd : void 0;
-  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
+  return ctx.cwd;
 }
 function pluginVersion(pluginRoot) {
   try {

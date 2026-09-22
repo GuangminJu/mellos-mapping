@@ -293,6 +293,8 @@ describe('the tools pi gets instead of an MCP client', () => {
     await host.fire('session_start', { cwd: project });
 
     expect(server.starts).toHaveLength(1);
+    // `project` is a temporary directory and this spec runs in the repository,
+    // so a `process.cwd()` fallback would be visible right here.
     expect(server.starts[0]?.projectDir).toBe(project);
   });
 
@@ -367,6 +369,34 @@ describe('the tools pi gets instead of an MCP client', () => {
 
     await host.fire('session_start', { cwd: project });
     expect(server.starts).toHaveLength(2);
+  });
+
+  /**
+   * `before_agent_start` starts the server, and a session can be replaced while
+   * that start is still in flight: at that moment `server` is still undefined, so
+   * a shutdown that only looked at `server` would close nothing and leave the
+   * child that lands afterwards with nobody to close it.
+   */
+  it('closes a server whose start was still in flight when the session ended', async () => {
+    const server = fakeServer();
+    const host = fakeHost();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const start = async (options: ServerOptions): Promise<MellosServer> => {
+      await gate;
+      return server.start(options);
+    };
+    mellosMappingPi(host.api, start);
+
+    const starting = host.fire('session_start', { cwd: project });
+    const ending = host.fire('session_shutdown', {});
+    release();
+    await Promise.all([starting, ending]);
+
+    expect(server.starts).toHaveLength(1);
+    expect(server.closes).toBe(1);
   });
 });
 

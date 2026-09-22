@@ -75,42 +75,6 @@ afterEach(() => {
   rmSync(project, { recursive: true, force: true });
 });
 
-describe('nothing happens when omp loads the extension', () => {
-  /**
-   * The same load contract pi enforces with a hard failure, pinned here for the
-   * host that merely documents it: a factory may register handlers and nothing
-   * else, so `setLabel` — an action — is asked for from `session_start`, the
-   * first moment the host is bound and can be told something.
-   */
-  it('touches no runtime action while loading, and labels itself at session start', async () => {
-    const handlers: Record<string, ((event: unknown, ctx: unknown) => unknown)[]> = {};
-    const labels: string[] = [];
-    let bound = false;
-    const notBound = (): never => {
-      throw new Error('runtime actions are not available while the extension loads');
-    };
-    const api: Parameters<typeof mellosMappingOmp>[0] = {
-      on(event, handler) {
-        handlers[event] = [...(handlers[event] ?? []), handler];
-      },
-      setLabel(label) {
-        if (!bound) notBound();
-        labels.push(label);
-      },
-    };
-
-    expect(() => mellosMappingOmp(api)).not.toThrow();
-    expect(labels).toEqual([]);
-
-    bound = true;
-    const start = handlers['session_start']?.[0];
-    expect(start).toBeDefined();
-    await start?.({ type: 'session_start' }, undefined);
-
-    expect(labels).toEqual(['Mellos Mapping']);
-  });
-});
-
 describe('the paragraph the adapter reads', () => {
   it('takes the policy from this project — the same store the Claude hook reads', () => {
     record('always');

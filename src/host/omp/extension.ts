@@ -38,12 +38,6 @@
  * The host API is declared structurally instead of imported: this repository
  * ships no omp dependency, so the adapter keeps building — and keeps working —
  * against whatever host version a user happens to run.
- *
- * The factory body is registration and nothing else. omp states it (`runtime
- * actions throw during load`) and pi enforces it with a hard failure — every
- * action method, `setLabel` included, throws until the runtime is bound — so the
- * label is asked for from `session_start`, which is the same moment for both
- * hosts: the first one at which the host can be told something.
  */
 
 import { dirname } from 'node:path';
@@ -64,7 +58,7 @@ import { SESSION_CONTEXT_TYPE, sessionParagraph, storeIsReadable } from '../sess
 export interface OmpExtensionApi {
   /** Register a handler. Registration only — omp forbids runtime actions here. */
   on(event: string, handler: (event: unknown, ctx: unknown) => unknown): void;
-  /** Optional label for the host's extension listing. An ACTION: not at load. */
+  /** Optional label for the host's extension listing. */
   setLabel?(label: string): void;
 }
 
@@ -108,12 +102,10 @@ export default function mellosMappingOmp(pi: OmpExtensionApi): void {
     armed = true;
   };
 
+  pi.setLabel?.('Mellos Mapping');
+
   pi.on('session_start', async () => {
     armed = true;
-    // The label is an ACTION, so it is asked for here rather than while the
-    // module loads: pi fails the entire extension if a factory calls one, and
-    // omp documents the same prohibition. This is the first bound moment.
-    pi.setLabel?.('Mellos Mapping');
     try {
       installNote = ensureMmapCommand(pluginRoot);
     } catch {

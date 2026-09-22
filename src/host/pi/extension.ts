@@ -19,19 +19,23 @@
  *   prints, read from the same store. One source, three hosts, no second
  *   dialect of the policy.
  *
- * Two promises carried over from the hook because they are about the same
- * moment: FAST — one config read, one existsSync, one shim read, no map parsed
- * on the first prompt — and SILENT ON FAILURE — a host adapter that throws must
- * not be the reason a session starts badly. The one exception is the map server
- * failing to start: the paragraph would then tell the model to open a pane that
- * cannot open, so that single fault is reported in one line, to the model,
- * inside the same injection.
+ * Two promises carried over from the hook, because they are about the same
+ * moment: FAST — no map parsed on the first prompt — and SILENT ON FAILURE, with
+ * one exception: a map server that cannot start is reported in one line, inside
+ * the same injection, because the paragraph would otherwise tell the model to
+ * open a pane that cannot open.
  *
  * Nothing is started at load time. pi runs extension factories in invocations
  * that never begin a session (`pi --list-models`), so the child process is
- * started from `session_start`, and stopped in `session_shutdown`, which pi
- * emits before it reloads extensions for the next session (`new`, `resume`,
- * `fork`) — one server per session, closed by whoever opened it.
+ * started from `session_start` and stopped in `session_shutdown`.
+ *
+ * The lifecycle those two lean on, verified on 0.86.1 in a real TUI session and
+ * in `core/agent-session-runtime.js`: `new`, `resume` and `fork` await
+ * `session_shutdown` to completion (`teardownCurrent`) before re-running this
+ * factory — a FRESH instance, so no state below outlives the session that made
+ * it — and `/reload` behaves the same way from the TUI. Each of them then emits
+ * `session_start` with that reason. One server per session, closed by the
+ * instance that opened it.
  *
  * The host API is declared structurally instead of imported, exactly as
  * `../omp/extension.ts` does: this repository ships neither host as a
@@ -85,11 +89,7 @@ export interface PiToolDefinition {
 
 /** The pi extension surface this adapter registers against. */
 export interface PiExtensionApi {
-  /**
-   * Register a handler. Registration only — and one of exactly two calls this
-   * factory may make while loading: pi replaces every action method with a stub
-   * that throws until its runtime is bound (see the factory).
-   */
+  /** Register a handler — one of the two calls legal while loading (see the factory). */
   on(event: string, handler: (event: unknown, ctx: unknown) => unknown): unknown;
   /** Register a tool. Valid during load and later; new tools appear at once. */
   registerTool(definition: PiToolDefinition): unknown;
@@ -103,31 +103,24 @@ interface InjectMessage {
 }
 
 /**
- * The pi extension factory.
+ * The pi extension factory — one instance per session (see the header).
  *
- * State is one boolean, two memos and one process: `armed` says whether this
- * session still owes the model the paragraph — a session start arms it, a
- * compaction re-arms it, because compaction is exactly where a standing
- * instruction gets lost — `told` remembers what was said so a CHANGED policy is
- * told again without repeating an unchanged one every turn, and `server` is the
- * map server child, memoized through `starting` so the first turn's two callers
- * (the paragraph's and the tools') cannot start two of them.
+ * `armed` says whether this session still owes the model the paragraph: a
+ * session start arms it, a compaction re-arms it, because compaction is exactly
+ * where a standing instruction gets lost. `told` remembers what was said, so a
+ * CHANGED policy is told again without repeating an unchanged one every turn.
+ * `server` is the map server child, memoized through `starting` so the first
+ * turn's two callers (the paragraph's and the tools') cannot start two of them.
  *
  * The factory body is REGISTRATION AND NOTHING ELSE, and that is a hard host
  * rule, not a style: pi loads an extension in invocations that never begin a
- * session, and while it does, `createExtensionRuntime()` has replaced every
- * action method with a stub that throws "Extension runtime not initialized.
- * Action methods cannot be called during extension loading." A factory that
- * calls one does not lose that call, it loses the WHOLE extension: `pi` reports
- * "Failed to load extension" and the session gets neither the tools nor the
- * paragraph. Only `on()` and `registerTool()` are legal here.
- *
- * Two findings from running a real pi session against this bundle, both worth
- * keeping: that load rule (the first bundle failed to load over exactly one such
- * call), and the fact that this adapter must not label itself at all — pi's
- * `setLabel(entryId, label)` names a TRANSCRIPT ENTRY for the session tree, so
- * `setLabel('Mellos Mapping')` was not merely illegal while loading, it answered
- * `Entry Mellos Mapping not found`. An extension is named by its package.
+ * session, and while it does, every action method is a stub that throws
+ * "Extension runtime not initialized. Action methods cannot be called during
+ * extension loading." A factory that calls one does not lose that call, it loses
+ * the WHOLE extension: pi reports "Failed to load extension" and the session
+ * gets neither the tools nor the paragraph. Only `on()` and `registerTool()` are
+ * legal here. (In pi the label is an action too — `setLabel()` names a transcript
+ * entry — and an extension is named by its package anyway.)
  */
 export default function mellosMappingPi(
   pi: PiExtensionApi,
@@ -149,7 +142,6 @@ export default function mellosMappingPi(
   let server: MellosServer | undefined;
   let starting: Promise<MellosServer | undefined> | undefined;
   let serverNote: string | undefined;
-  const registered = new Set<string>();
 
   /** The one line the model is told when the map server could not start. */
   const serverFailure = (error: unknown): string =>
@@ -166,14 +158,7 @@ export default function mellosMappingPi(
           clientVersion: pluginVersion(pluginRoot),
         });
         server = started;
-        for (const tool of started.tools) {
-          // Registered by name once per extension instance. pi rebuilds the
-          // instance for every session, so this set only guards the two
-          // callers above racing on the same discovery.
-          if (registered.has(tool.name)) continue;
-          registered.add(tool.name);
-          pi.registerTool(toolDefinition(tool, () => server ?? started));
-        }
+        for (const tool of started.tools) pi.registerTool(toolDefinition(tool, started));
         return started;
       } catch (error) {
         serverNote = serverFailure(error);
@@ -185,10 +170,6 @@ export default function mellosMappingPi(
 
   pi.on('session_start', async (_event, ctx) => {
     armed = true;
-    // A previous session's server was closed in `session_shutdown`; this one
-    // gets its own, and with it a fresh chance to report a start failure.
-    starting = undefined;
-    serverNote = undefined;
     try {
       installNote = ensureMmapCommand(pluginRoot);
     } catch {
@@ -200,6 +181,10 @@ export default function mellosMappingPi(
   });
 
   pi.on('session_shutdown', async () => {
+    // A start can still be in flight — `before_agent_start` may have begun one —
+    // and it assigns `server` when it lands. Awaiting it first is what keeps that
+    // child from being left with nobody to close it.
+    await starting?.catch(() => undefined);
     const closing = server;
     server = undefined;
     starting = undefined;
@@ -257,15 +242,12 @@ export default function mellosMappingPi(
 /**
  * One MCP tool, as pi's tool definition.
  *
- * `active` is read at CALL time, not captured: the host keeps the registration
- * for the life of the extension instance, and that instance can outlive the
- * server it first discovered (`session_start` after `session_shutdown` in the
- * same process). A captured server would be a closed pipe.
+ * The server is captured, not looked up: this instance discovered it, the
+ * instance dies with its session, and `session_shutdown` closes the child only
+ * after the outgoing turn has been aborted (`AgentSessionRuntime.teardownCurrent`)
+ * — so a call cannot arrive at a closed pipe.
  */
-function toolDefinition(
-  tool: MellosServer['tools'][number],
-  active: () => MellosServer,
-): PiToolDefinition {
+function toolDefinition(tool: MellosServer['tools'][number], server: MellosServer): PiToolDefinition {
   return {
     name: tool.name,
     label: typeof tool.title === 'string' && tool.title !== '' ? tool.title : tool.name,
@@ -273,7 +255,7 @@ function toolDefinition(
     parameters: inputSchemaOf(tool.inputSchema),
     async execute(_toolCallId, params, signal) {
       try {
-        return await callTool(active(), tool.name, params, signal);
+        return await callTool(server, tool.name, params, signal);
       } catch (error) {
         // "Stopped asking" is not a failure: the user cancelled the turn. pi
         // marks a tool failed by THROWING, so this must not throw.
@@ -344,12 +326,13 @@ function inputSchemaOf(schema: unknown): unknown {
 
 /**
  * The session's working directory — the fact that decides which project's store
- * the server serves, and therefore the one fact this adapter must not guess. A
- * host that hands us no `cwd` gets this process's.
+ * the server serves, and therefore the one fact this adapter must not guess. pi
+ * types `cwd` as a required field of every extension context
+ * (`core/extensions/types.d.ts`), so this is a read: inheriting `process.cwd()`
+ * would serve a different project's map.
  */
 function projectDirOf(ctx: unknown): string {
-  const cwd = typeof ctx === 'object' && ctx !== null && 'cwd' in ctx ? (ctx as { cwd?: unknown }).cwd : undefined;
-  return typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd();
+  return (ctx as { cwd: string }).cwd;
 }
 
 /** The release version, for the MCP handshake's client info. */
