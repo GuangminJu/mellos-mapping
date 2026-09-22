@@ -1,7 +1,7 @@
 /**
  * The version is declared once (package.json) and copied into every manifest
  * a host reads without npm: server.json, the plugin manifests, the package
- * copies, and the SERVER_VERSION literal the MCP handshake reports.
+ * copies, and the VERSION literal the MCP handshake reports and the pane shows.
  * scripts/release.mjs bumps them all — this spec pins that nothing drifted
  * between releases, so a missed bump fails `verify` instead of shipping.
  */
@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { SERVER_VERSION } from '../src/server/server.js';
+import { VERSION } from '../src/support/version.js';
 
 const read = (rel: string): string => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
 
@@ -26,8 +26,8 @@ const VERSIONED_FILES = [
 ] as const;
 
 describe('one version, many manifests', () => {
-  it('SERVER_VERSION matches package.json', () => {
-    expect(SERVER_VERSION).toBe(pkgVersion);
+  it('VERSION matches package.json', () => {
+    expect(VERSION).toBe(pkgVersion);
   });
 
   for (const file of VERSIONED_FILES) {

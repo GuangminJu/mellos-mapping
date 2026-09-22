@@ -1787,6 +1787,9 @@ function paint(scene, opts) {
   return { canvas, hits };
 }
 
+// src/support/version.ts
+var VERSION = "0.27.0";
+
 // src/store/atomic.ts
 import { mkdirSync as mkdirSync2, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname as dirname3 } from "node:path";
@@ -2535,6 +2538,8 @@ function dividerRow(width, unicode, follow) {
   let bar = (unicode ? "\u2500" : "-").repeat(width);
   const gripAt = Math.max(0, Math.floor((width - grip.length) / 2));
   if (width > grip.length + 2) bar = bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length);
+  const version = ` v${VERSION} `;
+  if (1 + version.length < gripAt) bar = bar.slice(0, 1) + version + bar.slice(1 + version.length);
   if (follow) {
     const tag = unicode ? " \u21E2 follow " : " > follow ";
     const at = width - tag.length - 1;

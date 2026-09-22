@@ -98,6 +98,7 @@ import {
   wrapWidth,
   zoomLabel,
 } from '../render/render.js';
+import { VERSION } from '../support/version.js';
 import {
   PAGES_DIR_NAME,
   type PageId,
@@ -302,16 +303,19 @@ export function renderWindow(
 
 /**
  * The map/panel separator row: a full-width bar with the drag grip in the
- * middle and — while auto-follow is on — a right-aligned follow tag, so the
- * pane always shows whether it will jump to the next written page. Every
- * glyph involved is single-column, so slicing by characters is slicing by
- * columns. Colors belong to the caller.
+ * middle, the release version at the left, and — while auto-follow is on — a
+ * right-aligned follow tag, so the pane always shows what it is running and
+ * whether it will jump to the next written page. Every glyph involved is
+ * single-column, so slicing by characters is slicing by columns. Either tag
+ * is dropped rather than overlap the grip. Colors belong to the caller.
  */
 export function dividerRow(width: number, unicode: boolean, follow: boolean): string {
   const grip = unicode ? ' ⋯ ' : ' ~ ';
   let bar = (unicode ? '─' : '-').repeat(width);
   const gripAt = Math.max(0, Math.floor((width - grip.length) / 2));
   if (width > grip.length + 2) bar = bar.slice(0, gripAt) + grip + bar.slice(gripAt + grip.length);
+  const version = ` v${VERSION} `;
+  if (1 + version.length < gripAt) bar = bar.slice(0, 1) + version + bar.slice(1 + version.length);
   if (follow) {
     const tag = unicode ? ' ⇢ follow ' : ' > follow ';
     const at = width - tag.length - 1;

@@ -29,6 +29,7 @@ import {
 import { SPINNER_FRAMES, spinnerGlyph, statusGlyph } from '../semantics/semantics.js';
 import { type BoxHit, type RenderOptions, type Viewport, renderMapWindow, statusSgr } from '../render/render.js';
 import { serializeMap } from '../store/store.js';
+import { VERSION } from '../support/version.js';
 import { initialPaneState } from './pane-state.js';
 import {
   type PageTab,
@@ -621,20 +622,24 @@ describe('auto-follow', () => {
     expect(config(['--no-follow']).follow).toBe(false);
   });
 
-  it('dividerRow keeps the grip centered and right-aligns the follow tag', () => {
+  it('dividerRow keeps the grip centered, the version at the left and the follow tag at the right', () => {
+    const version = ` v${VERSION} `;
     const on = dividerRow(40, true, true);
     expect(on).toHaveLength(40);
     expect(on).toContain(' ⋯ ');
+    expect(on.slice(1, 1 + version.length)).toBe(version);
     expect(on.slice(-11, -1)).toBe(' ⇢ follow ');
     const off = dividerRow(40, true, false);
     expect(off).toHaveLength(40);
     expect(off).not.toContain('follow');
+    expect(off.slice(1, 1 + version.length)).toBe(version);
   });
 
-  it('dividerRow drops the tag when it would collide with the grip', () => {
+  it('dividerRow drops either tag when it would collide with the grip', () => {
     const narrow = dividerRow(14, true, true);
     expect(narrow).toHaveLength(14);
     expect(narrow).not.toContain('follow');
+    expect(narrow).not.toContain(VERSION);
     expect(dividerRow(4, true, true)).toBe('────'); // too narrow even for the grip
   });
 

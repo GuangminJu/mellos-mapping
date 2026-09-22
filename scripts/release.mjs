@@ -52,7 +52,7 @@ bump('.claude-plugin/marketplace.json', jsonVersion, `"version": "${version}"`, 
 bump('.codex-plugin/plugin.json', jsonVersion, `"version": "${version}"`, 1);
 bump('package.json', jsonVersion, `"version": "${version}"`, 1);
 bump('server.json', jsonVersion, `"version": "${version}"`, 2); // top-level + packages[0]
-bump('src/server/server.ts', /SERVER_VERSION = '\d+\.\d+\.\d+'/g, `SERVER_VERSION = '${version}'`, 1);
+bump('src/support/version.ts', /VERSION = '\d+\.\d+\.\d+'/g, `VERSION = '${version}'`, 1);
 
 // A version-only release keeps the resolved dependency graph intact on every OS.
 const lockPath = join(root, 'package-lock.json');
