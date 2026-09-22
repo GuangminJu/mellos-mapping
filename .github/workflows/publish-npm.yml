@@ -1,13 +1,26 @@
-# Publish the npm package from its version tag, authenticating via npm Trusted
+# Publish the npm package from a version tag, authenticating via npm Trusted
 # Publishing: npmjs.com trusts this repository's `publish-npm.yml`, so the run
 # exchanges its GitHub Actions OIDC identity for a publish grant — no token, no
 # one-time password, no secret — and `--provenance` attaches the sigstore
-# attestation a laptop publish cannot. Run once the tag exists:
-#   gh workflow run publish-npm.yml --ref v0.28.0
+# attestation a laptop publish cannot.
+#
+# The workflow definition is read from the ref it is dispatched on, so it is
+# always dispatched on `main` and told which tag to publish; the tag is what
+# gets checked out, verified and published. Run once the tag exists:
+#   gh workflow run publish-npm.yml --ref main -f tag=v0.28.0
+#
+# `npm run verify` runs on the npm that ships with the runner's Node — the one
+# the CI matrix proves it against. Only the publish itself needs npm 11.5.1+,
+# so the upgrade comes after verify.
 name: publish-npm
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to publish, e.g. v0.28.0'
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -18,12 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-      # Trusted publishing needs npm 11.5.1 or newer; Node 22 bundles an older one.
-      - run: npm install -g npm@latest
       - run: npm ci
       - name: Linux tmux integration dependencies
         run: |
@@ -32,11 +45,14 @@ jobs:
             sudo apt-get install -y tmux bsdutils
           fi
       - run: npm run verify
-      - name: ref is the version tag
+      - name: tag names the checked-out version
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
           version=$(node -p "require('./package.json').version")
-          if [ "$GITHUB_REF" != "refs/tags/v$version" ]; then
-            echo "run this workflow on tag v$version, not $GITHUB_REF"
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not name package.json version $version"
             exit 1
           fi
+      - run: npm install -g npm@latest
       - run: npm publish --provenance

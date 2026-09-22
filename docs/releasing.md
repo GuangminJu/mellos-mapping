@@ -111,11 +111,11 @@ GitHub 发布不会自动发布 npm 包、MCP Registry 或 OpenAI 公共插件�
 npm 发布由 `.github/workflows/publish-npm.yml` 完成。npmjs.com 上的包设置信任本仓库的
 这个工作流文件（Trusted Publishing），运行时用 GitHub Actions 的 OIDC 身份换取发布
 授权，不需要 token、一次性密码或任何 secret，并以 `--provenance` 附带 sigstore 证明。
-工作流在标签上运行 `npm ci` 和 `npm run verify`，核对标签与 `package.json` 版本一致后
-才发布；在分支上运行会直接失败。
+工作流定义取自 `main`，要发布的标签由输入参数指定：工作流检出该标签，运行 `npm ci`
+和 `npm run verify`，核对标签与 `package.json` 版本一致后才发布。
 
 ```sh
-gh workflow run publish-npm.yml --ref v0.24.0
+gh workflow run publish-npm.yml --ref main -f tag=v0.24.0
 gh run watch --exit-status
 ```
 
