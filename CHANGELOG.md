@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.27.0
+
+- Run the mapping policy and the eight map tools in pi sessions through a host
+  adapter (`package.json#pi.extensions` → `dist/pi-extension.mjs`). pi has no
+  MCP client, so the bundle carries one: `session_start` launches the same
+  `dist/server.mjs` Claude Code runs, in the session's working directory, and
+  registers what the server advertises as ordinary pi tools; `session_shutdown`
+  closes it. The policy paragraph is injected from `before_agent_start`, once
+  per session and again after compaction. The manifest also names the skill and
+  the `/mmap` template (`package.json#pi.skills`, `package.json#pi.prompts`),
+  because a `pi` manifest turns off directory discovery.
+- Build the policy paragraph in `src/host/session-context.ts`, shared by the
+  omp and pi adapters, so one source serves three hosts.
+- Support the npm distribution of pi only. The standalone Bun-compiled binaries
+  are refused by name, since `process.execPath` is pi itself there. Install and
+  update steps are in `docs/distributions/pi.md`.
+
 ## 0.26.2
 
 - Keep the web terminal's hidden input disabled until the user explicitly enables
