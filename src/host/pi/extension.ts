@@ -29,13 +29,13 @@
  * that never begin a session (`pi --list-models`), so the child process is
  * started from `session_start` and stopped in `session_shutdown`.
  *
- * The lifecycle those two lean on, verified on 0.86.1 in a real TUI session and
- * in `core/agent-session-runtime.js`: `new`, `resume` and `fork` await
- * `session_shutdown` to completion (`teardownCurrent`) before re-running this
- * factory — a FRESH instance, so no state below outlives the session that made
- * it — and `/reload` behaves the same way from the TUI. Each of them then emits
- * `session_start` with that reason. One server per session, closed by the
- * instance that opened it.
+ * The lifecycle those two lean on: `new`, `resume`, `fork` and `reload` each emit
+ * `session_shutdown` on the old instance and `session_start` on a NEW one — pi's
+ * own record of it is CHANGELOG 0.79.9 ("reuse imported extension modules while
+ * preserving fresh extension instances and lifecycle events"), and
+ * `core/agent-session-runtime.js` keeps that order, awaiting `teardownCurrent`
+ * before `createRuntime`. One server per session, closed by the instance that
+ * opened it, and the state below never outlives the session that made it.
  *
  * The host API is declared structurally instead of imported, exactly as
  * `../omp/extension.ts` does: this repository ships neither host as a

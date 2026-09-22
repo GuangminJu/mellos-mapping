@@ -62,11 +62,13 @@ session, the server's own JSON Schema is handed to pi as that tool's
 The server's error text travels to the model unchanged — it is the reason the
 model can fix its own call (`expectedRevision`, a page that does not exist).
 
-The supported distribution is the npm one: the server is started with
-`process.execPath`, so it runs on the same Node process pi runs on. A pi installed
-as a compiled binary (the `install.sh` path) is refused in one line instead of
-being left to fail its handshake later — there `process.execPath` is pi itself,
-not an interpreter.
+The supported distribution is the npm one — `npm i -g` and the `pi.dev/install.sh`
+path both install a Node-hosted pi — and that is why the server is started with
+`process.execPath`: it runs on the very interpreter pi runs on. The standalone
+Bun-compiled binaries published as release assets (`pi-darwin-arm64.tar.gz`,
+`pi-windows-x64.zip`, …) are not supported: there `process.execPath` is pi
+itself, not an interpreter, and the adapter says so in one line instead of
+starting a second pi that fails a handshake it can never finish.
 
 The child process inherits this process's environment, so which terminal
 integration the pane launcher detects is the same fact under pi as under Claude
