@@ -24516,6 +24516,9 @@ function readMaps(stateFile, input) {
   return { resource, project, page: input.page ?? null, revision, total, items: records, nextCursor: offset + limit < total ? Buffer.from(JSON.stringify({ revision, query: queryHash, offset: offset + limit })).toString("base64url") : null };
 }
 
+// src/support/version.ts
+var VERSION = "0.27.1";
+
 // src/server/presence.ts
 var DEFAULT_PAGE_NAME = "(default)";
 var DEFAULT_PAGE_ABSENT = "(default: absent)";
@@ -24650,7 +24653,6 @@ function launcherViewerPid(run) {
 
 // src/server/server.ts
 var SERVER_NAME = "mellos-mapping";
-var SERVER_VERSION = "0.27.0";
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
@@ -24669,7 +24671,7 @@ function saveFailed(error2) {
   return text(`save failed, nothing changed (retry): ${describeStoreError(error2)}`, true);
 }
 function buildServer(stateFile, userConfigFile, launch = launchPane) {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: "Maps persist across conversations. Before mapping or resuming work, use mmap_read to discover pages, then read the relevant records and revision. A new conversation is not a new effort. Reuse verified nodes; submit only necessary changes with expectedRevision. mmap_view is a picture, not the editable data. Read mmap_setup for the user mapping policy." });
+  const server = new McpServer({ name: SERVER_NAME, version: VERSION }, { instructions: "Maps persist across conversations. Before mapping or resuming work, use mmap_read to discover pages, then read the relevant records and revision. A new conversation is not a new effort. Reuse verified nodes; submit only necessary changes with expectedRevision. mmap_view is a picture, not the editable data. Read mmap_setup for the user mapping policy." });
   let paneOpenFailure;
   const currentPaneLine = (page2) => paneLine(stateFile, page2, paneOpenFailure);
   const projectConfigFile = configFilePath(stateFile);
@@ -24910,7 +24912,6 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
 }
 export {
   SERVER_NAME,
-  SERVER_VERSION,
   buildServer,
   launchedAsEntry,
   launcherArgs,
