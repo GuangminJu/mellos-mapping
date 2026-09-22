@@ -181,9 +181,11 @@ export default function mellosMappingPi(
   });
 
   pi.on('session_shutdown', async () => {
-    // A start can still be in flight — `before_agent_start` may have begun one —
-    // and it assigns `server` when it lands. Awaiting it first is what keeps that
-    // child from being left with nobody to close it.
+    // A start can still be in flight when a session ends: `session_start` awaits
+    // the handshake, and pi's TUI takes an interrupt while startup handlers run
+    // (`interactive-mode.ts`: text is accepted, but only interrupt and exit are
+    // enabled). The start assigns `server` when it lands, so awaiting it first is
+    // what keeps that child from being left with nobody to close it.
     await starting?.catch(() => undefined);
     const closing = server;
     server = undefined;
@@ -199,8 +201,9 @@ export default function mellosMappingPi(
 
   pi.on('before_agent_start', async (_event, ctx) => {
     const projectDir = projectDirOf(ctx);
-    // Tools are discovered asynchronously, and this is the last moment before
-    // the model's tool list is built, so the discovery is awaited here too.
+    // The tool list is built right after this hook, and discovery is
+    // asynchronous: `session_start` began it and this is the last moment it can
+    // still be unfinished.
     if (server === undefined) await ensureServer(projectDir);
 
     let paragraph: string | undefined;

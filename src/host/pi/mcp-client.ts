@@ -71,7 +71,6 @@ export async function startMellosServer(options: ServerOptions): Promise<MellosS
     command: serverInterpreter({
       execPath: process.execPath,
       bun: (process.versions as { bun?: unknown }).bun,
-      sea: (process.features as { sea?: unknown } | undefined)?.sea,
     }),
     args: [join(options.pluginRoot, 'dist', 'server.mjs')],
     cwd: options.projectDir,
@@ -119,29 +118,23 @@ export async function startMellosServer(options: ServerOptions): Promise<MellosS
 /**
  * The interpreter the map server runs on.
  *
- * `process.execPath` is right for the pi everybody installs from npm: the host is
- * a Node process, and the child must run on the interpreter this process already
- * is, rather than on whichever `node` a PATH lookup happens to find first. pi is
- * ALSO released as a compiled binary — the README's `pi.dev/install.sh` path,
- * which pi's own config detects as `isBunBinary` / `isBundledNode` — and there
- * `execPath` is pi itself, so spawning it with a script path starts a second pi
- * instead of a server. No interpreter can be named in that case, and a session is
- * not the place to guess one, so the host is refused in words that say which
- * build it is.
+ * `process.execPath` is right for the pi everybody installs: `npm i -g` and the
+ * `pi.dev/install.sh` path, which installs through npm onto Node. The host is a
+ * Node process there, and the child must run on the interpreter this process
+ * already is, rather than on whichever `node` a PATH lookup happens to find
+ * first. pi is ALSO released as standalone Bun-compiled binaries — the release
+ * assets, not the npm package or the `install.sh` script — and there `execPath`
+ * is pi itself, so spawning it with a script path starts a second pi instead of a
+ * server. No interpreter can be named in that case, and a session is not the
+ * place to guess one, so that host is refused in words that say which build it
+ * is: `process.versions.bun` is the same fact pi's own `isBunRuntime` reads.
  *
  * The runtime facts are injected rather than read from the globals so a spec can
  * pose as each kind of host.
  */
-export function serverInterpreter(runtime: {
-  readonly execPath: string;
-  readonly bun: unknown;
-  readonly sea: unknown;
-}): string {
+export function serverInterpreter(runtime: { readonly execPath: string; readonly bun: unknown }): string {
   if (typeof runtime.bun === 'string') {
     throw new Error('this pi is a compiled Bun binary, which cannot host the map server; install pi from npm');
-  }
-  if (runtime.sea === true) {
-    throw new Error('this pi is a single-executable Node build; install pi from npm to use the map server');
   }
   return runtime.execPath;
 }

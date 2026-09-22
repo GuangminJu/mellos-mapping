@@ -15291,8 +15291,7 @@ async function startMellosServer(options) {
   const transport = new StdioClientTransport({
     command: serverInterpreter({
       execPath: process.execPath,
-      bun: process.versions.bun,
-      sea: process.features?.sea
+      bun: process.versions.bun
     }),
     args: [join6(options.pluginRoot, "dist", "server.mjs")],
     cwd: options.projectDir,
@@ -15332,9 +15331,6 @@ async function startMellosServer(options) {
 function serverInterpreter(runtime) {
   if (typeof runtime.bun === "string") {
     throw new Error("this pi is a compiled Bun binary, which cannot host the map server; install pi from npm");
-  }
-  if (runtime.sea === true) {
-    throw new Error("this pi is a single-executable Node build; install pi from npm to use the map server");
   }
   return runtime.execPath;
 }

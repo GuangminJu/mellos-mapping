@@ -372,10 +372,11 @@ describe('the tools pi gets instead of an MCP client', () => {
   });
 
   /**
-   * `before_agent_start` starts the server, and a session can be replaced while
-   * that start is still in flight: at that moment `server` is still undefined, so
-   * a shutdown that only looked at `server` would close nothing and leave the
-   * child that lands afterwards with nobody to close it.
+   * A session can end while the startup handshake is still running — pi's TUI
+   * takes an interrupt while `session_start` handlers run — and at that moment
+   * `server` is still undefined, because the start assigns it when it lands. A
+   * shutdown that only looked at `server` would close nothing and leave the child
+   * that arrives afterwards with nobody to close it.
    */
   it('closes a server whose start was still in flight when the session ended', async () => {
     const server = fakeServer();
