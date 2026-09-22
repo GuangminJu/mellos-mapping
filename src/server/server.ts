@@ -88,7 +88,7 @@ import { type LauncherRun, launchPane, awaitPane, paneShows, launcherViewerPid, 
 export { type LauncherRun, launcherPath, launcherArgs, projectDirOf, openOutcome } from './pane-launcher.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.26.2';
+export const SERVER_VERSION = '0.27.0';
 
 interface ToolText {
   [key: string]: unknown;
