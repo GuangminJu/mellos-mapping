@@ -106,34 +106,28 @@ GitHub 发布不会自动发布 npm 包、MCP Registry 或 OpenAI 公共插件�
 ## npm 发布与安装验收
 
 以下命令以 `0.24.0` 展示版本、文件名和安装目录的对应关系；执行时统一替换为尚未
-发布的候选版本。先确认源码提交已合入 `main`、CI 通过，并且工作区与该提交一致。
-记录源码提交及本地 tarball 的 `integrity`，后续从同一份 tarball 发布。
+发布的候选版本。先确认源码提交已合入 `main`、CI 通过，版本标签已推送并指向该提交。
 
-所有 npm 账户和发布验收命令都显式指定官方源。`package.json` 的 `publishConfig`
-约束发布目的地，不会替 `npm whoami`、`npm login`、`npm view` 或安装命令选择源。
-如果用户默认使用 npmmirror 等镜像，对镜像执行 `whoami` 失败不能证明官方源未登录，
-镜像暂时查不到新版本也不能证明官方发布失败。无需修改用户的全局 npm 配置。
-
-```sh
-npm whoami --registry=https://registry.npmjs.org/
-```
-
-仅在官方源确认需要登录时执行：
+npm 发布由 `.github/workflows/publish-npm.yml` 完成。npmjs.com 上的包设置信任本仓库的
+这个工作流文件（Trusted Publishing），运行时用 GitHub Actions 的 OIDC 身份换取发布
+授权，不需要 token、一次性密码或任何 secret，并以 `--provenance` 附带 sigstore 证明。
+工作流在标签上运行 `npm ci` 和 `npm run verify`，核对标签与 `package.json` 版本一致后
+才发布；在分支上运行会直接失败。
 
 ```sh
-npm login --registry=https://registry.npmjs.org/
+gh workflow run publish-npm.yml --ref v0.24.0
+gh run watch --exit-status
 ```
 
-登录与发布可能分别要求浏览器或安全密钥验证，按 npm 当前请求完成。打包前已运行
-`npm run verify`；`npm pack` 还会执行项目的 `prepack` 构建。下面的输出目录由前面的
-发行打包步骤创建：
+记录本次运行 ID 和日志中 `npm notice integrity:` 的值：发布出去的就是这次运行打出的
+tarball，后续验收与它比对。本地 `npm publish` 会被账户的两步验证拦下，也不带
+provenance，不再是发布途径。
 
-```sh
-npm pack --json --pack-destination artifacts/release --registry=https://registry.npmjs.org/
-npm publish artifacts/release/mellos-mapping-0.24.0.tgz --registry=https://registry.npmjs.org/
-```
+所有发布验收命令都显式指定官方源。`package.json` 的 `publishConfig` 约束发布目的地，
+不会替 `npm view` 或安装命令选择源。如果用户默认使用 npmmirror 等镜像，镜像暂时查不到
+新版本不能证明官方发布失败。无需修改用户的全局 npm 配置。
 
-`npm publish` 成功返回表示发布请求已被接受。还需确认官方源的版本元数据、tarball
+工作流成功结束表示发布请求已被接受。还需确认官方源的版本元数据、tarball
 和实际安装都可用，再说明“npm 已发布且可安装”：
 
 ```sh
@@ -144,7 +138,7 @@ node -p "require('./artifacts/audit/npm-install-0.24.0/node_modules/mellos-mappi
 ```
 
 使用尚不存在的隔离安装目录，核对精确版本、`latest` 标签，以及官方 `dist.integrity`
-与本地打包结果一致。安装核验只使用 npm 官方源，不用本地 `.tgz` 替代下载验收。
+与工作流日志记录的值一致。安装核验只使用 npm 官方源，不用本地 `.tgz` 替代下载验收。
 如果发布已接受但版本查询或下载尚未成功，记录为“官方源尚未确认可安装”，保留原始错误，
 区分版本暂不可用、网络错误和认证失败。先核实状态，不重复上传同一版本或据此提升版本号。
 

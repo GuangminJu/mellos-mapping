@@ -1,0 +1,42 @@
+# Publish the npm package from its version tag, authenticating via npm Trusted
+# Publishing: npmjs.com trusts this repository's `publish-npm.yml`, so the run
+# exchanges its GitHub Actions OIDC identity for a publish grant — no token, no
+# one-time password, no secret — and `--provenance` attaches the sigstore
+# attestation a laptop publish cannot. Run once the tag exists:
+#   gh workflow run publish-npm.yml --ref v0.28.0
+name: publish-npm
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 bundles an older one.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - name: Linux tmux integration dependencies
+        run: |
+          if ! command -v tmux >/dev/null || ! command -v script >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y tmux bsdutils
+          fi
+      - run: npm run verify
+      - name: ref is the version tag
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF" != "refs/tags/v$version" ]; then
+            echo "run this workflow on tag v$version, not $GITHUB_REF"
+            exit 1
+          fi
+      - run: npm publish --provenance

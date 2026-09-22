@@ -93,12 +93,13 @@ It also updates the two root version fields in `package-lock.json`, preserving
 the resolved dependency graph and optional platform packages, then runs the
 full verify. It does not re-resolve dependencies against a registry.
 
-Commit, merge, tag, npm publishing and the MCP Registry workflow remain
-separate maintainer steps. Follow the [release guide](docs/releasing.md) to
-verify the exact npm version can be installed from the official registry
-before publishing its MCP Registry entry. The current local npm publishing
-flow does not attach provenance; adding provenance would require moving that
-publish step to a supported CI environment with an OIDC identity.
+Commit, merge, tag and the two publish workflows remain separate maintainer
+steps. npm publishing runs in `.github/workflows/publish-npm.yml` on the
+version tag through npm Trusted Publishing: the run authenticates with its
+GitHub Actions OIDC identity, needs no token or one-time password, and
+attaches a provenance attestation. Follow the [release guide](docs/releasing.md)
+to verify the exact npm version can be installed from the official registry
+before publishing its MCP Registry entry.
 
 ## Reporting bugs
 
