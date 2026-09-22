@@ -82,13 +82,13 @@ import { readMaps, requireMap } from './read.js';
 import { applyBatch } from './mutations.js';
 import { LedgerError, withStoreLock, revisionOf, assertRevision } from '../store/transaction.js';
 import { resolveProjectDirectory } from '../store/project.js';
+import { VERSION } from '../support/version.js';
 import { pagesLine, paneLine } from './presence.js';
 import { loadOrEmpty, mutateMap } from './map-service.js';
 import { type LauncherRun, launchPane, awaitPane, paneShows, launcherViewerPid, PANE_REPORT_TIMEOUT_MS, launcherArgs, projectDirOf, openOutcome } from './pane-launcher.js';
 export { type LauncherRun, launcherPath, launcherArgs, projectDirOf, openOutcome } from './pane-launcher.js';
 
 export const SERVER_NAME = 'mellos-mapping';
-export const SERVER_VERSION = '0.27.0';
 
 interface ToolText {
   [key: string]: unknown;
@@ -130,7 +130,7 @@ function saveFailed(error: StoreError): ToolText {
  * Exported for tests.
  */
 export function buildServer(stateFile: string, userConfigFile: string, launch: (args: readonly string[]) => Promise<LauncherRun> = launchPane): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: 'Maps persist across conversations. Before mapping or resuming work, use mmap_read to discover pages, then read the relevant records and revision. A new conversation is not a new effort. Reuse verified nodes; submit only necessary changes with expectedRevision. mmap_view is a picture, not the editable data. Read mmap_setup for the user mapping policy.' });
+  const server = new McpServer({ name: SERVER_NAME, version: VERSION }, { instructions: 'Maps persist across conversations. Before mapping or resuming work, use mmap_read to discover pages, then read the relevant records and revision. A new conversation is not a new effort. Reuse verified nodes; submit only necessary changes with expectedRevision. mmap_view is a picture, not the editable data. Read mmap_setup for the user mapping policy.' });
   // Session-local failure feedback prevents each map write from re-requesting
   // the same unavailable terminal. An explicit successful retry clears it.
   let paneOpenFailure: string | undefined;
