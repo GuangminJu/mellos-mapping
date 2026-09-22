@@ -121,6 +121,22 @@ split beside the session. Install it *as a plugin*: neither `omp plugin link`
 nor the npm package is a plugin, and both would leave the tools behind. See
 [omp installation and limitations](docs/distributions/omp.md).
 
+**pi** reads none of that layout: it loads an extension and has no MCP of its
+own, by design. So the plugin speaks MCP to itself — the extension declared in
+`package.json#pi.extensions` (`dist/pi-extension.mjs`) starts the same
+`dist/server.mjs` in the session's directory, which makes the eight `mmap_*`
+tools the same eight, under the same names, and builds the session paragraph
+from the same store and the same policy text the Claude hook prints:
+
+```
+pi install npm:mellos-mapping
+```
+
+Add `-l` to install it for the current project instead of every one, then start
+a new session: pi discovers packages at session start. The package's `skills/`
+and `commands/` travel with it — the same map discipline, and `/mmap` for the
+same slash command. See [pi installation and behaviour](docs/distributions/pi.md).
+
 The first session after installing asks you **one** question — how eager
 mapping should be — and records the answer for every project you will ever
 open. From then on the hook carries it into each new session by itself; there
@@ -188,6 +204,18 @@ force-reinstalls whatever the catalog names, which is why a release is
 identified by its version bump rather than gated by it. Restart omp afterwards,
 and reopen a pane still showing the old bundle (`q` in it, then `mmap_open`
 again).
+
+pi updates the package it installed, with no marketplace in between:
+
+```
+pi update npm:mellos-mapping
+```
+
+That is the npm source; a git source is reconciled to the ref your settings name
+by pi's own update, and a versioned spec (`npm:mellos-mapping@0.27.0`) is pinned
+and skipped. Restart the session afterwards: a session owns the map server
+process it started, so one still running keeps the copy it began with until it
+ends.
 
 ### Upgrading from 0.19
 

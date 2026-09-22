@@ -70,9 +70,22 @@
       "./dist/omp-extension.mjs"
     ]
   },
+  "pi": {
+    "extensions": [
+      "./dist/pi-extension.mjs"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./commands"
+    ]
+  },
   "files": [
     "dist",
     "lib",
+    "skills",
+    "commands",
     "README.zh-CN.md",
     "docs/codex.md",
     "docs/map-api.md",

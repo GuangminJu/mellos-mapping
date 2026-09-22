@@ -13,9 +13,9 @@ export const CLAUDE_FILES = [...CODEX_FILES.filter(file => !file.startsWith('.co
   !file.startsWith('scripts/codex-') && file !== 'docs/codex.md'),
   '.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.mcp.json',
   'hooks/hooks.json', 'commands/mmap.md', 'dist/hook-session-start.mjs',
-  // omp reads the Claude plugin layout as-is; the manifest it needs for the
-  // session adapter (`omp.extensions`) is the package manifest itself.
-  'package.json', 'dist/omp-extension.mjs'];
+  // omp and pi read the Claude plugin layout as-is (skills/, commands/, dist/);
+  // the manifests they need are the extensions named in `package.json` itself.
+  'package.json', 'dist/omp-extension.mjs', 'dist/pi-extension.mjs'];
 
 export const digest = data => createHash('sha256').update(data).digest('hex');
 export function copyFile(source, target) {

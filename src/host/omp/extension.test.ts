@@ -23,7 +23,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { MappingPolicy } from '../../store/store.js';
 import { STATE_FILE_RELATIVE_PATH, configFilePath, saveMappingPolicy } from '../../store/store.js';
-import mellosMappingOmp, { SESSION_CONTEXT_TYPE, sessionParagraph } from './extension.js';
+import { SESSION_CONTEXT_TYPE, sessionParagraph } from '../session-context.js';
+import mellosMappingOmp from './extension.js';
 
 /** A stand-in for omp's ExtensionAPI: records handlers, then lets a spec fire them. */
 function fakePi(): {

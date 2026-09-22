@@ -44,10 +44,11 @@ spelled out here. Report honestly — an unflattering map is doing its job.
 The USER chooses how eager mapping is — once, for themselves, not once per
 project. Where the host runs a session adapter, the answer is already in this
 session's context, stated before the conversation begins, so there is nothing to
-probe: Claude Code runs the plugin's `SessionStart` hook, and omp (Oh My Pi)
-loads the same paragraph through the plugin's host adapter
-(`dist/omp-extension.mjs`, declared in `package.json#omp.extensions`, read from
-the same store). In hosts without one (Codex CLI, a bare MCP client) call
+probe: Claude Code runs the plugin's `SessionStart` hook, and omp (Oh My Pi) and
+pi load the same paragraph through the plugin's host adapters
+(`dist/omp-extension.mjs` and `dist/pi-extension.mjs`, declared in
+`package.json#omp.extensions` and `package.json#pi.extensions`, read from the
+same store). In hosts without one (Codex CLI, a bare MCP client) call
 `mmap_setup` with no arguments before the first map decision of the session; the
 reply names both scopes and which one governs.
 

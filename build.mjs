@@ -40,6 +40,16 @@ for (const dir of OUTPUT_DIRS) {
 
 await buildNativeLock();
 
+/**
+ * The createRequire shim, for the entries that carry it: some deps resolve
+ * optional requires at runtime, and esbuild turns those into a `require` call
+ * that does not exist in an ESM bundle. The MCP SDK's stdio transport is one —
+ * its Windows path pulls in `cross-spawn`, which requires `child_process` — so
+ * the pi extension needs this WITHOUT the shebang that goes with it.
+ */
+const requireShim =
+  "import { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);";
+
 const shared = {
   // Resolve entry points and outfiles against the repo root, not the cwd.
   absWorkingDir: root,
@@ -50,15 +60,15 @@ const shared = {
   legalComments: 'none',
   banner: {
     // Shebang first so npm bin shims can exec the bundles directly on POSIX;
-    // then the createRequire shim: some deps resolve optional requires at runtime.
-    js: "#!/usr/bin/env node\nimport { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);",
+    // then the createRequire shim described above.
+    js: `#!/usr/bin/env node\n${requireShim}`,
   },
 };
 
 await build({ ...shared, entryPoints: ['src/server/server.ts'], outfile: 'dist/server.mjs' });
 await build({ ...shared, entryPoints: ['src/watch/cli.ts'], outfile: 'dist/watch.mjs' });
 await build({ ...shared, banner: {}, entryPoints: ['src/preview/cli.ts'], outfile: 'dist/preview.mjs' });
-await build({ ...shared, banner: { js: "import { createRequire as __mellosCreateRequire } from 'node:module'; const require = __mellosCreateRequire(import.meta.url);" }, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
+await build({ ...shared, banner: { js: requireShim }, entryPoints: ['src/web/cli.ts'], outfile: 'dist/web.mjs' });
 await build({ ...shared, banner: {}, entryPoints: ['src/web/terminal-worker.ts'], outfile: 'dist/terminal-worker.mjs' });
 await build({ absWorkingDir: root, bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
   entryPoints: ['src/web/app.ts'], outfile: 'dist/web/app.js', legalComments: 'none' });
@@ -109,6 +119,18 @@ await build({ ...shared, entryPoints: ['src/hook/session-start.ts'], outfile: 'd
 await build({ ...shared, banner: {}, entryPoints: ['src/host/omp/extension.ts'], outfile: 'dist/omp-extension.mjs' });
 
 /**
+ * The pi host adapter. `package.json#pi.extensions` names this exact path, and
+ * pi loads extension modules the same way omp does — as IMPORTS — so the shape
+ * is the same too: no shebang, and the entry must keep default-exporting the
+ * factory. The MCP client it bundles is a library only: the server it starts is
+ * `dist/server.mjs`, built above.
+ *
+ * The createRequire shim stays, unlike in the omp adapter: this bundle carries
+ * the MCP SDK, whose stdio transport resolves a require at runtime.
+ */
+await build({ ...shared, banner: { js: requireShim }, entryPoints: ['src/host/pi/extension.ts'], outfile: 'dist/pi-extension.mjs' });
+
+/**
  * The store's own path vocabulary, for the plain-node launcher scripts.
  *
  * scripts/open-pane.mjs runs on bare node and cannot import the TypeScript
@@ -153,5 +175,5 @@ for (const file of ['server.mjs', 'watch.mjs', 'preview.mjs', 'web.mjs', 'mmap.m
 
 console.log(`cleaned: ${OUTPUT_DIRS.join(', ')}`);
 console.log(
-  'bundled: dist/server.mjs, dist/watch.mjs, dist/preview.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/omp-extension.mjs, dist/store-paths.mjs',
+  'bundled: dist/server.mjs, dist/watch.mjs, dist/preview.mjs, dist/mmap.mjs, dist/hook-session-start.mjs, dist/omp-extension.mjs, dist/pi-extension.mjs, dist/store-paths.mjs',
 );

@@ -10,9 +10,9 @@
  * `post:<tool>`), and a session lifecycle event belongs to an EXTENSION module,
  * which a plugin declares in `package.json#omp.extensions`. So the standing
  * paragraph — the mapping policy, in front of the model from the first token —
- * is delivered from here, built by the SAME `sessionStartContext()` the Claude
- * hook prints and read from the same store. One source, two hosts, no second
- * dialect of the policy.
+ * is delivered from here, built by `../session-context.ts`: the SAME
+ * `sessionStartContext()` the Claude hook prints, read from the same store. One
+ * source, three hosts, no second dialect of the policy.
  *
  * Two promises, carried over from the hook because they are about the same
  * moment: FAST — one config read, one existsSync, one shim read, no map parsed;
@@ -40,19 +40,11 @@
  * against whatever host version a user happens to run.
  */
 
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ensureMmapCommand, hasMap, sessionStartContext } from '../../hook/session-start.js';
-import { STATE_FILE_RELATIVE_PATH, configFilePath, effectiveMappingPolicy, userConfigFilePath } from '../../store/store.js';
-
-/**
- * The message type this adapter injects. Namespaced (omp reserves bare names)
- * and stable: a session that is resumed replays its own history, so the type is
- * how a reader recognizes our paragraph later.
- */
-export const SESSION_CONTEXT_TYPE = 'mellos-mapping.session-context';
+import { ensureMmapCommand } from '../../hook/session-start.js';
+import { SESSION_CONTEXT_TYPE, sessionParagraph, storeIsReadable } from '../session-context.js';
 
 /**
  * The sliver of omp's `ExtensionAPI` this adapter uses. Deliberately structural
@@ -76,21 +68,6 @@ interface CustomMessage {
   readonly content: string;
   readonly display: boolean;
   readonly attribution: 'agent';
-}
-
-/**
- * The paragraph this session must hear, or undefined when it must hear nothing
- * — the decision `sessionStartContext()` makes for Claude Code, on the same two
- * facts: the policy in effect and whether a map exists here. A configuration
- * nobody can read returns undefined: that error belongs to `mmap_setup`, where
- * it is explained, not to every session start.
- * @param projectDir - the session's working directory.
- */
-export function sessionParagraph(projectDir: string): string | undefined {
-  const stateFile = join(projectDir, STATE_FILE_RELATIVE_PATH);
-  const scopes = effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir()));
-  if (!scopes.ok) return undefined;
-  return sessionStartContext({ policy: scopes.value.effective, hasStore: hasMap(stateFile) });
 }
 
 /**
@@ -182,14 +159,4 @@ export default function mellosMappingOmp(pi: OmpExtensionApi): void {
     };
     return { message };
   });
-}
-
-/**
- * Whether this project's mapping configuration can be read at all — the
- * difference between "the policy says nothing" and "the policy could not be
- * consulted", which the adapter must not treat the same way.
- */
-function storeIsReadable(projectDir: string): boolean {
-  const stateFile = join(projectDir, STATE_FILE_RELATIVE_PATH);
-  return effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir())).ok;
 }
