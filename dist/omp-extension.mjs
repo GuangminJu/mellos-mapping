@@ -1,6 +1,5 @@
 // src/host/omp/extension.ts
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname5, join as join5 } from "node:path";
+import { dirname as dirname5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/hook/session-start.ts
@@ -288,7 +287,9 @@ if (launchedAsEntry(process.argv[1], import.meta.url)) {
   main().catch(() => process.exit(0));
 }
 
-// src/host/omp/extension.ts
+// src/host/session-context.ts
+import { homedir as homedir2 } from "node:os";
+import { join as join5 } from "node:path";
 var SESSION_CONTEXT_TYPE = "mellos-mapping.session-context";
 function sessionParagraph(projectDir) {
   const stateFile = join5(projectDir, STATE_FILE_RELATIVE_PATH);
@@ -296,6 +297,12 @@ function sessionParagraph(projectDir) {
   if (!scopes.ok) return void 0;
   return sessionStartContext({ policy: scopes.value.effective, hasStore: hasMap(stateFile) });
 }
+function storeIsReadable(projectDir) {
+  const stateFile = join5(projectDir, STATE_FILE_RELATIVE_PATH);
+  return effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir2())).ok;
+}
+
+// src/host/omp/extension.ts
 function mellosMappingOmp(pi) {
   const pluginRoot = dirname5(dirname5(fileURLToPath2(import.meta.url)));
   let armed = true;
@@ -348,12 +355,6 @@ function mellosMappingOmp(pi) {
     return { message };
   });
 }
-function storeIsReadable(projectDir) {
-  const stateFile = join5(projectDir, STATE_FILE_RELATIVE_PATH);
-  return effectiveMappingPolicy(configFilePath(stateFile), userConfigFilePath(homedir2())).ok;
-}
 export {
-  SESSION_CONTEXT_TYPE,
-  mellosMappingOmp as default,
-  sessionParagraph
+  mellosMappingOmp as default
 };
