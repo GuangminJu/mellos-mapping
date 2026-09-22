@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.1
+
+- Show the release version at the left of the map pane's separator row, in
+  the terminal split and the web terminal alike. The literal now lives in
+  `src/support/version.ts`, shared by the MCP handshake and the pane.
+- Publish to npm from `.github/workflows/publish-npm.yml` through npm Trusted
+  Publishing: the run authenticates with its GitHub Actions OIDC identity and
+  attaches a provenance attestation. This is the first release published that
+  way.
+
 ## 0.27.0
 
 - Run the mapping policy and the eight map tools in pi sessions through a host
