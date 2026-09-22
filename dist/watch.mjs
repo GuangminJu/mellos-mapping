@@ -1788,7 +1788,7 @@ function paint(scene, opts) {
 }
 
 // src/support/version.ts
-var VERSION = "0.27.0";
+var VERSION = "0.27.1";
 
 // src/store/atomic.ts
 import { mkdirSync as mkdirSync2, renameSync, rmSync, writeFileSync } from "node:fs";
