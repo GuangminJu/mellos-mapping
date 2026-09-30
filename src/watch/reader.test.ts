@@ -41,6 +41,8 @@ describe('readable map navigation', () => {
     const sync = readerContent(map, state.page, true, 38);
     expect(sync.lines.map(line => line.text).join(' ')).toContain('simulated reconnection regression');
     expect(sync.links).toEqual(['storage', 'events']);
+    expect(sync.lines.find(line => line.text.includes('simulated'))?.sgr).toBe('');
+    expect(sync.lines.filter(line => line.targetId !== undefined).every(line => line.sgr.endsWith(';1'))).toBe(true);
   });
 
   it('restores list scroll and selected link when Back unwinds the reader', () => {

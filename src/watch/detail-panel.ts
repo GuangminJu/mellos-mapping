@@ -184,16 +184,16 @@ export function nodeDetailLines(
     heading(section, `${title} (${refs.length})`);
     if (refs.length === 0) add(section, '—', '90');
     for (const ref of refs) {
-      add(section, `${statusGlyph(ref.status, unicode)} ${ref.label} [${ref.id}]${ref.edgeLabel !== undefined ? ` (${ref.edgeLabel})` : ''}`, statusSgr(ref.status), ref.id);
+      add(section, `${statusGlyph(ref.status, unicode)} ${ref.label} [${ref.id}]${ref.edgeLabel !== undefined ? ` (${ref.edgeLabel})` : ''}`, `${statusSgr(ref.status)};1`, ref.id);
     }
   };
   add('name', data.name, data.headerSgr);
-  add('metadata', data.metadata, '90');
+  add('metadata', data.metadata);
   if (data.members !== undefined) neighbors('members', 'Members / 成员', data.members);
   else {
     heading('evidence', 'Evidence / 证据');
     const evidence = data.blocks.find(block => block.section === 'evidence')!;
-    add('evidence', evidence.text.slice('evidence: '.length), '90');
+    add('evidence', evidence.text.slice('evidence: '.length));
   }
   neighbors('uses', data.usesWord === 'after' ? 'After / 之后' : 'Uses / 依赖', data.uses);
   neighbors('usedBy', data.usedByWord === 'before' ? 'Before / 之前' : 'Used by / 被依赖', data.usedBy);

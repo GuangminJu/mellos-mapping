@@ -2313,16 +2313,16 @@ function nodeDetailLines(map, focusId, unicode, width, pinned = false) {
     heading(section, `${title} (${refs.length})`);
     if (refs.length === 0) add(section, "\u2014", "90");
     for (const ref of refs) {
-      add(section, `${statusGlyph(ref.status, unicode)} ${ref.label} [${ref.id}]${ref.edgeLabel !== void 0 ? ` (${ref.edgeLabel})` : ""}`, statusSgr(ref.status), ref.id);
+      add(section, `${statusGlyph(ref.status, unicode)} ${ref.label} [${ref.id}]${ref.edgeLabel !== void 0 ? ` (${ref.edgeLabel})` : ""}`, `${statusSgr(ref.status)};1`, ref.id);
     }
   };
   add("name", data.name, data.headerSgr);
-  add("metadata", data.metadata, "90");
+  add("metadata", data.metadata);
   if (data.members !== void 0) neighbors("members", "Members / \u6210\u5458", data.members);
   else {
     heading("evidence", "Evidence / \u8BC1\u636E");
     const evidence = data.blocks.find((block) => block.section === "evidence");
-    add("evidence", evidence.text.slice("evidence: ".length), "90");
+    add("evidence", evidence.text.slice("evidence: ".length));
   }
   neighbors("uses", data.usesWord === "after" ? "After / \u4E4B\u540E" : "Uses / \u4F9D\u8D56", data.uses);
   neighbors("usedBy", data.usedByWord === "before" ? "Before / \u4E4B\u524D" : "Used by / \u88AB\u4F9D\u8D56", data.usedBy);
@@ -2365,7 +2365,7 @@ function readerContent(map, page, unicode, width) {
       lines.push(...wrap(
         `${statusGlyph(info.status, unicode)} ${group.label} [${group.id}] \xB7 ${info.members.length} members`,
         width,
-        statusSgr(info.status),
+        `${statusSgr(info.status)};1`,
         group.id
       ), { text: "", sgr: "" });
     }
@@ -2378,8 +2378,8 @@ function readerContent(map, page, unicode, width) {
     for (const node of nodes) {
       const layer = map.layers.find((layer2) => layer2.id === node.layer)?.name ?? node.layer;
       lines.push(
-        ...wrap(`${statusGlyph(node.status, unicode)} ${node.label} [${node.id}]`, width, statusSgr(node.status), node.id),
-        ...wrap(`  ${layer} \xB7 ${node.status}`, width, "90", node.id),
+        ...wrap(`${statusGlyph(node.status, unicode)} ${node.label} [${node.id}]`, width, `${statusSgr(node.status)};1`, node.id),
+        ...wrap(`  ${layer} \xB7 ${node.status}`, width, "", node.id),
         { text: "", sgr: "" }
       );
     }

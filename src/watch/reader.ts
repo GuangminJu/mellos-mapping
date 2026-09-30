@@ -49,7 +49,7 @@ export function readerContent(map: MellosMap, page: ReaderPage, unicode: boolean
       const info = focusInfo(map, group.id);
       if (info?.kind !== 'group') continue;
       lines.push(...wrap(`${statusGlyph(info.status, unicode)} ${group.label} [${group.id}] · ${info.members.length} members`,
-        width, statusSgr(info.status), group.id), { text: '', sgr: '' });
+        width, `${statusSgr(info.status)};1`, group.id), { text: '', sgr: '' });
     }
     if (map.groups.length === 0) lines.push(...wrap('No groups declared. Press n for the full node list.', width));
   } else {
@@ -60,8 +60,8 @@ export function readerContent(map: MellosMap, page: ReaderPage, unicode: boolean
     lines = [...wrap(title, width, '1'), { text: '', sgr: '' }];
     for (const node of nodes) {
       const layer = map.layers.find(layer => layer.id === node.layer)?.name ?? node.layer;
-      lines.push(...wrap(`${statusGlyph(node.status, unicode)} ${node.label} [${node.id}]`, width, statusSgr(node.status), node.id),
-        ...wrap(`  ${layer} · ${node.status}`, width, '90', node.id), { text: '', sgr: '' });
+      lines.push(...wrap(`${statusGlyph(node.status, unicode)} ${node.label} [${node.id}]`, width, `${statusSgr(node.status)};1`, node.id),
+        ...wrap(`  ${layer} · ${node.status}`, width, '', node.id), { text: '', sgr: '' });
     }
     if (nodes.length === 0) lines.push(...wrap('No members remain. Press n for all nodes.', width));
   }
