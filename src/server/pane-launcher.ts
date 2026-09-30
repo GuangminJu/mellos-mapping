@@ -43,10 +43,11 @@ export function projectDirOf(stateFile: string): string {
  * The launcher's command line for one open request — the whole translation
  * from tool arguments to the flags scripts/open-pane.mjs understands.
  */
-export function launcherArgs(projectDir: string, page: string | undefined, window: boolean): string[] {
+export function launcherArgs(projectDir: string, page: string | undefined, window: boolean, widthPercent?: number): string[] {
   const args = [projectDir];
   if (page !== undefined) args.push('--page', page);
   if (window) args.push('--window');
+  if (widthPercent !== undefined) args.push('--width-percent', String(widthPercent));
   return args;
 }
 

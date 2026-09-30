@@ -134,6 +134,25 @@ describe('a pane belongs beside its own session', () => {
     ]]);
   });
 
+  it('validates Windows widths before focus and translates valid percentages without claiming measured columns', () => {
+    const calls = [];
+    const io = {
+      focusSession: () => { calls.push('focus'); return { ok: true }; },
+      openWt: args => { calls.push(args); return { ok: true }; },
+    };
+    for (const widthPercent of [24, 61, 42.5, NaN, 'invalid', null]) {
+      expect(placePane({ ...cfg, widthPercent }, 'watch', 'map', { ...session, mode: 'split' }, io).ok).toBe(false);
+    }
+    expect(placePane({ ...cfg, widthPercent: 30 }, 'watch', 'map', { ...session, mode: 'window' }, io).ok).toBe(false);
+    expect(calls).toEqual([]);
+    for (const widthPercent of [25, 42, 60]) {
+      const result = placePane({ ...cfg, widthPercent }, 'watch', 'map', { ...session, mode: 'split' }, io);
+      expect(result.value.widthPercent).toBe(widthPercent);
+      expect(result.value.appliedCols).toBeUndefined();
+      expect(calls.at(-1).slice(0, 6)).toEqual(['-w', '0', 'sp', '-V', '--size', String(widthPercent / 100)]);
+    }
+  });
+
   it('cannot use an older viewer as evidence that a new pane started', async () => {
     const context = { target: { owner: session.owner }, previousPids: [44] };
     expect((await awaitNewPane(source([viewer]), 'map', context, 0)).ok).toBe(false);

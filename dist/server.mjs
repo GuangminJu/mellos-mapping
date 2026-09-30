@@ -24389,6 +24389,9 @@ function openTool() {
       page: id(
         "page to show first \u2014 the page THIS effort lives on, the same slug you pass to the other tools. Omit only for the default page: without it a fresh pane opens on whichever page was written last, which after a gap is rarely the one under discussion."
       ).optional(),
+      widthPercent: external_exports.number().int().min(25).max(60).optional().describe(
+        "initial map width as an integer percentage of the source terminal pane (25\u201360, default 42). Only for a new terminal split; cannot combine with window or another surface. tmux clamps to keep at least 60 conversation columns and 30 map columns. Reusing an open pane preserves its current width."
+      ),
       window: external_exports.boolean().optional().describe(
         `open the map in its own "mellos-mapping" window (a new tmux window on Linux/macOS) instead of splitting this conversation's window. Pass it only when the user asked for the map separate (a second monitor, a small screen); the split is the default because the map is meant to sit beside what it describes.`
       )
@@ -24578,10 +24581,11 @@ function launcherPath(moduleUrl) {
 function projectDirOf(stateFile) {
   return dirname12(dirname12(stateFile));
 }
-function launcherArgs(projectDir, page2, window) {
+function launcherArgs(projectDir, page2, window, widthPercent) {
   const args = [projectDir];
   if (page2 !== void 0) args.push("--page", page2);
   if (window) args.push("--window");
+  if (widthPercent !== void 0) args.push("--width-percent", String(widthPercent));
   return args;
 }
 function runLauncher(script, args) {
@@ -24842,6 +24846,9 @@ ${surface}`);
     "mmap_open",
     openTool(),
     async (input) => {
+      if (input.widthPercent !== void 0 && (input.window === true || input.surface !== void 0 && input.surface !== "terminal")) {
+        return text('widthPercent applies only to a new terminal split; omit window: true and choose surface: "terminal".', true);
+      }
       if (input.surface === "codex-terminal") {
         if (input.window === true) return text("codex-terminal uses the current conversation panel; window: true is not supported.", true);
         if (input.page && !listPageFiles(stateFile).some((file) => pageIdOfFile(stateFile, file) === input.page)) {
@@ -24872,7 +24879,7 @@ markdown: ${published.value.path}
 index: ${published.value.index}
 Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation's right file panel using the host tool. No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.`);
       }
-      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true, input.widthPercent));
       const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
       const outcome = openOutcome(run, viewers, input.page);
       const failed = !run.ok || !paneShows(viewers, input.page);

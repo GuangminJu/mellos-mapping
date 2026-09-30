@@ -29,6 +29,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { paneFailureMessage } from './watcher-command.mjs';
+import { parseWidthPercent } from './pane-sizing.mjs';
 
 import {
   DEDICATED_WINDOW_NAME,
@@ -45,7 +46,7 @@ import {
 } from './pane-core.mjs';
 
 export const USAGE =
-  'usage: mmap [<page-slug>] [--window] [--force] [--ascii] [--no-color] [--no-mouse]' +
+  'usage: mmap [<page-slug>] [--window] [--width-percent <25-60>] [--force] [--ascii] [--no-color] [--no-mouse]' +
   ' [--no-follow] [--interval <ms>]\n' +
   '       bare `mmap` toggles: it opens the map pane for this project, or closes the open one.';
 
@@ -65,6 +66,7 @@ export function parseMmapArgs(argv, idRule) {
   const watcherFlags = [];
   let mode = PANE_MODE.split;
   let force = false;
+  let widthPercent;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const watcher = takeWatcherFlag(argv, i);
@@ -72,6 +74,10 @@ export function parseMmapArgs(argv, idRule) {
     if (watcher.kind === 'taken') {
       watcherFlags.push(...watcher.flags);
       i = watcher.next;
+    } else if (a === '--width-percent') {
+      const width = parseWidthPercent(argv[++i]);
+      if (!width.ok) return { ok: false, error: `--width-percent: ${width.error}\n${USAGE}` };
+      widthPercent = width.value;
     } else if (a === '--window') {
       mode = PANE_MODE.window;
     } else if (a === '--force') {
@@ -86,12 +92,15 @@ export function parseMmapArgs(argv, idRule) {
       positional.push(a);
     }
   }
+  if (mode === PANE_MODE.window && widthPercent !== undefined) {
+    return { ok: false, error: `--width-percent applies only to a new split, not --window\n${USAGE}` };
+  }
   if (positional.length > 1) return { ok: false, error: `mmap takes at most one page slug\n${USAGE}` };
   const pageSlug = positional[0];
   if (pageSlug !== undefined && !idRule.test(pageSlug)) {
     return { ok: false, error: `a page is a kebab-case slug (got "${pageSlug}")\n${USAGE}` };
   }
-  return { ok: true, value: { pageSlug, mode, force, watcherFlags } };
+  return { ok: true, value: { pageSlug, mode, force, watcherFlags, ...(widthPercent === undefined ? {} : { widthPercent }) } };
 }
 
 /**

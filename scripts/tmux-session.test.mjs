@@ -13,7 +13,9 @@ function harness(env = {}, replies = {}) {
     expect(options.timeout).toBe(5000);
     calls.push(args);
     const operation = args[0] === '-S' ? args[2] : args[0];
-    return replies[operation] ?? { status: 0, stdout: operation === 'list-sessions' ? '$3\t1\n$9\t0' : operation === 'display-message' ? targetReport : '' };
+    if (typeof replies[operation] === 'function') return replies[operation](args);
+    if (operation === 'display-message' && args.at(-1) === '#{pane_width}') return replies.width ?? { status: 0, stdout: '180' };
+    return replies[operation] ?? { status: 0, stdout: operation === 'list-sessions' ? '$3\t1\n$9\t0' : operation === 'display-message' ? targetReport : operation === 'split-window' ? args[args.indexOf('-l') + 1] : '' };
   } });
   return { calls, adapter };
 }
@@ -76,9 +78,44 @@ describe('tmux placement and reuse', () => {
     const context = preparePane(cfg, { readLiveViewers: () => [] }, 'map', adapter).value;
     const result = placePane(cfg, '/plugin path/watch.mjs', "/work/it's $map", context.target, adapter);
     expect(result.ok).toBe(true);
-    expect(calls.at(-1)).toEqual(['-S', '/tmp/tmux socket,1', 'split-window', '-h', '-d', '-l', '42%', '-t', '%7',
+    expect(calls.at(-1)).toEqual(['-S', '/tmp/tmux socket,1', 'split-window', '-h', '-d', '-l', '75', '-t', '%7', '-P', '-F', '#{pane_width}',
       '-c', cfg.projectDir, '/node path/node', '/plugin path/watch.mjs', '--file', "/work/it's $map",
       '--no-follow', '--interval', '500', '--page', 'design', '--owner', context.target.owner]);
+  });
+
+  it('clamps the requested width to the selected source pane and receipts measured applied columns', () => {
+    const { calls, adapter } = harness({}, { width: { status: 0, stdout: '120' } });
+    const context = preparePane(cfg, { readLiveViewers: () => [] }, 'map', adapter).value;
+    const result = placePane({ ...cfg, widthPercent: 60 }, 'watch', 'map', context.target, adapter);
+    expect(calls.at(-2)).toEqual(['-S', '/tmp/tmux socket,1', 'display-message', '-p', '-t', '%7', '#{pane_width}']);
+    expect(result.value).toMatchObject({ widthPercent: 60, sourceCols: 120, appliedCols: 59, clamped: true });
+    expect(calls.at(-1)).toContain('59');
+    const measured = harness({}, { 'split-window': { status: 0, stdout: '74' } });
+    expect(placePane(cfg, 'watch', 'map', context.target, measured.adapter).value).toMatchObject({ appliedCols: 74, clamped: true });
+  });
+
+  it('refuses new narrow splits without launching, but still reuses manually resized panes', () => {
+    const { calls, adapter } = harness({}, { width: { status: 0, stdout: '60' } });
+    const context = preparePane(cfg, { readLiveViewers: () => [] }, 'map', adapter).value;
+    expect(placePane(cfg, 'watch', 'map', context.target, adapter).error).toContain('at least 91');
+    expect(calls.some(args => args.includes('split-window'))).toBe(false);
+    calls.length = 0;
+    const viewer = { pid: 456, owner: context.target.owner };
+    const reused = preparePane({ ...cfg, widthPercent: 60 }, { readLiveViewers: () => [viewer] }, 'map', adapter);
+    expect(reused.value.viewer).toEqual(viewer);
+    expect(calls.some(args => args.includes('#{pane_width}') || args.includes('resize-pane'))).toBe(false);
+  });
+
+  it('reports source measurement failures and never invents applied geometry after an unverified split', () => {
+    for (const width of [{ status: 1, stderr: 'no such pane' }, { status: 0, stdout: 'unknown' }]) {
+      const { calls, adapter } = harness({}, { width });
+      const context = preparePane(cfg, { readLiveViewers: () => [] }, 'map', adapter).value;
+      expect(placePane(cfg, 'watch', 'map', context.target, adapter).ok).toBe(false);
+      expect(calls.some(args => args.includes('split-window'))).toBe(false);
+    }
+    const { adapter } = harness({}, { 'split-window': { status: 0, stdout: '' } });
+    const context = preparePane(cfg, { readLiveViewers: () => [] }, 'map', adapter).value;
+    expect(placePane(cfg, 'watch', 'map', context.target, adapter).error).toContain('opened the split but did not report');
   });
 
   it('opens a new window only when requested and keeps ownership stable after it becomes active', () => {
@@ -133,7 +170,7 @@ describe('tmux placement and reuse', () => {
     const { calls, adapter } = harness({}, { 'split-window': { status: 1, stderr: 'no space for new pane' } });
     const context = preparePane(cfg, { readLiveViewers: () => [] }, 'map', adapter).value;
     expect(placePane(cfg, 'watch', 'map', context.target, adapter).error).toContain('no space');
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
   });
 
   it('prints a complete POSIX fallback with literal paths, page and watcher options', () => {

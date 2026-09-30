@@ -459,6 +459,21 @@ though one is already running for this project. Watcher-only: `--file <path>`
 names the default page's state file (the launcher derives it from the project
 directory).
 
+Initial split width: pass `mmap_open {page: "api", widthPercent: 35}` or
+`mmap api --width-percent 35` (also accepted by `scripts/open-pane.mjs`).
+The integer range is 25–60; omission keeps the 42% default. It applies only to
+new terminal splits, so it cannot be combined with `--window`, `window: true`,
+or a non-terminal surface. Repeated opens reuse the existing pane without
+changing a width you adjusted manually. Bare `mmap` still toggles it closed.
+
+tmux sizes the selected source pane, not the entire terminal window. It clamps
+the split to leave at least 60 columns for the conversation and 30 for the map,
+plus the divider; a source narrower than 91 columns is refused with a useful
+fallback command. Its new-split receipt includes `widthPercent`, `sourceCols`,
+`appliedCols` measured by tmux, and `clamped`. Windows Terminal receives the
+validated percentage as its split-size argument; its actual column widths are not measured
+or guaranteed by the launcher.
+
 Pane ownership is carried by the internal watcher flag `--owner <token>` and
 the optional `owner` field in viewer reports. Launchers derive the token from
 the source console process and its creation time; manual watchers can omit it.

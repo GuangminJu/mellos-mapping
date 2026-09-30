@@ -419,6 +419,18 @@ used by ← …`，每个邻居各带自己的状态字形），以及自动折�
 watcher 的：`--file <path>` 指定默认页的状态文件（启动脚本会从项目目录
 自己推导出来）。
 
+初始分屏宽度：使用 `mmap_open {page: "api", widthPercent: 35}` 或
+`mmap api --width-percent 35`（`scripts/open-pane.mjs` 也接受该参数）。
+只接受 25–60 的整数，省略时仍为 42%。它只影响新建的终端分屏，不能与
+`--window`、`window: true` 或非终端 surface 同用。重复打开会复用已有面板，
+保留你手动调整的宽度；不带页名的 `mmap` 仍会切换关闭面板。
+
+tmux 以选中的源面板宽度计算，而非整个终端窗口。它会限制地图宽度，至少为
+左侧会话保留 60 列、右侧地图保留 30 列，另留一列分隔线；源面板不足 91 列
+时拒绝新建分屏并给出可直接运行的备用命令。新分屏回执包含 `widthPercent`、
+`sourceCols`、tmux 实测的 `appliedCols` 和 `clamped`。Windows Terminal
+通过原生分屏大小参数接收校验后的百分比；启动器不测量或保证实际列数。
+
 内部 watcher 参数 `--owner <token>` 和面板报告的可选 `owner` 字段承载会话绑定。
 启动器用源控制台进程及创建时间生成身份；手动运行 watcher 可省略。切页和关闭
 请求按面板 PID 定向投递，同项目其他窗口不会抢走请求。普通 `mmap` 只切换当前

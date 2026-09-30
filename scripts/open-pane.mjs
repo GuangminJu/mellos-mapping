@@ -3,7 +3,7 @@
  * Open the live map pane in the owning Windows Terminal or tmux session — the AGENT's
  * launcher, addressed by `/mmap` and by the skill.
  *
- *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--force]
+ *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--width-percent <25-60>] [--force]
  *                              [--ascii] [--no-color] [--no-mouse] [--no-follow]
  *                              [--interval <ms>]
  *
@@ -32,6 +32,7 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { paneFailureMessage } from './watcher-command.mjs';
+import { parseWidthPercent } from './pane-sizing.mjs';
 
 import {
   DEDICATED_WINDOW_NAME,
@@ -48,7 +49,7 @@ import {
 } from './pane-core.mjs';
 
 export const USAGE =
-  'usage: node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--force]' +
+  'usage: node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--width-percent <25-60>] [--force]' +
   ' [--ascii] [--no-color] [--no-mouse] [--no-follow] [--interval <ms>]';
 
 /**
@@ -66,6 +67,7 @@ export function parsePaneArgs(argv, idRule) {
   let pageSlug;
   let mode = PANE_MODE.split;
   let force = false;
+  let widthPercent;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const watcher = takeWatcherFlag(argv, i);
@@ -76,6 +78,10 @@ export function parsePaneArgs(argv, idRule) {
     } else if (a === '--page') {
       pageSlug = argv[++i];
       if (pageSlug === undefined) return { ok: false, error: `--page needs a slug\n${USAGE}` };
+    } else if (a === '--width-percent') {
+      const width = parseWidthPercent(argv[++i]);
+      if (!width.ok) return { ok: false, error: `--width-percent: ${width.error}\n${USAGE}` };
+      widthPercent = width.value;
     } else if (a === '--window') {
       mode = PANE_MODE.window;
     } else if (a === '--force') {
@@ -86,11 +92,14 @@ export function parsePaneArgs(argv, idRule) {
       positional.push(a);
     }
   }
+  if (mode === PANE_MODE.window && widthPercent !== undefined) {
+    return { ok: false, error: `--width-percent applies only to a new split, not --window\n${USAGE}` };
+  }
   if (positional.length !== 1) return { ok: false, error: USAGE };
   if (pageSlug !== undefined && !idRule.test(pageSlug)) {
     return { ok: false, error: `--page needs a kebab-case slug (got "${pageSlug}")\n${USAGE}` };
   }
-  return { ok: true, value: { projectDir: resolve(positional[0]), pageSlug, mode, force, watcherFlags } };
+  return { ok: true, value: { projectDir: resolve(positional[0]), pageSlug, mode, force, watcherFlags, ...(widthPercent === undefined ? {} : { widthPercent }) } };
 }
 
 async function main() {
@@ -148,14 +157,14 @@ async function main() {
   const visible = revealPane(context.target, reported.value);
   if (!visible.ok) fail(visible.error);
   if (placed.value.backend === 'tmux') {
-    console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=tmux session=${placed.value.session} visibility=${visible.value}`);
+    console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=tmux session=${placed.value.session} visibility=${visible.value}${placed.value.mode === PANE_MODE.split ? ` widthPercent=${placed.value.widthPercent} sourceCols=${placed.value.sourceCols} appliedCols=${placed.value.appliedCols} clamped=${placed.value.clamped}` : ''}`);
     console.log(placed.value.mode === PANE_MODE.window
       ? 'Map opened in a new tmux window.' : 'Map opened beside this conversation (tmux split).');
   } else if (placed.value.mode === PANE_MODE.window) {
     console.log(`MMAP_PANE mode=window pid=${reported.value.pid} name=${DEDICATED_WINDOW_NAME} reason=${placed.value.reason}`);
     console.log(`Map opened in the dedicated "${DEDICATED_WINDOW_NAME}" window.`);
   } else {
-    console.log(`MMAP_PANE mode=split pid=${reported.value.pid} hwnd=${placed.value.hwnd}`);
+    console.log(`MMAP_PANE mode=split pid=${reported.value.pid} hwnd=${placed.value.hwnd} widthPercent=${placed.value.widthPercent}`);
     console.log('Map opened beside this conversation (vertical split).');
   }
 }

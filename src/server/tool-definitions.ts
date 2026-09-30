@@ -458,6 +458,9 @@ export function openTool() {
             'other tools. Omit only for the default page: without it a fresh pane opens on ' +
             'whichever page was written last, which after a gap is rarely the one under discussion.',
         ).optional(),
+        widthPercent: z.number().int().min(25).max(60).optional().describe(
+          'initial map width as an integer percentage of the source terminal pane (25–60, default 42). Only for a new terminal split; cannot combine with window or another surface. tmux clamps to keep at least 60 conversation columns and 30 map columns. Reusing an open pane preserves its current width.',
+        ),
         window: z
           .boolean()
           .optional()

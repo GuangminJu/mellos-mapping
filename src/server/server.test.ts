@@ -907,6 +907,26 @@ describe('mmap_open — the assistant putting the map on screen', () => {
     expect(launcherArgs('/proj', 'effort', true)).toEqual(['/proj', '--page', 'effort', '--window']);
   });
 
+  it('passes only an explicitly requested initial width through the MCP launcher boundary', async () => {
+    await callText('mmap_open', { widthPercent: 25 });
+    expect(launch).toHaveBeenLastCalledWith([dir, '--width-percent', '25']);
+    await callText('mmap_open', { surface: 'terminal', page: 'effort', widthPercent: 60 });
+    expect(launch).toHaveBeenLastCalledWith([dir, '--page', 'effort', '--width-percent', '60']);
+    expect(launcherArgs('/proj', undefined, false, 42)).toEqual(['/proj', '--width-percent', '42']);
+  });
+
+  it('rejects invalid widths and width options for surfaces it cannot resize before launching', async () => {
+    for (const widthPercent of [24, 61, 42.5, '42', null]) {
+      expect((await callText('mmap_open', { widthPercent })).isError).toBe(true);
+    }
+    for (const options of [{ window: true }, ...['markdown', 'web', 'web-terminal', 'codex-terminal'].map(surface => ({ surface }))]) {
+      const result = await callText('mmap_open', { ...options, widthPercent: 42 });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain('only to a new terminal split');
+    }
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it('a launcher that failed is reported as a failure, with what it said', () => {
     const said = openOutcome({ ok: false, output: 'open-pane.mjs is Windows Terminal-only' }, [], 'effort');
     expect(said).toContain('could not open the pane');
