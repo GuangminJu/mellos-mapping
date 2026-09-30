@@ -92,4 +92,16 @@ describe('watcher reading routes', () => {
     expect(pane.text()).toContain('Complete node');
     pane.send('n'); expect(pane.text()).toContain('Nodes / 节点');
   });
+
+  it('marks retained reader evidence stale after an invalid live update and clears the warning on recovery', () => {
+    const map = fixture(), pane = watcher(map);
+    pane.send('n\r');
+    writeFileSync(pane.file, '{}'); pane.tick();
+    expect(pane.text()).toContain('Evidence 0 stays readable');
+    expect(pane.text()).toContain('! STALE:');
+    pane.send('\x7f'); expect(pane.text()).toContain('! STALE:');
+    pane.save(map); pane.tick();
+    expect(pane.text()).not.toContain('! STALE:');
+    expect(pane.text()).toContain('Nodes / 节点');
+  });
 });

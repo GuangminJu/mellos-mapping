@@ -70,7 +70,7 @@ export function readerContent(map: MellosMap, page: ReaderPage, unicode: boolean
 export function readerScroll(state: ReaderState, content: ReaderContent, height: number): number {
   return Math.min(Math.max(0, state.scroll), Math.max(0, content.lines.length - Math.max(1, height)));
 }
-export function readerRows(state: ReaderState, content: ReaderContent, width: number, height: number, color: boolean): string[] {
+export function readerRows(state: ReaderState, content: ReaderContent, width: number, height: number, color: boolean, notice = ''): string[] {
   const bodyHeight = Math.max(1, height - 2);
   const scroll = readerScroll(state, content, bodyHeight);
   const selected = content.links.includes(state.selected ?? '') ? state.selected : content.links[0];
@@ -82,7 +82,7 @@ export function readerRows(state: ReaderState, content: ReaderContent, width: nu
     const text = `${isSelected ? '>' : ' '} ${line.text}`;
     rows.push(color && (isSelected || line.sgr !== '') ? `\x1b[${isSelected ? '7' : line.sgr}m${text}\x1b[0m` : text);
   }
-  rows.push(fitWidth('↑↓ scroll · Tab/Enter links · Esc back', width));
+  rows.push(fitWidth(notice === '' ? '↑↓ scroll · Tab/Enter links · Esc back' : `! STALE: ${notice}`, width));
   return rows.slice(0, height);
 }
 

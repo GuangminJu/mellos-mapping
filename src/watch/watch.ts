@@ -1079,7 +1079,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     }
     if (reader !== undefined && map !== undefined) {
       const content = readerContent(map, reader.page, cfg.unicode, Math.max(2, viewW - 2));
-      presentRows(readerRows(reader, content, viewW, io.output.rows ?? FALLBACK_ROWS, cfg.color), cols);
+      presentRows(readerRows(reader, content, viewW, io.output.rows ?? FALLBACK_ROWS, cfg.color, notice), cols);
       return;
     }
     const focus = view.hoverId ?? view.selectedId;

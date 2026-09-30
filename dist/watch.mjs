@@ -2390,7 +2390,7 @@ function readerContent(map, page, unicode, width) {
 function readerScroll(state, content, height) {
   return Math.min(Math.max(0, state.scroll), Math.max(0, content.lines.length - Math.max(1, height)));
 }
-function readerRows(state, content, width, height, color) {
+function readerRows(state, content, width, height, color, notice = "") {
   const bodyHeight = Math.max(1, height - 2);
   const scroll = readerScroll(state, content, bodyHeight);
   const selected = content.links.includes(state.selected ?? "") ? state.selected : content.links[0];
@@ -2405,7 +2405,7 @@ function readerRows(state, content, width, height, color) {
     const text = `${isSelected ? ">" : " "} ${line.text}`;
     rows.push(color && (isSelected || line.sgr !== "") ? `\x1B[${isSelected ? "7" : line.sgr}m${text}\x1B[0m` : text);
   }
-  rows.push(fitWidth("\u2191\u2193 scroll \xB7 Tab/Enter links \xB7 Esc back", width));
+  rows.push(fitWidth(notice === "" ? "\u2191\u2193 scroll \xB7 Tab/Enter links \xB7 Esc back" : `! STALE: ${notice}`, width));
   return rows.slice(0, height);
 }
 function readerInput(state, event, map, unicode, width, height) {
@@ -3257,7 +3257,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     }
     if (reader !== void 0 && map !== void 0) {
       const content = readerContent(map, reader.page, cfg.unicode, Math.max(2, viewW - 2));
-      presentRows(readerRows(reader, content, viewW, io2.output.rows ?? FALLBACK_ROWS, cfg.color), cols);
+      presentRows(readerRows(reader, content, viewW, io2.output.rows ?? FALLBACK_ROWS, cfg.color, notice), cols);
       return;
     }
     const focus = view.hoverId ?? view.selectedId;
