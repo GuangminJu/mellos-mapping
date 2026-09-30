@@ -22027,39 +22027,88 @@ function displayWidth(text2) {
   return w;
 }
 function fitWidth(s, width) {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return "";
   s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
   for (const ch of s) {
-    const cw = displayWidth(ch);
+    const cw = charWidth(ch.codePointAt(0));
     if (w + cw > width - 1) break;
     out += ch;
     w += cw;
   }
   return out + "\u2026";
 }
-function wrapWidth(s, width) {
-  const lines = [];
-  let line2 = "";
-  let w = 0;
-  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
-    if (ch === "\n") {
-      lines.push(line2);
-      line2 = "";
-      w = 0;
+function* wrapTokens(text2) {
+  let token = "";
+  let whitespace;
+  for (const ch of text2) {
+    if (charWidth(ch.codePointAt(0)) === 2) {
+      if (token !== "") yield token;
+      yield ch;
+      token = "";
+      whitespace = void 0;
       continue;
     }
-    const cw = displayWidth(ch);
-    if (w + cw > width) {
+    const nextWhitespace = /\s/.test(ch);
+    if (whitespace !== void 0 && whitespace !== nextWhitespace) {
+      yield token;
+      token = "";
+    }
+    token += ch;
+    whitespace = nextWhitespace;
+  }
+  if (token !== "") yield token;
+}
+function wrapWidth(s, width) {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return [];
+  const text2 = terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true);
+  if (text2 === "") return [];
+  const lines = [];
+  const paragraphs = text2.split("\n");
+  for (const [index, paragraph] of paragraphs.entries()) {
+    let line2 = "";
+    let w = 0;
+    let space = "";
+    const flush = () => {
       lines.push(line2);
       line2 = "";
       w = 0;
+    };
+    const appendLong = (token) => {
+      for (const ch of token) {
+        const cw = charWidth(ch.codePointAt(0));
+        if (w + cw > width && line2 !== "") flush();
+        if (cw > width) {
+          lines.push("\u2026");
+          continue;
+        }
+        line2 += ch;
+        w += cw;
+      }
+    };
+    for (const segment of wrapTokens(paragraph)) {
+      if (/^\s+$/.test(segment)) {
+        if (line2 === "" && space === "") appendLong(segment);
+        else space += segment;
+        continue;
+      }
+      const tokenWidth = displayWidth(segment);
+      if (w + displayWidth(space) + tokenWidth <= width) {
+        line2 += space + segment;
+        w += displayWidth(space) + tokenWidth;
+      } else {
+        if (line2 !== "") flush();
+        appendLong(segment);
+      }
+      space = "";
     }
-    line2 += ch;
-    w += cw;
+    if (line2 !== "") lines.push(line2);
+    else if (paragraph === "" && index < paragraphs.length - 1) lines.push("");
   }
-  if (line2 !== "") lines.push(line2);
   return lines;
 }
 
@@ -22746,9 +22795,14 @@ function prepareScene(map, opts) {
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
   const drawn = aggregated ?? oriented;
+  const namedOverview = plainGeo.mode === "constellation" && opts.namedOverview === true;
   const unverified = unverifiedDoneIds(oriented, drawn);
   if (drawn.layers.length === 0) return { map: drawn, unverified };
-  return { map: drawn, unverified, geometry: prepareGeometry(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo) };
+  return {
+    map: drawn,
+    unverified,
+    geometry: prepareGeometry(drawn, opts, aggregated !== void 0 || namedOverview ? AGGREGATE_GEO : plainGeo)
+  };
 }
 function prepareGeometry(map, opts, geo) {
   const neutral = isNeutralKind(map);

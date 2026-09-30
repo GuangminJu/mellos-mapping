@@ -31,6 +31,13 @@ export interface RenderOptions {
   readonly focus?: string | undefined;
   /** Position on the zoom ladder; omitted means ZOOM_DEFAULT (100%). */
   readonly zoom?: ZoomStep | undefined;
+  /**
+   * Keep full, labeled boxes at the far zoom even if explicit groups vanish.
+   * The watcher uses this only for an automatically selected named overview;
+   * omitted/false preserves the ordinary anonymous overview of ungrouped maps.
+   * Has no effect at any other zoom step.
+   */
+  readonly namedOverview?: boolean | undefined;
 }
 
 /** A window over the rendered picture, in cell coordinates (0-based). */

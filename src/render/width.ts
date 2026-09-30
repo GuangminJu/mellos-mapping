@@ -104,12 +104,14 @@ export function displayWidth(text: string): number {
 
 /** Truncate to a display width, ANSI-free input, appending … when cut. */
 export function fitWidth(s: string, width: number): string {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return '';
   s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = '';
   let w = 0;
   for (const ch of s) {
-    const cw = displayWidth(ch);
+    const cw = charWidth(ch.codePointAt(0)!);
     if (w + cw > width - 1) break;
     out += ch;
     w += cw;
@@ -117,27 +119,82 @@ export function fitWidth(s: string, width: number): string {
   return out + '…';
 }
 
-/** Hard word-wrap by display width (CJK-aware, splits anywhere). */
-export function wrapWidth(s: string, width: number): string[] {
-  const lines: string[] = [];
-  let line = '';
-  let w = 0;
-  for (const ch of terminalText(s.replace(/\r/g, '').replace(/\t/g, '  '), true)) {
-    if (ch === '\n') {
-      lines.push(line);
-      line = '';
-      w = 0;
+// Keep narrow-language words (including attached punctuation) together. Each
+// wide character is independently wrappable, as in ordinary CJK typography.
+// This also avoids language-dependent dictionary segmentation changing layouts.
+function* wrapTokens(text: string): Generator<string> {
+  let token = '';
+  let whitespace: boolean | undefined;
+  for (const ch of text) {
+    if (charWidth(ch.codePointAt(0)!) === 2) {
+      if (token !== '') yield token;
+      yield ch;
+      token = '';
+      whitespace = undefined;
       continue;
     }
-    const cw = displayWidth(ch);
-    if (w + cw > width) {
+    const nextWhitespace = /\s/.test(ch);
+    if (whitespace !== undefined && whitespace !== nextWhitespace) {
+      yield token;
+      token = '';
+    }
+    token += ch;
+    whitespace = nextWhitespace;
+  }
+  if (token !== '') yield token;
+}
+
+/** Word-wrap by terminal columns, preserving explicit breaks and indentation. */
+export function wrapWidth(s: string, width: number): string[] {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return [];
+  const text = terminalText(s.replace(/\r/g, '').replace(/\t/g, '  '), true);
+  if (text === '') return [];
+  const lines: string[] = [];
+  const paragraphs = text.split('\n');
+  for (const [index, paragraph] of paragraphs.entries()) {
+    let line = '';
+    let w = 0;
+    let space = '';
+    const flush = (): void => {
       lines.push(line);
       line = '';
       w = 0;
+    };
+    const appendLong = (token: string): void => {
+      for (const ch of token) {
+        const cw = charWidth(ch.codePointAt(0)!);
+        if (w + cw > width && line !== '') flush();
+        if (cw > width) {
+          // A two-column character cannot fit a one-column terminal. Make
+          // the loss explicit without overflowing or emitting an empty row.
+          lines.push('…');
+          continue;
+        }
+        line += ch;
+        w += cw;
+      }
+    };
+    for (const segment of wrapTokens(paragraph)) {
+      if (/^\s+$/.test(segment)) {
+        if (line === '' && space === '') appendLong(segment);
+        else space += segment;
+        continue;
+      }
+      const tokenWidth = displayWidth(segment);
+      if (w + displayWidth(space) + tokenWidth <= width) {
+        line += space + segment;
+        w += displayWidth(space) + tokenWidth;
+      } else {
+        if (line !== '') flush();
+        appendLong(segment);
+      }
+      space = '';
     }
-    line += ch;
-    w += cw;
+    // Whitespace separating wrapped words is not content. Leading indentation
+    // and explicit blank lines are; keep the old no-extra-final-newline rule.
+    if (line !== '') lines.push(line);
+    else if (paragraph === '' && index < paragraphs.length - 1) lines.push('');
   }
-  if (line !== '') lines.push(line);
   return lines;
 }

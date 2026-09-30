@@ -316,39 +316,88 @@ function displayWidth(text) {
   return w;
 }
 function fitWidth(s, width) {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return "";
   s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
   for (const ch of s) {
-    const cw = displayWidth(ch);
+    const cw = charWidth(ch.codePointAt(0));
     if (w + cw > width - 1) break;
     out += ch;
     w += cw;
   }
   return out + "\u2026";
 }
-function wrapWidth(s, width) {
-  const lines = [];
-  let line = "";
-  let w = 0;
-  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
-    if (ch === "\n") {
-      lines.push(line);
-      line = "";
-      w = 0;
+function* wrapTokens(text) {
+  let token = "";
+  let whitespace;
+  for (const ch of text) {
+    if (charWidth(ch.codePointAt(0)) === 2) {
+      if (token !== "") yield token;
+      yield ch;
+      token = "";
+      whitespace = void 0;
       continue;
     }
-    const cw = displayWidth(ch);
-    if (w + cw > width) {
+    const nextWhitespace = /\s/.test(ch);
+    if (whitespace !== void 0 && whitespace !== nextWhitespace) {
+      yield token;
+      token = "";
+    }
+    token += ch;
+    whitespace = nextWhitespace;
+  }
+  if (token !== "") yield token;
+}
+function wrapWidth(s, width) {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return [];
+  const text = terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true);
+  if (text === "") return [];
+  const lines = [];
+  const paragraphs = text.split("\n");
+  for (const [index, paragraph] of paragraphs.entries()) {
+    let line = "";
+    let w = 0;
+    let space = "";
+    const flush = () => {
       lines.push(line);
       line = "";
       w = 0;
+    };
+    const appendLong = (token) => {
+      for (const ch of token) {
+        const cw = charWidth(ch.codePointAt(0));
+        if (w + cw > width && line !== "") flush();
+        if (cw > width) {
+          lines.push("\u2026");
+          continue;
+        }
+        line += ch;
+        w += cw;
+      }
+    };
+    for (const segment of wrapTokens(paragraph)) {
+      if (/^\s+$/.test(segment)) {
+        if (line === "" && space === "") appendLong(segment);
+        else space += segment;
+        continue;
+      }
+      const tokenWidth = displayWidth(segment);
+      if (w + displayWidth(space) + tokenWidth <= width) {
+        line += space + segment;
+        w += displayWidth(space) + tokenWidth;
+      } else {
+        if (line !== "") flush();
+        appendLong(segment);
+      }
+      space = "";
     }
-    line += ch;
-    w += cw;
+    if (line !== "") lines.push(line);
+    else if (paragraph === "" && index < paragraphs.length - 1) lines.push("");
   }
-  if (line !== "") lines.push(line);
   return lines;
 }
 

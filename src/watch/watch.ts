@@ -75,10 +75,8 @@ import { resolveProjectDirectory } from '../store/project.js';
 import { withStoreLock } from '../store/transaction.js';
 import { type MellosMap, type NodeStatus, type Result, err, ok } from '../domain/types.js';
 import {
-  type NeighborRef,
   SPINNER_FRAMES,
   diveParent,
-  focusInfo,
   interiorPages,
   statusGlyph,
 } from '../semantics/semantics.js';
@@ -92,7 +90,6 @@ import {
   displayWidth,
   fitWidth,
   isNeutralKind,
-  kindGlyph,
   renderMapWindow,
   statusSgr,
   wrapWidth,
@@ -120,6 +117,10 @@ import {
   takeQuitRequest,
 } from '../store/store.js';
 import { parseInput } from './input.js';
+import { nodePanel, type PanelLine } from './detail-panel.js';
+import { openReader, readerContent, readerRows, readerInput, type ReaderState, type ReaderPage } from './reader.js';
+import { initialViewDecision, cancelInitialView, decideInitialView } from './initial-view.js';
+export { nodePanel, type PanelLine } from './detail-panel.js';
 import { initialViewState, reduceView, clickNode, isPointerClick } from './view-state.js';
 import { nativeWatcherIO, type WatcherIO } from './io.js';
 import { openTerminalSession } from './terminal-session.js';
@@ -670,101 +671,6 @@ export function nearestHit(hits: readonly BoxHit[], cx: number, cy: number): Box
   return best;
 }
 
-export interface PanelLine {
-  readonly text: string;
-  readonly sgr: string; // '' = default color
-}
-
-/**
- * The detail panel for a focused node OR group (the far zoom's boxes are
- * groups): header, evidence/members, both wire directions with each
- * neighbour's status glyph, wrapped design notes.
- * Always exactly PANEL_CONTENT_ROWS lines (padded with blanks).
- */
-export function nodePanel(
-  map: MellosMap,
-  focusId: string,
-  unicode: boolean,
-  width: number,
-  pinned: boolean,
-  rows: number = PANEL_CONTENT_ROWS,
-): PanelLine[] | undefined {
-  const g = (s: NodeStatus): string => statusGlyph(s, unicode);
-  const pinMark = pinned ? (unicode ? '  ⊙ pinned' : '  * pinned') : '';
-  const focus = focusInfo(map, focusId);
-  if (focus === undefined) return undefined;
-  const refText = (r: NeighborRef): string =>
-    `${g(r.status)} ${r.label}${r.edgeLabel !== undefined ? ` (${r.edgeLabel})` : ''}`;
-
-  if (focus.kind === 'group') {
-    const { group, status, layerName, members } = focus;
-    const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
-    const uses = focus.uses.map(refText);
-    const usedBy = focus.usedBy.map(refText);
-    const lines: PanelLine[] = [
-      {
-        text: fitWidth(
-          `${g(status)} ${group.label} [${group.id}] · ${layerName} · ${status} · ${members.length} member(s)${pinMark}`,
-          width,
-        ),
-        sgr: `${statusSgr(status)};1`,
-      },
-      {
-        text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join('  ') || '—'}`, width),
-        sgr: '',
-      },
-      { text: fitWidth(`uses ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
-      { text: fitWidth(`used by ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
-    ];
-    while (lines.length < rows) lines.push({ text: '', sgr: '' });
-    return lines.slice(0, rows);
-  }
-
-  const { node, layerName, laneLabel } = focus;
-  const neutral = isNeutralKind(map);
-  const [right, left] = unicode ? ['→', '←'] : ['->', '<-'];
-  // An edge label rides along in parentheses: what flows between the nodes.
-  const uses = focus.uses.map(refText);
-  const usedBy = focus.usedBy.map(refText);
-
-  const pin = pinMark;
-  // Documentation kinds hide the status vocabulary: kind glyph (or bullet)
-  // instead of the status glyph, no status word, no status color.
-  const headGlyph = neutral
-    ? (node.kind !== undefined ? kindGlyph(node.kind as string, unicode) : undefined) ?? (unicode ? '·' : '.')
-    : g(node.status);
-  const headParts = [
-    `${headGlyph} ${node.label} [${node.id}]`,
-    layerName,
-    ...(laneLabel !== undefined ? [laneLabel] : []),
-    ...(node.kind !== undefined ? [node.kind as string] : []),
-    ...(neutral ? [] : [node.status]),
-    ...(node.submap !== undefined ? [`${unicode ? '⊞' : '+'} ${node.submap}`] : []),
-  ];
-  // On sequence pages an edge is a moment in time, not a dependency:
-  // "after" = the earlier events this one follows, "before" = the later ones.
-  const [usesWord, usedByWord] = map.kind === 'sequence' ? ['after', 'before'] : ['uses', 'used by'];
-  const lines: PanelLine[] = [
-    {
-      text: fitWidth(`${headParts.join(' · ')}${pin}`, width),
-      sgr: neutral ? '1' : `${statusSgr(node.status)};1`,
-    },
-    { text: fitWidth(`evidence: ${node.evidence ?? '—'}`, width), sgr: '90' },
-    { text: fitWidth(`${usesWord} ${right}  ${uses.join('  ') || '—'}`, width), sgr: '' },
-    { text: fitWidth(`${usedByWord} ${left}  ${usedBy.join('  ') || '—'}`, width), sgr: '' },
-  ];
-  const notes = node.detail !== undefined ? wrapWidth(node.detail, width) : ['(no design notes yet)'];
-  const room = Math.max(0, rows - lines.length);
-  for (let i = 0; i < room; i++) {
-    const last = i === room - 1 && notes.length > room;
-    lines.push({
-      text: last ? fitWidth(notes[i]! + '…', width) : (notes[i] ?? ''),
-      sgr: node.detail !== undefined ? '' : '90',
-    });
-  }
-  return lines.slice(0, rows);
-}
-
 /**
  * The standby state — a spinner and diagnostics, nothing else.
  *
@@ -948,6 +854,8 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     cfg.page === undefined ? undefined : pageFilePath(cfg.file, cfg.page),
   );
   let view = initialViewState();
+  let initialDecision = initialViewDecision();
+  let reader: ReaderState | undefined;
   let lastTabSegments: readonly TabSegment[] = [];
   /** Leftmost visible tab of the strip window; browsing moves it, switching reveals. */
   let tabScroll = 0;
@@ -1037,6 +945,8 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     const file = pane.activeFile;
     view = reduceView(view, { kind: 'pages', previous, active: file, files: filesOf(pane) });
     if (file === undefined || file === previous) return;
+    reader = undefined;
+    if (previous !== undefined) initialDecision = cancelInitialView(initialDecision);
     // the strip follows the switch — the active tab must never sit off-screen
     const top = topFiles();
     const tabIndex = top.indexOf(file);
@@ -1128,10 +1038,29 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
   });
 
   const sceneOptions = (): RenderOptions => ({
+    namedOverview: view.namedOverview,
     color: cfg.color, unicode: cfg.unicode, zoom: view.zoom, focus: view.hoverId ?? view.selectedId,
     // A spinner on another page must not invalidate this completed picture.
     spinnerFrame: map?.nodes.some((node) => node.status === 'in-progress') ? spinnerFrame : 0,
   });
+
+  const presentRows = (rows: string[], columns: number): void => {
+    if (frameOutput !== undefined) frameOutput.present({ columns, rows });
+    else {
+      const frame = HOME + rows.map(row => row + ERASE_LINE_END).join('\n');
+      if (frame !== lastFrame) { io.output.write(frame); lastFrame = frame; }
+    }
+  };
+  const showReader = (page: ReaderPage): void => {
+    reader = openReader(page);
+    view = reduceView(view, { kind: 'cancel-gesture' });
+    pane = disarmDelete(pane);
+    if (flash?.confirm) flash = undefined;
+  };
+  const overview = (): void => {
+    reader = undefined;
+    view = reduceView(reduceView(view, { kind: 'cancel-gesture' }), { kind: 'overview', named: true });
+  };
 
   const paint = (): void => {
     clearTimeout(paintTimer);
@@ -1141,6 +1070,18 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     // a shrunken terminal may no longer afford the dragged panel height
     panelContentRows = clampPanelRows(panelContentRows, io.output.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
+    if (interactive && initialDecision.phase === 'pending') {
+      try {
+        const decision = decideInitialView(initialDecision, map, cfg, { width: viewW, height: viewH });
+        initialDecision = decision.state;
+        if (decision.zoom !== undefined) view = reduceView(view, { kind: 'overview', named: true });
+      } catch { /* the normal render boundary below reports failures */ }
+    }
+    if (reader !== undefined && map !== undefined) {
+      const content = readerContent(map, reader.page, cfg.unicode, Math.max(2, viewW - 2));
+      presentRows(readerRows(reader, content, viewW, io.output.rows ?? FALLBACK_ROWS, cfg.color), cols);
+      return;
+    }
     const focus = view.hoverId ?? view.selectedId;
 
     let body: string[];
@@ -1265,7 +1206,8 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
     const hint = !interactive
       ? cfg.file
       : (flash !== undefined ? `${flash.text} · ` : '') +
-        `${zoomTag} · wheel zoom · ` +
+        `n nodes · g groups · o overview · ${zoomTag} · ` +
+        (view.namedOverview && map?.groups.length === 0 ? 'groups removed; n node list · ' : '') +
         (pannable ? 'drag pan · ' : '') +
         'hover/click · 0 reset · x delete page · q quit';
     // A footer wider than the pane would wrap and shear the whole frame.
@@ -1277,15 +1219,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       ...Array.from({ length: viewH }, (_, i) => body[i] ?? ''),
       ...panelRows, footer,
     ];
-    if (frameOutput !== undefined) {
-      frameOutput.present({ columns: cols, rows });
-    } else {
-      const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join('\n');
-      if (frame !== lastFrame) {
-        io.output.write(frame);
-        lastFrame = frame;
-      }
-    }
+    presentRows(rows, cols);
   };
 
   // Mouse motion can arrive much faster than a terminal can display frames.
@@ -1340,7 +1274,7 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       focusRequest: request === undefined ? undefined : pageFilePath(cfg.file, request.page),
       // a drag in progress holds auto-follow off: the user is engaged with
       // THIS page, and a missed switch is re-triggered by the next save
-      engaged: view.dragAnchor !== undefined,
+      engaged: view.dragAnchor !== undefined || reader !== undefined,
     });
     pane = scanned.state;
     adoptView(previous);
@@ -1418,11 +1352,39 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       const parsed = parseInput(pendingInput + chunk);
       pendingInput = parsed.rest;
       let dirty = false;
+      if (parsed.events.some(event => event.kind !== 'mouse-move') || (parsed.events.length === 0 && /[^\x00-\x1f\x7f]/.test(chunk))) {
+        initialDecision = cancelInitialView(initialDecision);
+      }
       for (const event of parsed.events) {
+        if (reader !== undefined && map !== undefined && event.kind !== 'quit') {
+          const result = readerInput(reader, event, map, cfg.unicode, viewWidth(), io.output.rows ?? FALLBACK_ROWS);
+          reader = result.state;
+          // Overview in a reading screen means the original graph, preserving
+          // its pan/zoom/pin just like unwinding every Back step.
+          if (result.overview) reader = undefined;
+          if (reader === undefined) view = reduceView(view, { kind: 'cancel-gesture' });
+          dirty = true;
+          continue;
+        }
         switch (event.kind) {
           case 'quit':
             quit();
             return;
+          case 'nodes':
+          case 'groups':
+            if (map !== undefined) { showReader({ kind: event.kind }); dirty = true; }
+            break;
+          case 'overview':
+            overview(); dirty = true;
+            break;
+          case 'activate': {
+            const id = view.hoverId ?? view.selectedId ?? nearestHit(lastHits, view.offsetX + viewWidth() / 2, view.offsetY + viewHeight() / 2)?.id;
+            if (map !== undefined && id !== undefined) {
+              showReader({ kind: map.groups.some(group => group.id === id) ? 'group' : 'node', id });
+              dirty = true;
+            }
+            break;
+          }
           case 'reset':
             view = reduceView(view, { kind: 'reset' });
             dirty = true;
@@ -1537,7 +1499,15 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
                 const clicked = clickNode(view, id, now, DOUBLE_CLICK_MS);
                 view = clicked.state;
                 if (clicked.diveId !== undefined) {
+                  if (map?.groups.some(group => group.id === clicked.diveId)) {
+                    showReader({ kind: 'group', id: clicked.diveId });
+                    dirty = true;
+                    break;
+                  }
                   const submap = map?.nodes.find((n) => (n.id as string) === id)?.submap;
+                  if (submap === undefined && map?.nodes.some(node => node.id === clicked.diveId)) {
+                    showReader({ kind: 'node', id: clicked.diveId });
+                  }
                   if (submap !== undefined && pane.activeFile !== undefined) {
                     // VIOLATION: no-primitive-obsession - SubmapRef and PageId
                     // are two brands over ONE grammar (ID_RULE), and this is

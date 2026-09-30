@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, setKind, setTitle, updateNode } from '../domain/ops.js';
+import { declareGroup, declareLane, declareLayer, declareNode, linkNodes, removeGroup, setKind, setTitle, updateNode } from '../domain/ops.js';
 import {
   EMPTY_MAP,
   type GroupId,
@@ -23,7 +23,7 @@ import {
   type SubmapRef,
 } from '../domain/types.js';
 import { aggregateMap } from '../semantics/semantics.js';
-import { type ZoomStep, clampZoom, createWindowRenderer, displayWidth, renderMap, renderMapWindow, zoomLabel } from './render.js';
+import { type ZoomStep, clampZoom, createWindowRenderer, displayWidth, measureMapBody, renderMap, renderMapWindow, zoomLabel } from './render.js';
 
 function must<T, E>(r: Result<T, E>): T {
   if (!r.ok) throw new Error(`expected ok, got error: ${JSON.stringify(r.error)}`);
@@ -37,6 +37,93 @@ const gid = (s: string): GroupId => s as GroupId;
 const laid = (s: string): LaneId => s as LaneId;
 
 const MONO = { color: false, unicode: true, spinnerFrame: 0 } as const;
+
+describe('map-body extent', () => {
+  it('measures complete layer labels without counting legend width or its rows', () => {
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: '基底', rank: rnk(0) }));
+    map = must(declareNode(map, { id: nid('one'), label: 'One', layer: lid('base'), status: 'planned' }));
+    const body = measureMapBody(map, MONO);
+    const picture = renderMapWindow(map, MONO, { x: 0, y: 0, width: 100, height: 30 });
+    expect(body).toEqual({ width: 16, height: 5 });
+    expect(picture.contentWidth).toBeGreaterThan(body.width);
+    expect(picture.contentHeight).toBe(body.height + 2);
+    const lines = renderMap(map, MONO).slice(0, body.height);
+    expect(Math.max(...lines.map(displayWidth))).toBe(body.width);
+    expect(lines[0]).toContain('基底');
+  });
+
+  it('ignores title width but includes its actual vertical offset', () => {
+    const map = sampleMap();
+    const short = setTitle(map, 'Map');
+    const long = setTitle(map, 'A very long heading '.repeat(20));
+    const { title: _title, ...withoutTitle } = map;
+    for (const zoom of [-4, 0] as const) {
+      const opts = { ...MONO, zoom };
+      expect(measureMapBody(short, opts)).toEqual(measureMapBody(long, opts));
+      expect(measureMapBody(short, opts).height - measureMapBody(withoutTitle, opts).height).toBe(zoom === 0 ? 2 : 1);
+    }
+  });
+
+  it('includes lanes, routed wires and labels at every zoom in either orientation', () => {
+    let map = must(declareLane(sampleMap(), { id: laid('left'), label: '左侧参与者' }));
+    map = must(updateNode(map, { id: nid('server'), lane: laid('left') }));
+    const { title: _title, ...withoutTitle } = map;
+    for (const kind of ['dev', 'sequence'] as const) for (const unicode of [true, false]) {
+      for (const zoom of [-4, -3, 0, 1, 2] as const) {
+        const drawn = setKind(withoutTitle, kind);
+        const opts = { ...MONO, unicode, zoom };
+        const body = measureMapBody(drawn, opts);
+        const lines = renderMap(drawn, opts).slice(0, body.height);
+        expect(Math.max(...lines.map(displayWidth))).toBe(body.width);
+        expect(lines.at(-1)?.trim()).not.toBe('');
+      }
+    }
+  });
+
+  it('ends an empty bottom band at its layer bar and an empty map has no body', () => {
+    let map = must(declareLayer(EMPTY_MAP, { id: lid('base'), name: 'Base', rank: rnk(0) }));
+    map = must(declareLayer(map, { id: lid('top'), name: 'Top', rank: rnk(1) }));
+    map = must(declareNode(map, { id: nid('one'), label: 'One', layer: lid('top'), status: 'planned' }));
+    const body = measureMapBody(map, MONO);
+    expect(renderMap(map, MONO)[body.height - 1]).toContain('Base');
+    expect(measureMapBody(EMPTY_MAP, MONO)).toEqual({ width: 0, height: 0 });
+  });
+});
+
+describe('named overview fallback', () => {
+  it('retains labeled boxes when groups disappear from an auto-selected named overview', () => {
+    let map = must(declareGroup(sampleMap(), { id: gid('ground'), label: '地基', layer: lid('primitives') }));
+    map = must(updateNode(map, { id: nid('domain'), group: gid('ground') }));
+    const opts = { ...MONO, zoom: -4, namedOverview: true } as const;
+    expect(renderMap(map, opts).join('\n')).toContain('地基 1/1');
+    map = must(removeGroup(map, gid('ground')));
+    const lines = renderMap(map, opts).join('\n');
+    expect(lines).toContain('图领域模型');
+    expect(lines).toContain('ASCII渲染');
+    const window = renderMapWindow(map, opts, { x: 0, y: 0, width: 100, height: 30 });
+    expect(window.hits.every((hit) => hit.h === 3)).toBe(true);
+    expect(window.hits.some((hit) => hit.id === 'ground')).toBe(false);
+  });
+
+  it('does not change ordinary manual zoom or any step above the overview', () => {
+    const map = sampleMap();
+    expect(renderMap(map, { ...MONO, zoom: -4 }).join('\n')).not.toContain('图领域模型');
+    for (const zoom of [-3, -2, -1, 0, 1, 2] as const) {
+      expect(renderMap(map, { ...MONO, zoom, namedOverview: true })).toEqual(renderMap(map, { ...MONO, zoom }));
+    }
+  });
+
+  it('invalidates the pane cache when the same snapshot switches named fallback on or off', () => {
+    const render = createWindowRenderer();
+    const map = sampleMap();
+    const viewport = { x: 0, y: 0, width: 80, height: 30 };
+    for (const namedOverview of [false, true, false, true]) {
+      const opts = { ...MONO, zoom: -4, namedOverview } as const;
+      expect(render(map, opts, viewport)).toEqual(renderMapWindow(map, opts, viewport));
+      expect(render(map, opts, viewport).hits.every((hit) => hit.h === (namedOverview ? 3 : 1))).toBe(true);
+    }
+  });
+});
 
 /** The map of this very plugin, mid-development — the canonical sample. */
 function sampleMap(): MellosMap {
