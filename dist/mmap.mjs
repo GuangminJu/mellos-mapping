@@ -24,6 +24,36 @@ Automatic opening failed. Do not retry until the terminal environment changes. R
 ${manualWatcherCommand(cfg, watchPath, mapFile)}`;
 }
 
+// scripts/pane-sizing.mjs
+var DEFAULT_WIDTH_PERCENT = 42;
+var MIN_LEFT_COLS = 60;
+var MIN_MAP_COLS = 30;
+function parseWidthPercent(value) {
+  const percent = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return typeof percent === "number" && Number.isInteger(percent) && percent >= 25 && percent <= 60 ? { ok: true, value: percent } : { ok: false, error: "width percent must be an integer from 25 to 60" };
+}
+function configuredWidthPercent(value) {
+  return parseWidthPercent(value === void 0 ? DEFAULT_WIDTH_PERCENT : value);
+}
+function tmuxSplitSize(sourceCols, widthPercent) {
+  const width = configuredWidthPercent(widthPercent);
+  if (!width.ok) return width;
+  if (!Number.isSafeInteger(sourceCols) || sourceCols <= 0) {
+    return { ok: false, error: "tmux returned an invalid source pane width; no pane was opened." };
+  }
+  const minimum = MIN_LEFT_COLS + MIN_MAP_COLS + 1;
+  if (sourceCols < minimum) {
+    return { ok: false, error: `The source tmux pane is ${sourceCols} columns wide; a new split needs at least ${minimum} columns (${MIN_LEFT_COLS} for the conversation, ${MIN_MAP_COLS} for the map, and one divider). Widen the source pane before retrying; no separate window was opened.` };
+  }
+  const requestedCols = Math.floor(sourceCols * width.value / 100);
+  return { ok: true, value: {
+    widthPercent: width.value,
+    sourceCols,
+    requestedCols,
+    cols: Math.max(MIN_MAP_COLS, Math.min(sourceCols - MIN_LEFT_COLS - 1, requestedCols))
+  } };
+}
+
 // scripts/terminal-session.mjs
 var terminal_session_exports = {};
 __export(terminal_session_exports, {
@@ -224,7 +254,15 @@ function createTmuxAdapter({ env = process.env, spawn = spawnSync2, nodePath = p
     return Number(attached) > 0 && active === "1" && (zoomed !== "1" || focused === "1") ? { ok: true, value: "visible" } : { ok: false, error: "The watcher is running, but its tmux pane is not visible in the attached session." };
   }
   function openPane(cfg, watchPath, mapFile, target) {
-    const placement = target.mode === "window" ? ["new-window", "-n", "mellos-mapping", "-t", `${target.session}:`] : ["split-window", "-h", "-d", "-l", "42%", "-t", target.pane];
+    let size;
+    if (target.mode !== "window") {
+      const measured = run(["display-message", "-p", "-t", target.pane, "#{pane_width}"], target.socket);
+      if (!measured.ok) return measured;
+      const calculated = tmuxSplitSize(/^\d+$/.test(measured.value) ? Number(measured.value) : NaN, cfg.widthPercent);
+      if (!calculated.ok) return calculated;
+      size = calculated.value;
+    }
+    const placement = size === void 0 ? ["new-window", "-n", "mellos-mapping", "-t", `${target.session}:`] : ["split-window", "-h", "-d", "-l", String(size.cols), "-t", target.pane, "-P", "-F", "#{pane_width}"];
     const result = run([
       ...placement,
       "-c",
@@ -234,7 +272,20 @@ function createTmuxAdapter({ env = process.env, spawn = spawnSync2, nodePath = p
       "--owner",
       target.owner
     ], target.socket);
-    return result.ok ? { ok: true, value: { ...target, reason: "requested" } } : result;
+    if (!result.ok) return result;
+    if (size === void 0) return { ok: true, value: { ...target, reason: "requested" } };
+    const appliedCols = /^\d+$/.test(result.value) ? Number(result.value) : NaN;
+    if (!Number.isSafeInteger(appliedCols) || appliedCols <= 0) {
+      return { ok: false, error: "tmux opened the split but did not report its width; applied geometry is unverified." };
+    }
+    return { ok: true, value: {
+      ...target,
+      reason: "requested",
+      widthPercent: size.widthPercent,
+      sourceCols: size.sourceCols,
+      appliedCols,
+      clamped: appliedCols !== size.requestedCols
+    } };
   }
   return { kind: "tmux", inspectSession: inspectSession2, openPane, revealPane };
 }
@@ -294,7 +345,6 @@ function paneCommand(cfg, watchPath, mapFile) {
   return ["--title", "mellos map", "-d", cfg.projectDir, "node", ...watcherArgs(cfg, watchPath, mapFile)];
 }
 var DEDICATED_WINDOW_NAME = "mellos-mapping";
-var SPLIT_SIZE = "0.42";
 function selectPaneViewer(viewers, owners) {
   return viewers.find((viewer) => viewer.owner !== void 0 && owners.includes(viewer.owner));
 }
@@ -315,6 +365,11 @@ function preparePane(cfg, store, mapFile, io = platformTerminal()) {
   } };
 }
 function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
+  const width = configuredWidthPercent(cfg.widthPercent);
+  if (!width.ok) return width;
+  if (target.mode === PANE_MODE.window && cfg.widthPercent !== void 0) {
+    return { ok: false, error: "width percent applies only to a new split, not a separate window" };
+  }
   if (io.kind === "tmux") return io.openPane(cfg, watchPath, mapFile, target);
   const payload = [...paneCommand(cfg, watchPath, mapFile), "--owner", target.owner];
   if (target.mode === PANE_MODE.window) {
@@ -329,13 +384,13 @@ function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
     "sp",
     "-V",
     "--size",
-    SPLIT_SIZE,
+    String(width.value / 100),
     ...payload,
     ";",
     "move-focus",
     "previous"
   ], "split the session window");
-  return opened.ok ? { ok: true, value: target } : opened;
+  return opened.ok ? { ok: true, value: { ...target, widthPercent: width.value } } : opened;
 }
 async function awaitNewPane(store, mapFile, context, timeoutMs = 8e3) {
   const deadline = Date.now() + timeoutMs;
@@ -348,12 +403,13 @@ async function awaitNewPane(store, mapFile, context, timeoutMs = 8e3) {
 }
 
 // scripts/mmap.mjs
-var USAGE = "usage: mmap [<page-slug>] [--window] [--force] [--ascii] [--no-color] [--no-mouse] [--no-follow] [--interval <ms>]\n       bare `mmap` toggles: it opens the map pane for this project, or closes the open one.";
+var USAGE = "usage: mmap [<page-slug>] [--window] [--width-percent <25-60>] [--force] [--ascii] [--no-color] [--no-mouse] [--no-follow] [--interval <ms>]\n       bare `mmap` toggles: it opens the map pane for this project, or closes the open one.";
 function parseMmapArgs(argv, idRule) {
   const positional = [];
   const watcherFlags = [];
   let mode = PANE_MODE.split;
   let force = false;
+  let widthPercent;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const watcher = takeWatcherFlag(argv, i);
@@ -362,6 +418,11 @@ ${USAGE}` };
     if (watcher.kind === "taken") {
       watcherFlags.push(...watcher.flags);
       i = watcher.next;
+    } else if (a === "--width-percent") {
+      const width = parseWidthPercent(argv[++i]);
+      if (!width.ok) return { ok: false, error: `--width-percent: ${width.error}
+${USAGE}` };
+      widthPercent = width.value;
     } else if (a === "--window") {
       mode = PANE_MODE.window;
     } else if (a === "--force") {
@@ -376,6 +437,10 @@ ${USAGE}` };
       positional.push(a);
     }
   }
+  if (mode === PANE_MODE.window && widthPercent !== void 0) {
+    return { ok: false, error: `--width-percent applies only to a new split, not --window
+${USAGE}` };
+  }
   if (positional.length > 1) return { ok: false, error: `mmap takes at most one page slug
 ${USAGE}` };
   const pageSlug = positional[0];
@@ -383,7 +448,7 @@ ${USAGE}` };
     return { ok: false, error: `a page is a kebab-case slug (got "${pageSlug}")
 ${USAGE}` };
   }
-  return { ok: true, value: { pageSlug, mode, force, watcherFlags } };
+  return { ok: true, value: { pageSlug, mode, force, watcherFlags, ...widthPercent === void 0 ? {} : { widthPercent } } };
 }
 function storeSearchPath(startDir) {
   const dirs = [];

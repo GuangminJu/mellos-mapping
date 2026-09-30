@@ -38,6 +38,20 @@ describe('command line', () => {
     expect(cfg.value.watcherFlags).toEqual(['--ascii', '--no-follow', '--no-mouse', '--no-color', '--interval', '500']);
   });
 
+  it('keeps the default implicit and accepts only integer initial split widths from 25 to 60', () => {
+    expect(parse('.').value.widthPercent).toBeUndefined();
+    for (const width of ['25', '42', '60']) {
+      const result = parse('.', '--width-percent', width, '--ascii');
+      expect(result.value.widthPercent).toBe(Number(width));
+      expect(result.value.watcherFlags).toEqual(['--ascii']);
+    }
+    for (const width of [undefined, '', '24', '61', '42.5', 'no', 'Infinity', '0x2a', '--ascii']) {
+      expect(parse('.', '--width-percent', ...(width === undefined ? [] : [width])).ok).toBe(false);
+    }
+    expect(parse('.', '--window', '--width-percent', '42').ok).toBe(false);
+    expect(parse('.', '--width-percent', '42', '--window').ok).toBe(false);
+  });
+
   it('refuses an unknown flag instead of dropping it silently', () => {
     const cfg = parse('.', '--no-fllow');
     expect(cfg.ok).toBe(false);

@@ -381,11 +381,29 @@ htop and tmux speak):
 | wheel on the tab row / click `‹` `›` | browse an overflowing tab strip without switching pages |
 | `f` | toggle auto-follow (see [Pages](#pages)) |
 | `x`, or click the `×` on the active tab | ask to delete the page on screen; press again inside the window and its file is removed (see [Pages](#pages)) |
+| `n` / `g` | open the full node list / group list |
+| `Enter` / double-click a group | read all group members; follow a member into full node details |
+| `Enter` / double-click a node without `⊞` | read full name, evidence, dependencies and notes |
+| `o` | return to a named overview |
 | double-click a `⊞` node | dive into its sub-map (a child page) |
 | `Backspace` / `Esc` | climb back out of the last dive |
 | drag the `⋯` divider | resize the detail panel — pull it up to read long design notes in full |
 | `0` | reset pan and zoom |
 | `q` / `Ctrl+C` | quit the pane |
+
+Reading screens use arrows or the wheel to scroll, `Tab` / `Shift+Tab` to
+select links, and `Enter` or a click to follow a member or neighbor. `Backspace`,
+`Esc`, or **Back** returns through the reading history, then restores the graph's
+pan, zoom and pin. **Overview** / `o` returns directly to that same graph view.
+Graph page/deletion shortcuts are inactive while reading.
+These screens and their history live only in the viewer; map files are unchanged.
+
+At the first valid nonempty load, the viewer starts in the named group overview
+only when its body and full layer labels fit and the normal graph does not.
+Legend width does not decide this. Manual input cancels the pending choice;
+updates, resizes and later pages never repeat it. Maps without explicit groups
+keep the normal default. If groups later disappear from an automatically chosen
+overview, labels remain visible and `n` still opens every node.
 
 Every other key is inert, on purpose: an escape sequence the pane does not
 know (F-keys, Home/End, PgUp/PgDn, Insert/Delete, modified arrows) is
@@ -458,6 +476,21 @@ of splitting the session's window, and `--force` opens another pane even
 though one is already running for this project. Watcher-only: `--file <path>`
 names the default page's state file (the launcher derives it from the project
 directory).
+
+Initial split width: pass `mmap_open {page: "api", widthPercent: 35}` or
+`mmap api --width-percent 35` (also accepted by `scripts/open-pane.mjs`).
+The integer range is 25–60; omission keeps the 42% default. It applies only to
+new terminal splits, so it cannot be combined with `--window`, `window: true`,
+or a non-terminal surface. Repeated opens reuse the existing pane without
+changing a width you adjusted manually. Bare `mmap` still toggles it closed.
+
+tmux sizes the selected source pane, not the entire terminal window. It clamps
+the split to leave at least 60 columns for the conversation and 30 for the map,
+plus the divider; a source narrower than 91 columns is refused with a useful
+fallback command. Its new-split receipt includes `widthPercent`, `sourceCols`,
+`appliedCols` measured by tmux, and `clamped`. Windows Terminal receives the
+validated percentage as its split-size argument; its actual column widths are not measured
+or guaranteed by the launcher.
 
 Pane ownership is carried by the internal watcher flag `--owner <token>` and
 the optional `owner` field in viewer reports. Launchers derive the token from

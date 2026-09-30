@@ -390,6 +390,9 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
     'mmap_open',
     openTool(),
     async (input) => {
+      if (input.widthPercent !== undefined && (input.window === true || (input.surface !== undefined && input.surface !== 'terminal'))) {
+        return text('widthPercent applies only to a new terminal split; omit window: true and choose surface: "terminal".', true);
+      }
       if (input.surface === 'codex-terminal') {
         if (input.window === true) return text('codex-terminal uses the current conversation panel; window: true is not supported.', true);
         if (input.page && !listPageFiles(stateFile).some(file => pageIdOfFile(stateFile, file) === input.page)) {
@@ -417,7 +420,7 @@ export function buildServer(stateFile: string, userConfigFile: string, launch: (
           'Automatic preview updates are enabled for this project. Open the Markdown file in the current conversation\'s right file panel using the host tool. ' +
           'No terminal was launched. Visibility and automatic file-viewer refresh are not confirmed by this tool.');
       }
-      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true));
+      const run = await launch(launcherArgs(projectDirOf(stateFile), input.page, input.window === true, input.widthPercent));
       const viewers = run.ok ? await awaitPane(stateFile, input.page, Date.now() + PANE_REPORT_TIMEOUT_MS, launcherViewerPid(run)) : [];
       const outcome = openOutcome(run, viewers, input.page);
       const failed = !run.ok || !paneShows(viewers, input.page);

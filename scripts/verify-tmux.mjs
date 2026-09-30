@@ -64,10 +64,14 @@ try {
   const sourceWindow = tmux('display-message', '-p', '-t', 'source', '#{window_id}');
   const inheritedTmux = tmux('display-message', '-p', '-t', 'source', '#{socket_path},#{pid},0');
   await attach('source');
+  // A PTY created by script may initially be 80 columns; make geometry explicit.
+  tmux('resize-window', '-t', 'source:', '-x', '180', '-y', '45');
   const client = await connect(); // No TMUX: discover the single attached session.
   const declaration = { layers: [{ id: 'base', name: 'Base', rank: 0 }], nodes: [{ id: 'core', label: 'Core', layer: 'base' }] };
   await call(client, 'mmap_declare', { ...declaration, page: 'first' });
-  assert.match(await call(client, 'mmap_open', { page: 'first' }), /backend=tmux/);
+  const firstOpen = await call(client, 'mmap_open', { page: 'first' });
+  assert.match(firstOpen, /backend=tmux/);
+  assert.match(firstOpen, /widthPercent=42 sourceCols=180 appliedCols=75 clamped=false/);
   assert.equal(paneCount(), 2);
   assert.equal(tmux('display-message', '-p', '-t', 'source', '#{pane_id}'), sourcePane);
   await call(client, 'mmap_declare', { ...declaration, page: 'second' });
@@ -81,6 +85,14 @@ try {
   assert.equal(paneCount(), 2, 'focusing the watcher must not create a second owner');
   tmux('select-pane', '-t', sourcePane);
   const sourceClient = await connect({ TMUX: inheritedTmux, TMUX_PANE: sourcePane });
+  // Width only initializes a new split. A narrow source and a newer width
+  // request must not overwrite a resize the user has already made.
+  tmux('resize-pane', '-t', watcherPane, '-x', '110');
+  assert.equal(tmux('display-message', '-p', '-t', sourcePane, '#{pane_width}'), '69');
+  assert.match(await call(sourceClient, 'mmap_open', { page: 'second', widthPercent: 25 }), /already-open/);
+  assert.equal(tmux('display-message', '-p', '-t', watcherPane, '#{pane_width}'), '110');
+  assert.equal(paneCount(), 2);
+  tmux('resize-pane', '-t', watcherPane, '-x', '75');
   const coveringWindow = tmux('new-window', '-P', '-F', '#{window_id}', '-t', 'source:', '-n', 'covering');
   assert.match(await call(sourceClient, 'mmap_open', { page: 'second' }), /visibility=visible/);
   assert.equal(tmux('display-message', '-p', '-t', 'source', '#{window_id}'), sourceWindow);
@@ -146,7 +158,26 @@ try {
   tmux('new-window', '-t', 'source:', '-n', 'fallback', '-c', fallbackProject, fallback);
   await until(() => readLiveViewers(join(fallbackProject, STATE_FILE_RELATIVE_PATH), Date.now()).some(viewer => viewer.page === 'first'));
   assert.match(await call(noTmux, 'mmap_view', { page: 'first' }), /pane: running on this page/);
-  console.log('tmux integration passed: stripped/inherited TMUX, focus on watcher without duplication, window restoration, unzoom, explicit target/socket, literal paths, rendering, reuse, page retarget, new window, force, ambiguous sessions, failure feedback, runnable fallback and human toggle.');
+  // A selected source pane can be narrower than its containing window.
+  // Leave an unrelated sibling intact and verify the source-specific clamp.
+  const geometryWindow = tmux('new-window', '-P', '-F', '#{window_id}', '-t', 'source:', '-n', 'geometry');
+  tmux('resize-window', '-t', geometryWindow, '-x', '200', '-y', '45');
+  const geometryPane = tmux('display-message', '-p', '-t', geometryWindow, '#{pane_id}');
+  const sibling = tmux('split-window', '-h', '-d', '-l', '79', '-t', geometryPane, '-P', '-F', '#{pane_id}');
+  assert.equal(tmux('display-message', '-p', '-t', geometryPane, '#{pane_width}'), '120');
+  const geometryClient = await connect({ TMUX: inheritedTmux, TMUX_PANE: geometryPane });
+  const sized = await call(geometryClient, 'mmap_open', { page: 'second', widthPercent: 60 });
+  assert.match(sized, /widthPercent=60 sourceCols=120 appliedCols=59 clamped=true/);
+  assert.equal(tmux('display-message', '-p', '-t', geometryPane, '#{pane_width}'), '60');
+  assert.equal(tmux('display-message', '-p', '-t', sibling, '#{pane_width}'), '79');
+  const beforeNarrow = paneCount();
+  const narrowClient = await connect({ TMUX: inheritedTmux, TMUX_PANE: sibling });
+  assert.match(await call(narrowClient, 'mmap_open', { page: 'second' }, true), /at least 91 columns/);
+  assert.equal(paneCount(), beforeNarrow);
+  assert.match(await call(geometryClient, 'mmap_open', { page: 'first', widthPercent: 25 }), /already-open/);
+  assert.equal(tmux('display-message', '-p', '-t', geometryPane, '#{pane_width}'), '60');
+  tmux('kill-window', '-t', geometryWindow);
+  console.log('tmux integration passed: stripped/inherited TMUX, focus on watcher without duplication, window restoration, unzoom, explicit target/socket, literal paths, rendering, reuse, page retarget, new window, force, ambiguous sessions, failure feedback, runnable fallback human toggle, source-pane width clamping, truthful applied-column receipts, narrow-split refusal and manual-width reuse.');
 } finally {
   for (const client of clients) await client.close().catch(() => {});
   spawnSync('tmux', ['kill-server'], { env, timeout: 5000 });

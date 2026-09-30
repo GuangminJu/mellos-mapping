@@ -32,6 +32,7 @@
 export type InputEvent =
   | { readonly kind: 'quit' }
   | { readonly kind: 'reset' }
+  | { readonly kind: 'activate' | 'nodes' | 'groups' | 'overview' }
   /** Esc: clear the pinned selection. */
   | { readonly kind: 'clear' }
   /** Pan the VIEW by a delta (keyboard / shift+wheel). */
@@ -186,6 +187,10 @@ export function parseInput(chunk: string): ParsedInput {
     const ch = chunk[i]!;
     if (ch === '\x1b') events.push({ kind: 'clear' }); // a bare ESC is the Esc key (header rule 2)
     else if (ch === 'q' || ch === 'Q' || ch === '\x03' || ch === '\x04') events.push({ kind: 'quit' });
+    else if (ch === '\r' || ch === '\n') events.push({ kind: 'activate' });
+    else if (ch === 'n' || ch === 'N') events.push({ kind: 'nodes' });
+    else if (ch === 'g' || ch === 'G') events.push({ kind: 'groups' });
+    else if (ch === 'o' || ch === 'O') events.push({ kind: 'overview' });
     else if (ch === '0') events.push({ kind: 'reset' });
     else if (ch === '+' || ch === '=') events.push({ kind: 'zoom', delta: 1 });
     else if (ch === '-') events.push({ kind: 'zoom', delta: -1 });

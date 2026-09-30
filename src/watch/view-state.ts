@@ -6,6 +6,7 @@ export interface PageView {
   readonly offsetY: number;
   readonly zoom: ZoomStep;
   readonly selectedId: string | undefined;
+  readonly namedOverview: boolean;
 }
 export interface ViewState extends PageView {
   readonly pageViews: ReadonlyMap<string, PageView>;
@@ -15,13 +16,15 @@ export interface ViewState extends PageView {
   readonly dividerDrag: boolean;
   readonly lastClick: { readonly id: string; readonly at: number } | undefined;
 }
-const defaultPage = (): PageView => ({ offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, selectedId: undefined });
+const defaultPage = (): PageView => ({ offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, selectedId: undefined, namedOverview: false });
 export function initialViewState(): ViewState {
   return { ...defaultPage(), pageViews: new Map(), hoverId: undefined, dragAnchor: undefined,
     press: undefined, dividerDrag: false, lastClick: undefined };
 }
 export type ViewEvent =
   | { readonly kind: 'reset' }
+  | { readonly kind: 'overview'; readonly named: boolean }
+  | { readonly kind: 'cancel-gesture' }
   | { readonly kind: 'pan'; readonly dx: number; readonly dy: number }
   | { readonly kind: 'position'; readonly x: number; readonly y: number }
   | { readonly kind: 'zoom'; readonly value: ZoomStep }
@@ -33,10 +36,12 @@ export type ViewEvent =
 
 export function reduceView(state: ViewState, event: ViewEvent): ViewState {
   switch (event.kind) {
-    case 'reset': return { ...state, offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT };
+    case 'reset': return { ...state, offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, namedOverview: false };
+    case 'overview': return { ...state, offsetX: 0, offsetY: 0, zoom: -4, namedOverview: event.named };
+    case 'cancel-gesture': return { ...state, hoverId: undefined, dragAnchor: undefined, press: undefined, dividerDrag: false, lastClick: undefined };
     case 'pan': return { ...state, offsetX: state.offsetX + event.dx, offsetY: state.offsetY + event.dy };
     case 'position': return { ...state, offsetX: event.x, offsetY: event.y };
-    case 'zoom': return { ...state, zoom: event.value };
+    case 'zoom': return { ...state, zoom: event.value, namedOverview: false };
     case 'hover': return event.id === state.hoverId ? state : { ...state, hoverId: event.id };
     case 'select': return { ...state, selectedId: event.id };
     case 'down': return { ...state, dividerDrag: event.divider,
@@ -56,7 +61,7 @@ export function reduceView(state: ViewState, event: ViewEvent): ViewState {
       if (event.previous === event.active || event.active === undefined) return { ...state, pageViews };
       // A removed page must not be parked again after pruning its saved view.
       if (event.previous !== undefined && event.files.includes(event.previous)) pageViews.set(event.previous, {
-        offsetX: state.offsetX, offsetY: state.offsetY, zoom: state.zoom, selectedId: state.selectedId,
+        offsetX: state.offsetX, offsetY: state.offsetY, zoom: state.zoom, selectedId: state.selectedId, namedOverview: state.namedOverview,
       });
       return { ...state, ...(pageViews.get(event.active) ?? defaultPage()), pageViews,
         hoverId: undefined, dragAnchor: undefined, press: undefined, dividerDrag: false, lastClick: undefined };

@@ -998,39 +998,88 @@ function displayWidth(text) {
   return w;
 }
 function fitWidth(s, width) {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return "";
   s = terminalText(s);
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
   for (const ch of s) {
-    const cw = displayWidth(ch);
+    const cw = charWidth(ch.codePointAt(0));
     if (w + cw > width - 1) break;
     out += ch;
     w += cw;
   }
   return out + "\u2026";
 }
-function wrapWidth(s, width) {
-  const lines = [];
-  let line = "";
-  let w = 0;
-  for (const ch of terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true)) {
-    if (ch === "\n") {
-      lines.push(line);
-      line = "";
-      w = 0;
+function* wrapTokens(text) {
+  let token = "";
+  let whitespace;
+  for (const ch of text) {
+    if (charWidth(ch.codePointAt(0)) === 2) {
+      if (token !== "") yield token;
+      yield ch;
+      token = "";
+      whitespace = void 0;
       continue;
     }
-    const cw = displayWidth(ch);
-    if (w + cw > width) {
+    const nextWhitespace = /\s/.test(ch);
+    if (whitespace !== void 0 && whitespace !== nextWhitespace) {
+      yield token;
+      token = "";
+    }
+    token += ch;
+    whitespace = nextWhitespace;
+  }
+  if (token !== "") yield token;
+}
+function wrapWidth(s, width) {
+  width = Math.max(0, Math.floor(width));
+  if (!(width > 0)) return [];
+  const text = terminalText(s.replace(/\r/g, "").replace(/\t/g, "  "), true);
+  if (text === "") return [];
+  const lines = [];
+  const paragraphs = text.split("\n");
+  for (const [index, paragraph] of paragraphs.entries()) {
+    let line = "";
+    let w = 0;
+    let space = "";
+    const flush = () => {
       lines.push(line);
       line = "";
       w = 0;
+    };
+    const appendLong = (token) => {
+      for (const ch of token) {
+        const cw = charWidth(ch.codePointAt(0));
+        if (w + cw > width && line !== "") flush();
+        if (cw > width) {
+          lines.push("\u2026");
+          continue;
+        }
+        line += ch;
+        w += cw;
+      }
+    };
+    for (const segment of wrapTokens(paragraph)) {
+      if (/^\s+$/.test(segment)) {
+        if (line === "" && space === "") appendLong(segment);
+        else space += segment;
+        continue;
+      }
+      const tokenWidth = displayWidth(segment);
+      if (w + displayWidth(space) + tokenWidth <= width) {
+        line += space + segment;
+        w += displayWidth(space) + tokenWidth;
+      } else {
+        if (line !== "") flush();
+        appendLong(segment);
+      }
+      space = "";
     }
-    line += ch;
-    w += cw;
+    if (line !== "") lines.push(line);
+    else if (paragraph === "" && index < paragraphs.length - 1) lines.push("");
   }
-  if (line !== "") lines.push(line);
   return lines;
 }
 
@@ -1711,6 +1760,13 @@ function layoutRows(columns, geo, gapRowCount, hasTitle, hasLanes) {
 }
 
 // src/render/render.ts
+function measureMapBody(map, opts) {
+  const { geometry } = prepareScene(map, opts);
+  if (geometry === void 0) return { width: 0, height: 0 };
+  let height = Math.max(...geometry.rows.barY) + 1;
+  for (const hit of geometry.hits) height = Math.max(height, hit.y + hit.h);
+  return { width: geometry.totalWidth, height };
+}
 function renderMapWindow(map, opts, viewport) {
   return renderSceneWindow(prepareScene(map, opts), opts, viewport);
 }
@@ -1719,8 +1775,9 @@ function createWindowRenderer() {
   let frame;
   return (map, opts, viewport) => {
     const zoom = opts.zoom ?? ZOOM_DEFAULT;
-    if (previous?.map !== map || previous.unicode !== opts.unicode || previous.zoom !== zoom) {
-      previous = { map, unicode: opts.unicode, zoom, scene: prepareScene(map, opts) };
+    const namedOverview = opts.namedOverview === true;
+    if (previous?.map !== map || previous.unicode !== opts.unicode || previous.zoom !== zoom || previous.namedOverview !== namedOverview) {
+      previous = { map, unicode: opts.unicode, zoom, namedOverview, scene: prepareScene(map, opts) };
     }
     const scene = previous.scene;
     if (frame?.scene !== scene || frame.spinner !== opts.spinnerFrame || frame.focus !== opts.focus || frame.color !== opts.color) {
@@ -1745,9 +1802,14 @@ function prepareScene(map, opts) {
   const plainGeo = zoomGeometry(opts.zoom ?? ZOOM_DEFAULT);
   const aggregated = plainGeo.mode === "constellation" ? aggregateMap(oriented) : void 0;
   const drawn = aggregated ?? oriented;
+  const namedOverview = plainGeo.mode === "constellation" && opts.namedOverview === true;
   const unverified = unverifiedDoneIds(oriented, drawn);
   if (drawn.layers.length === 0) return { map: drawn, unverified };
-  return { map: drawn, unverified, geometry: prepareGeometry(drawn, opts, aggregated !== void 0 ? AGGREGATE_GEO : plainGeo) };
+  return {
+    map: drawn,
+    unverified,
+    geometry: prepareGeometry(drawn, opts, aggregated !== void 0 || namedOverview ? AGGREGATE_GEO : plainGeo)
+  };
 }
 function prepareGeometry(map, opts, geo) {
   const neutral = isNeutralKind(map);
@@ -2107,6 +2169,10 @@ function parseInput(chunk) {
     const ch = chunk[i];
     if (ch === "\x1B") events.push({ kind: "clear" });
     else if (ch === "q" || ch === "Q" || ch === "" || ch === "") events.push({ kind: "quit" });
+    else if (ch === "\r" || ch === "\n") events.push({ kind: "activate" });
+    else if (ch === "n" || ch === "N") events.push({ kind: "nodes" });
+    else if (ch === "g" || ch === "G") events.push({ kind: "groups" });
+    else if (ch === "o" || ch === "O") events.push({ kind: "overview" });
     else if (ch === "0") events.push({ kind: "reset" });
     else if (ch === "+" || ch === "=") events.push({ kind: "zoom", delta: 1 });
     else if (ch === "-") events.push({ kind: "zoom", delta: -1 });
@@ -2121,8 +2187,296 @@ function parseInput(chunk) {
   return { events, rest: "" };
 }
 
+// src/watch/detail-panel.ts
+function presentation(map, focusId, unicode, pinned) {
+  const focus = focusInfo(map, focusId);
+  if (focus === void 0) return void 0;
+  const g = (status) => statusGlyph(status, unicode);
+  const pin = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
+  const refText = (ref) => `${g(ref.status)} ${ref.label}${ref.edgeLabel !== void 0 ? ` (${ref.edgeLabel})` : ""}`;
+  const [right, left] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
+  const [usesWord, usedByWord] = focus.kind === "node" && map.kind === "sequence" ? ["after", "before"] : ["uses", "used by"];
+  const wires = [
+    { section: "uses", text: `${usesWord} ${right}  ${focus.uses.map(refText).join("  ") || "\u2014"}`, sgr: "" },
+    { section: "usedBy", text: `${usedByWord} ${left}  ${focus.usedBy.map(refText).join("  ") || "\u2014"}`, sgr: "" }
+  ];
+  if (focus.kind === "group") {
+    const { group, status, layerName: layerName2, members } = focus;
+    const name2 = `${g(status)} ${group.label}`;
+    const metadata2 = `[${group.id}] \xB7 ${layerName2} \xB7 ${status} \xB7 ${members.length} member(s)`;
+    return {
+      name: name2,
+      metadata: metadata2 + pin,
+      header: `${name2} ${metadata2}${pin}`,
+      headerSgr: `${statusSgr(status)};1`,
+      blocks: [
+        { section: "members", text: `members: ${members.map(refText).join("  ") || "\u2014"}`, sgr: "" },
+        ...wires
+      ],
+      uses: focus.uses,
+      usedBy: focus.usedBy,
+      members,
+      usesWord,
+      usedByWord
+    };
+  }
+  const { node, layerName, laneLabel } = focus;
+  const neutral = isNeutralKind(map);
+  const glyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0) ?? (unicode ? "\xB7" : ".") : g(node.status);
+  const name = `${glyph} ${node.label}`;
+  const metadata = [
+    `[${node.id}]`,
+    layerName,
+    ...laneLabel !== void 0 ? [laneLabel] : [],
+    ...node.kind !== void 0 ? [node.kind] : [],
+    ...neutral ? [] : [node.status],
+    ...node.submap !== void 0 ? [`${unicode ? "\u229E" : "+"} ${node.submap}`] : []
+  ].join(" \xB7 ");
+  return {
+    name,
+    metadata: metadata + pin,
+    header: `${name} ${metadata}${pin}`,
+    headerSgr: neutral ? "1" : `${statusSgr(node.status)};1`,
+    blocks: [
+      { section: "evidence", text: `evidence: ${node.evidence ?? "\u2014"}`, sgr: "90" },
+      ...wires,
+      { section: "notes", text: node.detail ?? "(no design notes yet)", sgr: node.detail !== void 0 ? "" : "90" }
+    ],
+    uses: focus.uses,
+    usedBy: focus.usedBy,
+    usesWord,
+    usedByWord
+  };
+}
+function continued(text, width) {
+  if (!(width >= 1)) return "";
+  return fitWidth(text.trimEnd().replace(/…$/, "") + "\u2026", width);
+}
+function nodePanel(map, focusId, unicode, width, pinned, rows = 6) {
+  const data = presentation(map, focusId, unicode, pinned);
+  if (data === void 0) return void 0;
+  const height = Number.isFinite(rows) ? Math.max(0, Math.floor(rows)) : 0;
+  const columns = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+  if (height === 0) return [];
+  const blocks = [{ section: "name", text: data.header, sgr: data.headerSgr }, ...data.blocks];
+  const wrapped = blocks.map((block) => wrapWidth(block.text, columns));
+  const quotas = blocks.map((_, index) => index < height ? 1 : 0);
+  let extra = Math.max(0, height - blocks.length);
+  const nameRows = wrapWidth(data.name, Math.max(1, columns - 1)).length;
+  const nameExtra = Math.min(extra, Math.max(0, nameRows - 1));
+  quotas[0] += nameExtra;
+  extra -= nameExtra;
+  while (extra > 0) {
+    let grew = false;
+    for (let index = 1; index < blocks.length && extra > 0; index++) {
+      if (quotas[index] >= wrapped[index].length) continue;
+      quotas[index]++;
+      extra--;
+      grew = true;
+    }
+    if (!grew) break;
+  }
+  const metadataExtra = Math.min(extra, Math.max(0, wrapped[0].length - quotas[0]));
+  quotas[0] += metadataExtra;
+  const lines = [];
+  for (const [index, block] of blocks.entries()) {
+    const take = quotas[index];
+    for (let row = 0; row < take; row++) {
+      const text = wrapped[index][row] ?? "";
+      lines.push({
+        text: row === take - 1 && take < wrapped[index].length ? continued(text, columns) : text,
+        sgr: block.sgr
+      });
+    }
+  }
+  if (quotas.some((quota) => quota === 0) && lines.length > 0) {
+    const last = lines[lines.length - 1];
+    lines[lines.length - 1] = { ...last, text: continued(last.text, columns) };
+  }
+  while (lines.length < height) lines.push({ text: "", sgr: "" });
+  return lines;
+}
+function nodeDetailLines(map, focusId, unicode, width, pinned = false) {
+  const data = presentation(map, focusId, unicode, pinned);
+  if (data === void 0) return void 0;
+  const lines = [];
+  const add = (section, text, sgr = "", targetId) => {
+    for (const part of wrapWidth(text, width)) {
+      lines.push({ text: part, sgr, section, ...targetId !== void 0 ? { targetId } : {} });
+    }
+  };
+  const heading = (section, text) => {
+    lines.push({ text: "", sgr: "", section });
+    add(section, text, "1");
+  };
+  const neighbors = (section, title, refs) => {
+    heading(section, `${title} (${refs.length})`);
+    if (refs.length === 0) add(section, "\u2014", "90");
+    for (const ref of refs) {
+      add(section, `${statusGlyph(ref.status, unicode)} ${ref.label} [${ref.id}]${ref.edgeLabel !== void 0 ? ` (${ref.edgeLabel})` : ""}`, `${statusSgr(ref.status)};1`, ref.id);
+    }
+  };
+  add("name", data.name, data.headerSgr);
+  add("metadata", data.metadata);
+  if (data.members !== void 0) neighbors("members", "Members / \u6210\u5458", data.members);
+  else {
+    heading("evidence", "Evidence / \u8BC1\u636E");
+    const evidence = data.blocks.find((block) => block.section === "evidence");
+    add("evidence", evidence.text.slice("evidence: ".length));
+  }
+  neighbors("uses", data.usesWord === "after" ? "After / \u4E4B\u540E" : "Uses / \u4F9D\u8D56", data.uses);
+  neighbors("usedBy", data.usedByWord === "before" ? "Before / \u4E4B\u524D" : "Used by / \u88AB\u4F9D\u8D56", data.usedBy);
+  const notes = data.blocks.find((block) => block.section === "notes");
+  if (notes !== void 0) {
+    heading("notes", "Notes / \u8BF4\u660E");
+    add("notes", notes.text, notes.sgr);
+  }
+  return lines;
+}
+
+// src/watch/reader.ts
+function openReader(page, previous) {
+  return {
+    page,
+    scroll: 0,
+    selected: void 0,
+    press: void 0,
+    history: previous === void 0 ? [] : [...previous.history, {
+      page: previous.page,
+      scroll: previous.scroll,
+      selected: previous.selected
+    }]
+  };
+}
+function readerBack(state) {
+  const previous = state.history.at(-1);
+  return previous === void 0 ? void 0 : { ...previous, history: state.history.slice(0, -1), press: void 0 };
+}
+var wrap = (text, width, sgr = "", targetId) => wrapWidth(text, Math.max(2, width)).map((text2) => ({ text: text2, sgr, ...targetId === void 0 ? {} : { targetId } }));
+function readerContent(map, page, unicode, width) {
+  let lines;
+  if (page.kind === "node") {
+    lines = nodeDetailLines(map, page.id, unicode, width) ?? wrap(`This node was removed: [${page.id}]. Back returns to the previous view.`, width);
+  } else if (page.kind === "groups") {
+    lines = [...wrap(`Groups / \u5206\u7EC4 (${map.groups.length})`, width, "1"), { text: "", sgr: "" }];
+    for (const group of map.groups) {
+      const info = focusInfo(map, group.id);
+      if (info?.kind !== "group") continue;
+      lines.push(...wrap(
+        `${statusGlyph(info.status, unicode)} ${group.label} [${group.id}] \xB7 ${info.members.length} members`,
+        width,
+        `${statusSgr(info.status)};1`,
+        group.id
+      ), { text: "", sgr: "" });
+    }
+    if (map.groups.length === 0) lines.push(...wrap("No groups declared. Press n for the full node list.", width));
+  } else {
+    const group = page.kind === "group" ? map.groups.find((group2) => group2.id === page.id) : void 0;
+    const nodes = page.kind === "group" ? map.nodes.filter((node) => node.group === page.id) : map.nodes;
+    const title = page.kind === "nodes" ? `Nodes / \u8282\u70B9 (${nodes.length})` : group === void 0 ? `Group removed: [${page.id}]` : `${group.label} [${group.id}] \xB7 ${nodes.length} members`;
+    lines = [...wrap(title, width, "1"), { text: "", sgr: "" }];
+    for (const node of nodes) {
+      const layer = map.layers.find((layer2) => layer2.id === node.layer)?.name ?? node.layer;
+      lines.push(
+        ...wrap(`${statusGlyph(node.status, unicode)} ${node.label} [${node.id}]`, width, `${statusSgr(node.status)};1`, node.id),
+        ...wrap(`  ${layer} \xB7 ${node.status}`, width, "", node.id),
+        { text: "", sgr: "" }
+      );
+    }
+    if (nodes.length === 0) lines.push(...wrap("No members remain. Press n for all nodes.", width));
+  }
+  return { lines, links: [...new Set(lines.flatMap((line) => line.targetId === void 0 ? [] : [line.targetId]))] };
+}
+function readerScroll(state, content, height) {
+  return Math.min(Math.max(0, state.scroll), Math.max(0, content.lines.length - Math.max(1, height)));
+}
+function readerRows(state, content, width, height, color, notice = "") {
+  const bodyHeight = Math.max(1, height - 2);
+  const scroll = readerScroll(state, content, bodyHeight);
+  const selected = content.links.includes(state.selected ?? "") ? state.selected : content.links[0];
+  const rows = [fitWidth(`[Back] [Overview] ${Math.min(scroll + 1, content.lines.length)}-${Math.min(scroll + bodyHeight, content.lines.length)}/${content.lines.length}`, width)];
+  for (let index = 0; index < bodyHeight; index++) {
+    const line = content.lines[scroll + index];
+    if (line === void 0) {
+      rows.push("");
+      continue;
+    }
+    const isSelected = line.targetId !== void 0 && line.targetId === selected;
+    const text = `${isSelected ? ">" : " "} ${line.text}`;
+    rows.push(color && (isSelected || line.sgr !== "") ? `\x1B[${isSelected ? "7" : line.sgr}m${text}\x1B[0m` : text);
+  }
+  rows.push(fitWidth(notice === "" ? "\u2191\u2193 scroll \xB7 Tab/Enter links \xB7 Esc back" : `! STALE: ${notice}`, width));
+  return rows.slice(0, height);
+}
+function readerInput(state, event, map, unicode, width, height) {
+  const content = readerContent(map, state.page, unicode, Math.max(2, width - 2));
+  const bodyHeight = Math.max(1, height - 2);
+  const scroll = readerScroll(state, content, bodyHeight);
+  const current = { ...state, scroll, selected: content.links.includes(state.selected ?? "") ? state.selected : content.links[0] };
+  const boundedScroll = (value) => Math.min(Math.max(0, value), Math.max(0, content.lines.length - bodyHeight));
+  const enter = (id) => id === void 0 ? current : openReader({
+    kind: map.groups.some((group) => group.id === id) ? "group" : "node",
+    id
+  }, { ...current, selected: id });
+  switch (event.kind) {
+    case "clear":
+    case "back":
+      return { state: readerBack(current) };
+    case "overview":
+      return { state: void 0, overview: true };
+    case "nodes":
+      return { state: openReader({ kind: "nodes" }, current) };
+    case "groups":
+      return { state: openReader({ kind: "groups" }, current) };
+    case "pan":
+      return { state: { ...current, scroll: boundedScroll(scroll + event.dy) } };
+    case "zoom":
+      return { state: event.at === void 0 ? current : { ...current, scroll: boundedScroll(scroll - event.delta * 3) } };
+    case "next-page":
+    case "prev-page": {
+      if (content.links.length === 0) return { state: current };
+      const index = Math.max(0, content.links.indexOf(current.selected ?? content.links[0]));
+      const selected = content.links[(index + (event.kind === "next-page" ? 1 : -1) + content.links.length) % content.links.length];
+      const line = content.lines.findIndex((line2) => line2.targetId === selected);
+      return { state: { ...current, selected, scroll: line < scroll || line >= scroll + bodyHeight ? boundedScroll(line) : scroll } };
+    }
+    case "activate":
+      return { state: enter(current.selected ?? content.links[0]) };
+    case "mouse-down":
+      return { state: { ...current, press: { x: event.x, y: event.y, moved: false } } };
+    case "mouse-drag":
+      return { state: { ...current, press: current.press === void 0 ? void 0 : { ...current.press, moved: true } } };
+    case "mouse-up": {
+      const press = current.press;
+      const released = { ...current, press: void 0 };
+      if (press === void 0 || press.moved || event.x !== press.x || event.y !== press.y) return { state: released };
+      if (event.y === 1 && event.x <= 6) return { state: readerBack(released) };
+      if (event.y === 1 && event.x >= 8 && event.x <= 17) return { state: void 0, overview: true };
+      if (event.y < 2 || event.y > height - 1) return { state: released };
+      return { state: enter(content.lines[scroll + event.y - 2]?.targetId) };
+    }
+    default:
+      return { state: current };
+  }
+}
+
+// src/watch/initial-view.ts
+function initialViewDecision() {
+  return { phase: "pending", autoSelectedNamed: false };
+}
+function cancelInitialView(state) {
+  return state.phase === "pending" ? { phase: "cancelled", autoSelectedNamed: false } : state;
+}
+function decideInitialView(state, map, opts, viewport) {
+  if (state.phase !== "pending" || map === void 0 || map.nodes.length === 0 || !Number.isFinite(viewport.width) || !Number.isFinite(viewport.height) || viewport.width < 1 || viewport.height < 1) return { state, zoom: void 0 };
+  const renderOpts = { color: false, unicode: opts.unicode, spinnerFrame: 0 };
+  const fits = (extent) => extent.width <= viewport.width && extent.height <= viewport.height;
+  const named = map.groups.length > 0 && !fits(measureMapBody(map, { ...renderOpts, zoom: ZOOM_DEFAULT })) && fits(measureMapBody(map, { ...renderOpts, zoom: ZOOM_MIN, namedOverview: true }));
+  return { state: { phase: "settled", autoSelectedNamed: named }, zoom: named ? ZOOM_MIN : void 0 };
+}
+
 // src/watch/view-state.ts
-var defaultPage = () => ({ offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, selectedId: void 0 });
+var defaultPage = () => ({ offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, selectedId: void 0, namedOverview: false });
 function initialViewState() {
   return {
     ...defaultPage(),
@@ -2137,13 +2491,17 @@ function initialViewState() {
 function reduceView(state, event) {
   switch (event.kind) {
     case "reset":
-      return { ...state, offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT };
+      return { ...state, offsetX: 0, offsetY: 0, zoom: ZOOM_DEFAULT, namedOverview: false };
+    case "overview":
+      return { ...state, offsetX: 0, offsetY: 0, zoom: -4, namedOverview: event.named };
+    case "cancel-gesture":
+      return { ...state, hoverId: void 0, dragAnchor: void 0, press: void 0, dividerDrag: false, lastClick: void 0 };
     case "pan":
       return { ...state, offsetX: state.offsetX + event.dx, offsetY: state.offsetY + event.dy };
     case "position":
       return { ...state, offsetX: event.x, offsetY: event.y };
     case "zoom":
-      return { ...state, zoom: event.value };
+      return { ...state, zoom: event.value, namedOverview: false };
     case "hover":
       return event.id === state.hoverId ? state : { ...state, hoverId: event.id };
     case "select":
@@ -2171,7 +2529,8 @@ function reduceView(state, event) {
         offsetX: state.offsetX,
         offsetY: state.offsetY,
         zoom: state.zoom,
-        selectedId: state.selectedId
+        selectedId: state.selectedId,
+        namedOverview: state.namedOverview
       });
       return {
         ...state,
@@ -2664,71 +3023,6 @@ function nearestHit(hits, cx, cy) {
   }
   return best;
 }
-function nodePanel(map, focusId, unicode, width, pinned, rows = PANEL_CONTENT_ROWS) {
-  const g = (s) => statusGlyph(s, unicode);
-  const pinMark = pinned ? unicode ? "  \u2299 pinned" : "  * pinned" : "";
-  const focus = focusInfo(map, focusId);
-  if (focus === void 0) return void 0;
-  const refText = (r) => `${g(r.status)} ${r.label}${r.edgeLabel !== void 0 ? ` (${r.edgeLabel})` : ""}`;
-  if (focus.kind === "group") {
-    const { group, status, layerName: layerName2, members } = focus;
-    const [right2, left2] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
-    const uses2 = focus.uses.map(refText);
-    const usedBy2 = focus.usedBy.map(refText);
-    const lines2 = [
-      {
-        text: fitWidth(
-          `${g(status)} ${group.label} [${group.id}] \xB7 ${layerName2} \xB7 ${status} \xB7 ${members.length} member(s)${pinMark}`,
-          width
-        ),
-        sgr: `${statusSgr(status)};1`
-      },
-      {
-        text: fitWidth(`members: ${members.map((n) => `${g(n.status)} ${n.label}`).join("  ") || "\u2014"}`, width),
-        sgr: ""
-      },
-      { text: fitWidth(`uses ${right2}  ${uses2.join("  ") || "\u2014"}`, width), sgr: "" },
-      { text: fitWidth(`used by ${left2}  ${usedBy2.join("  ") || "\u2014"}`, width), sgr: "" }
-    ];
-    while (lines2.length < rows) lines2.push({ text: "", sgr: "" });
-    return lines2.slice(0, rows);
-  }
-  const { node, layerName, laneLabel } = focus;
-  const neutral = isNeutralKind(map);
-  const [right, left] = unicode ? ["\u2192", "\u2190"] : ["->", "<-"];
-  const uses = focus.uses.map(refText);
-  const usedBy = focus.usedBy.map(refText);
-  const pin = pinMark;
-  const headGlyph = neutral ? (node.kind !== void 0 ? kindGlyph(node.kind, unicode) : void 0) ?? (unicode ? "\xB7" : ".") : g(node.status);
-  const headParts = [
-    `${headGlyph} ${node.label} [${node.id}]`,
-    layerName,
-    ...laneLabel !== void 0 ? [laneLabel] : [],
-    ...node.kind !== void 0 ? [node.kind] : [],
-    ...neutral ? [] : [node.status],
-    ...node.submap !== void 0 ? [`${unicode ? "\u229E" : "+"} ${node.submap}`] : []
-  ];
-  const [usesWord, usedByWord] = map.kind === "sequence" ? ["after", "before"] : ["uses", "used by"];
-  const lines = [
-    {
-      text: fitWidth(`${headParts.join(" \xB7 ")}${pin}`, width),
-      sgr: neutral ? "1" : `${statusSgr(node.status)};1`
-    },
-    { text: fitWidth(`evidence: ${node.evidence ?? "\u2014"}`, width), sgr: "90" },
-    { text: fitWidth(`${usesWord} ${right}  ${uses.join("  ") || "\u2014"}`, width), sgr: "" },
-    { text: fitWidth(`${usedByWord} ${left}  ${usedBy.join("  ") || "\u2014"}`, width), sgr: "" }
-  ];
-  const notes = node.detail !== void 0 ? wrapWidth(node.detail, width) : ["(no design notes yet)"];
-  const room = Math.max(0, rows - lines.length);
-  for (let i = 0; i < room; i++) {
-    const last = i === room - 1 && notes.length > room;
-    lines.push({
-      text: last ? fitWidth(notes[i] + "\u2026", width) : notes[i] ?? "",
-      sgr: node.detail !== void 0 ? "" : "90"
-    });
-  }
-  return lines.slice(0, rows);
-}
 function elapsedLabel(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
   const m = Math.floor(s / 60);
@@ -2802,6 +3096,8 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
     cfg.page === void 0 ? void 0 : pageFilePath(cfg.file, cfg.page)
   );
   let view = initialViewState();
+  let initialDecision = initialViewDecision();
+  let reader;
   let lastTabSegments = [];
   let tabScroll = 0;
   let lastHits = [];
@@ -2853,6 +3149,8 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
     const file = pane.activeFile;
     view = reduceView(view, { kind: "pages", previous, active: file, files: filesOf(pane) });
     if (file === void 0 || file === previous) return;
+    reader = void 0;
+    if (previous !== void 0) initialDecision = cancelInitialView(initialDecision);
     const top = topFiles();
     const tabIndex = top.indexOf(file);
     if (tabIndex >= 0) {
@@ -2913,6 +3211,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     process.exit(1);
   });
   const sceneOptions = () => ({
+    namedOverview: view.namedOverview,
     color: cfg.color,
     unicode: cfg.unicode,
     zoom: view.zoom,
@@ -2920,6 +3219,26 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     // A spinner on another page must not invalidate this completed picture.
     spinnerFrame: map?.nodes.some((node) => node.status === "in-progress") ? spinnerFrame : 0
   });
+  const presentRows = (rows, columns) => {
+    if (frameOutput !== void 0) frameOutput.present({ columns, rows });
+    else {
+      const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join("\n");
+      if (frame !== lastFrame) {
+        io.output.write(frame);
+        lastFrame = frame;
+      }
+    }
+  };
+  const showReader = (page) => {
+    reader = openReader(page);
+    view = reduceView(view, { kind: "cancel-gesture" });
+    pane = disarmDelete(pane);
+    if (flash?.confirm) flash = void 0;
+  };
+  const overview = () => {
+    reader = void 0;
+    view = reduceView(reduceView(view, { kind: "cancel-gesture" }), { kind: "overview", named: true });
+  };
   const paint2 = () => {
     clearTimeout(paintTimer);
     paintTimer = void 0;
@@ -2927,6 +3246,19 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
     const viewW = viewWidth();
     panelContentRows = clampPanelRows(panelContentRows, io.output.rows ?? FALLBACK_ROWS, tabRows());
     const viewH = viewHeight();
+    if (interactive && initialDecision.phase === "pending") {
+      try {
+        const decision = decideInitialView(initialDecision, map, cfg, { width: viewW, height: viewH });
+        initialDecision = decision.state;
+        if (decision.zoom !== void 0) view = reduceView(view, { kind: "overview", named: true });
+      } catch {
+      }
+    }
+    if (reader !== void 0 && map !== void 0) {
+      const content = readerContent(map, reader.page, cfg.unicode, Math.max(2, viewW - 2));
+      presentRows(readerRows(reader, content, viewW, io.output.rows ?? FALLBACK_ROWS, cfg.color, notice), cols);
+      return;
+    }
     const focus = view.hoverId ?? view.selectedId;
     let body;
     let panned = "";
@@ -3023,7 +3355,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       lastTabSegments = [];
     }
     const zoomTag = `${cfg.unicode ? "\u2295" : "zoom"} ${zoomLabel(view.zoom)}`;
-    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `${zoomTag} \xB7 wheel zoom \xB7 ` + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 x delete page \xB7 q quit";
+    const hint = !interactive ? cfg.file : (flash !== void 0 ? `${flash.text} \xB7 ` : "") + `n nodes \xB7 g groups \xB7 o overview \xB7 ${zoomTag} \xB7 ` + (view.namedOverview && map?.groups.length === 0 ? "groups removed; n node list \xB7 " : "") + (pannable ? "drag pan \xB7 " : "") + "hover/click \xB7 0 reset \xB7 x delete page \xB7 q quit";
     const footerText = fitWidth(` ${hint}${panned}`, viewW);
     const footer = cfg.color ? `\x1B[90m${footerText}${RESET2}` : footerText;
     const rows = [
@@ -3032,15 +3364,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       ...panelRows,
       footer
     ];
-    if (frameOutput !== void 0) {
-      frameOutput.present({ columns: cols, rows });
-    } else {
-      const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join("\n");
-      if (frame !== lastFrame) {
-        io.output.write(frame);
-        lastFrame = frame;
-      }
-    }
+    presentRows(rows, cols);
   };
   const requestPaint = () => {
     paintTimer ??= setTimeout(paint2, 16);
@@ -3075,7 +3399,7 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       focusRequest: request === void 0 ? void 0 : pageFilePath(cfg.file, request.page),
       // a drag in progress holds auto-follow off: the user is engaged with
       // THIS page, and a missed switch is re-triggered by the next save
-      engaged: view.dragAnchor !== void 0
+      engaged: view.dragAnchor !== void 0 || reader !== void 0
     });
     pane = scanned.state;
     adoptView(previous);
@@ -3130,11 +3454,41 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       const parsed = parseInput(pendingInput + chunk);
       pendingInput = parsed.rest;
       let dirty = false;
+      if (parsed.events.some((event) => event.kind !== "mouse-move") || parsed.events.length === 0 && /[^\x00-\x1f\x7f]/.test(chunk)) {
+        initialDecision = cancelInitialView(initialDecision);
+      }
       for (const event of parsed.events) {
+        if (reader !== void 0 && map !== void 0 && event.kind !== "quit") {
+          const result = readerInput(reader, event, map, cfg.unicode, viewWidth(), io.output.rows ?? FALLBACK_ROWS);
+          reader = result.state;
+          if (result.overview) reader = void 0;
+          if (reader === void 0) view = reduceView(view, { kind: "cancel-gesture" });
+          dirty = true;
+          continue;
+        }
         switch (event.kind) {
           case "quit":
             quit();
             return;
+          case "nodes":
+          case "groups":
+            if (map !== void 0) {
+              showReader({ kind: event.kind });
+              dirty = true;
+            }
+            break;
+          case "overview":
+            overview();
+            dirty = true;
+            break;
+          case "activate": {
+            const id = view.hoverId ?? view.selectedId ?? nearestHit(lastHits, view.offsetX + viewWidth() / 2, view.offsetY + viewHeight() / 2)?.id;
+            if (map !== void 0 && id !== void 0) {
+              showReader({ kind: map.groups.some((group) => group.id === id) ? "group" : "node", id });
+              dirty = true;
+            }
+            break;
+          }
           case "reset":
             view = reduceView(view, { kind: "reset" });
             dirty = true;
@@ -3236,7 +3590,15 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
                 const clicked = clickNode(view, id, now, DOUBLE_CLICK_MS);
                 view = clicked.state;
                 if (clicked.diveId !== void 0) {
+                  if (map?.groups.some((group) => group.id === clicked.diveId)) {
+                    showReader({ kind: "group", id: clicked.diveId });
+                    dirty = true;
+                    break;
+                  }
                   const submap = map?.nodes.find((n) => n.id === id)?.submap;
+                  if (submap === void 0 && map?.nodes.some((node) => node.id === clicked.diveId)) {
+                    showReader({ kind: "node", id: clicked.diveId });
+                  }
                   if (submap !== void 0 && pane.activeFile !== void 0) {
                     const target = pageFilePath(cfg.file, submap);
                     const files = filesOf(pane);

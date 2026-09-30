@@ -91,6 +91,27 @@ export function renderMap(map: MellosMap, opts: RenderOptions): string[] {
   return built.canvas.emit(opts);
 }
 
+/** Occupied map-body extent, measured from the picture's top-left origin. */
+export interface MapBodyExtent {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Measure boxes, wires, lane headers and complete layer labels for fit checks.
+ * The legend and its preceding blank row do not belong to the body. Title
+ * width is also excluded: a long heading must not force a different map view.
+ * Title/header rows still count toward height because the body is drawn below
+ * them. Empty bottom bands end at their bar, not their reserved blank rows.
+ */
+export function measureMapBody(map: MellosMap, opts: RenderOptions): MapBodyExtent {
+  const { geometry } = prepareScene(map, opts);
+  if (geometry === undefined) return { width: 0, height: 0 };
+  let height = Math.max(...geometry.rows.barY) + 1;
+  for (const hit of geometry.hits) height = Math.max(height, hit.y + hit.h);
+  return { width: geometry.totalWidth, height };
+}
+
 /** Where a box sits on the full (unwindowed) picture, for hit testing. */
 export interface BoxHit {
   /**
@@ -128,13 +149,15 @@ export function renderMapWindow(map: MellosMap, opts: RenderOptions, viewport: V
  * only repaint it. There is no global cache or filesystem dependency.
  */
 export function createWindowRenderer(): typeof renderMapWindow {
-  let previous: { map: MellosMap; unicode: boolean; zoom: number; scene: Scene } | undefined;
+  let previous: { map: MellosMap; unicode: boolean; zoom: number; namedOverview: boolean; scene: Scene } | undefined;
   let frame: { scene: Scene; spinner: number; focus: string | undefined; color: boolean; built: ReturnType<typeof paint> } | undefined;
   return (map, opts, viewport) => {
     const zoom = opts.zoom ?? ZOOM_DEFAULT;
-    if (previous?.map !== map || previous.unicode !== opts.unicode || previous.zoom !== zoom) {
+    const namedOverview = opts.namedOverview === true;
+    if (previous?.map !== map || previous.unicode !== opts.unicode || previous.zoom !== zoom ||
+      previous.namedOverview !== namedOverview) {
       // Commit the cache only after preparation succeeds, so failures retry.
-      previous = { map, unicode: opts.unicode, zoom, scene: prepareScene(map, opts) };
+      previous = { map, unicode: opts.unicode, zoom, namedOverview, scene: prepareScene(map, opts) };
     }
     const scene = previous.scene;
     if (frame?.scene !== scene || frame.spinner !== opts.spinnerFrame || frame.focus !== opts.focus || frame.color !== opts.color) {
@@ -179,9 +202,13 @@ function prepareScene(map: MellosMap, opts: RenderOptions): Scene {
   // box each. Which map is drawn is decided here, once.
   const aggregated = plainGeo.mode === 'constellation' ? aggregateMap(oriented) : undefined;
   const drawn = aggregated ?? oriented;
+  // An auto-selected named overview must not silently become anonymous if a
+  // later snapshot removes its groups. This opt-in does not change manual zoom.
+  const namedOverview = plainGeo.mode === 'constellation' && opts.namedOverview === true;
   const unverified = unverifiedDoneIds(oriented, drawn);
   if (drawn.layers.length === 0) return { map: drawn, unverified };
-  return { map: drawn, unverified, geometry: prepareGeometry(drawn, opts, aggregated !== undefined ? AGGREGATE_GEO : plainGeo) };
+  return { map: drawn, unverified,
+    geometry: prepareGeometry(drawn, opts, aggregated !== undefined || namedOverview ? AGGREGATE_GEO : plainGeo) };
 }
 
 function prepareGeometry(

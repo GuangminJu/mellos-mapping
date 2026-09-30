@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { watcherArgs } from './watcher-command.mjs';
+import { tmuxSplitSize } from './pane-sizing.mjs';
 
 const SESSION_FORMAT = '#{session_id}\t#{session_attached}';
 const TARGET_FORMAT = '#{socket_path}\t#{session_id}\t#{session_created}\t#{session_attached}\t#{pane_id}\t#{pane_pid}';
@@ -78,12 +79,29 @@ export function createTmuxAdapter({ env = process.env, spawn = spawnSync, nodePa
   }
 
   function openPane(cfg, watchPath, mapFile, target) {
-    const placement = target.mode === 'window'
+    let size;
+    if (target.mode !== 'window') {
+      // Query only when creating a split: reuse must preserve the user's manual
+      // width, even when the remaining source pane is too narrow to split again.
+      const measured = run(['display-message', '-p', '-t', target.pane, '#{pane_width}'], target.socket);
+      if (!measured.ok) return measured;
+      const calculated = tmuxSplitSize(/^\d+$/.test(measured.value) ? Number(measured.value) : NaN, cfg.widthPercent);
+      if (!calculated.ok) return calculated;
+      size = calculated.value;
+    }
+    const placement = size === undefined
       ? ['new-window', '-n', 'mellos-mapping', '-t', `${target.session}:`]
-      : ['split-window', '-h', '-d', '-l', '42%', '-t', target.pane];
+      : ['split-window', '-h', '-d', '-l', String(size.cols), '-t', target.pane, '-P', '-F', '#{pane_width}'];
     const result = run([...placement, '-c', cfg.projectDir,
       nodePath, ...watcherArgs(cfg, watchPath, mapFile), '--owner', target.owner], target.socket);
-    return result.ok ? { ok: true, value: { ...target, reason: 'requested' } } : result;
+    if (!result.ok) return result;
+    if (size === undefined) return { ok: true, value: { ...target, reason: 'requested' } };
+    const appliedCols = /^\d+$/.test(result.value) ? Number(result.value) : NaN;
+    if (!Number.isSafeInteger(appliedCols) || appliedCols <= 0) {
+      return { ok: false, error: 'tmux opened the split but did not report its width; applied geometry is unverified.' };
+    }
+    return { ok: true, value: { ...target, reason: 'requested', widthPercent: size.widthPercent,
+      sourceCols: size.sourceCols, appliedCols, clamped: appliedCols !== size.requestedCols } };
   }
 
   return { kind: 'tmux', inspectSession, openPane, revealPane };

@@ -32,6 +32,7 @@
 import * as terminal from './terminal-session.mjs';
 import { createTmuxAdapter } from './tmux-session.mjs';
 import { watcherArgs } from './watcher-command.mjs';
+import { configuredWidthPercent } from './pane-sizing.mjs';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -50,7 +51,7 @@ export const WATCHER_BOOLEAN_FLAGS = ['--ascii', '--no-color', '--no-mouse', '--
 /** Watcher flags that consume the next argument as their value. */
 export const WATCHER_VALUE_FLAGS = ['--interval'];
 /** Flags a launcher consumes itself; they never reach the watcher. */
-export const PANE_FLAGS = ['--window', '--force'];
+export const PANE_FLAGS = ['--window', '--force', '--width-percent'];
 
 /** How the pane is placed: beside the conversation, or in its own window. */
 export const PANE_MODE = { split: 'split', window: 'window' };
@@ -192,7 +193,6 @@ export function paneCommand(cfg, watchPath, mapFile) {
 
 /** Explicitly requested independent window; default opens never fall back here. */
 export const DEDICATED_WINDOW_NAME = 'mellos-mapping';
-const SPLIT_SIZE = '0.42';
 
 /** Pure reuse rule: a live viewer belongs to a console, not just to a project. */
 export function selectPaneViewer(viewers, owners) {
@@ -227,6 +227,11 @@ export function revealPane(target, viewer, io = platformTerminal()) {
 
 /** Compose a verified target with the watcher payload. Never changes the requested mode. */
 export function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
+  const width = configuredWidthPercent(cfg.widthPercent);
+  if (!width.ok) return width;
+  if (target.mode === PANE_MODE.window && cfg.widthPercent !== undefined) {
+    return { ok: false, error: 'width percent applies only to a new split, not a separate window' };
+  }
   if (io.kind === 'tmux') return io.openPane(cfg, watchPath, mapFile, target);
   const payload = [...paneCommand(cfg, watchPath, mapFile), '--owner', target.owner];
   if (target.mode === PANE_MODE.window) {
@@ -236,10 +241,10 @@ export function placePane(cfg, watchPath, mapFile, target, io = platformTerminal
   const focused = io.focusSession(target.hwnd);
   if (!focused.ok) return focused;
   const opened = io.openWt([
-    '-w', '0', 'sp', '-V', '--size', SPLIT_SIZE, ...payload,
+    '-w', '0', 'sp', '-V', '--size', String(width.value / 100), ...payload,
     ';', 'move-focus', 'previous',
   ], 'split the session window');
-  return opened.ok ? { ok: true, value: target } : opened;
+  return opened.ok ? { ok: true, value: { ...target, widthPercent: width.value } } : opened;
 }
 
 /** Wait for the newly launched, correctly bound watcher rather than an older window. */

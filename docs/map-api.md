@@ -5,6 +5,23 @@ Maps survive process restarts and new conversations. Begin with `mmap_read
 records. A conversation is not a page identity. `mmap_view` remains the visual
 representation; `mmap_read` is the editable data contract.
 
+## Open a terminal split
+
+`mmap_open {page: "payments", widthPercent: 35}` opens a map beside its owning
+terminal conversation. `widthPercent` is optional, accepts integers 25–60,
+and defaults to 42. It only controls a new `surface: "terminal"` split (the
+default surface); other surfaces and `window: true` reject it. An existing
+pane is reused or retargeted without resizing, including after a manual resize.
+
+tmux uses the selected source pane width, reserving at least 60 conversation
+columns, 30 map columns, and one divider. New splits require 91 source columns;
+otherwise the launcher returns a reason and a copyable watcher command rather
+than opening a different window. A successful new-split receipt reports the
+requested `widthPercent`, original `sourceCols`, actual tmux `appliedCols`, and
+whether the request was `clamped`. Windows Terminal receives the validated
+percentage but does not report measured columns. CLI equivalents accept
+`--width-percent 35`; the watcher itself does not consume this launcher option.
+
 ## Read
 
 `mmap_read` returns JSON text and the same object in `structuredContent`:
