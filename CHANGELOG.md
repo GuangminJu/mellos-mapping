@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.28.0
+
+- Open the map pane beside the conversation in Pebrel. When `PEBREL_CLI` and
+  `PEBREL_PANE_ID` are present outside tmux, `mmap_open` and `mmap` split the
+  conversation's own pane through `pebrel ctl`, type the watcher in the new
+  pane's shell (PowerShell, cmd or a POSIX shell), hand focus back and size
+  the map to 42%; `--window` opens a separate Pebrel window. Reuse and reveal
+  find the live watcher by process tree (`scripts/pebrel-session.mjs`).
+- The watcher closes the shell command that launched it (OSC 133 D), so a
+  terminal with shell integration no longer counts the map pane as a running
+  task. In Pebrel, the conversation's tab can show finished again.
+- The watcher titles its pane `mellos map · <page>` (OSC 2) in every terminal.
+
 ## 0.27.1
 
 - Show the release version at the left of the map pane's separator row, in
