@@ -208,6 +208,8 @@ async function main() {
   const where =
     placed.value.backend === 'tmux'
       ? (placed.value.mode === PANE_MODE.window ? 'in a new tmux window' : 'beside this terminal (tmux split)')
+      : placed.value.backend === 'pebrel'
+      ? (placed.value.mode === PANE_MODE.window ? 'in a new Pebrel window' : 'beside this terminal (Pebrel split)')
       : placed.value.mode === PANE_MODE.window
       ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})`
       : 'beside this terminal (vertical split)';
