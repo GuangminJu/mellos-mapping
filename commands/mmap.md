@@ -104,7 +104,12 @@ Follow the platform-appropriate route:
    also set `MELLOS_MAPPING_TMUX_SOCKET` to its absolute path, then restart the
    MCP server. Do not guess a session or open a detached window.
 
-3. **Neither**: print the watcher command and tell the user to run it in any
+3. **Pebrel** (`PEBREL_CLI` set and not inside tmux): use the same `mmap_open`
+   tool or launcher command as route 1. It splits the Pebrel pane hosting this
+   conversation, returns input focus to it and types the watcher into the new
+   pane's shell; `--window` opens a new Pebrel window.
+
+4. **None of these**: print the watcher command and tell the user to run it in any
    second terminal themselves (add `--ascii` if their font lacks box-drawing
    characters). The launcher's own failure message quotes it in full, with
    absolute paths — relay that one verbatim. Written by hand it is

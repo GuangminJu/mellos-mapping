@@ -7,6 +7,13 @@ const CLEAR_SCREEN = '\x1b[H\x1b[2J';
 const MOUSE_ON = '\x1b[?1003h\x1b[?1006h';
 const MOUSE_OFF = '\x1b[?1003l\x1b[?1006l';
 const RESET = '\x1b[0m';
+/**
+ * Terminals with shell integration (Pebrel's sidebar among them) count the
+ * command that started this viewer as running until it ends, and a tab shows
+ * its busiest pane. The map is a resident viewer, not a task: it closes that
+ * command at once so a conversation sharing its tab can still show finished.
+ */
+const COMMAND_DONE = '\x1b]133;D;0\x07';
 
 export function terminalRestoreSequence(mouseActive: boolean, alternateScreen = false): string {
   return (mouseActive ? MOUSE_OFF : '') + RESET + (alternateScreen ? LEAVE_SCREEN : '') + SHOW_CURSOR +
@@ -28,7 +35,7 @@ export function openTerminalSession(options: {
 }): { close(): void } {
   const { interactive, write } = options;
   const mouseActive = interactive && options.mouse;
-  write((interactive ? ENTER_SCREEN : '') + HIDE_CURSOR + CLEAR_SCREEN + (mouseActive ? MOUSE_ON : ''));
+  write((interactive ? COMMAND_DONE + ENTER_SCREEN : '') + HIDE_CURSOR + CLEAR_SCREEN + (mouseActive ? MOUSE_ON : ''));
   const timer = mouseActive ? setInterval(() => write(HIDE_CURSOR + MOUSE_ON), 1000) : undefined;
   timer?.unref();
   let closed = false;

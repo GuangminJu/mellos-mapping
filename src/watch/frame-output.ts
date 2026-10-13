@@ -2,12 +2,14 @@
 export interface TerminalFrame {
   readonly columns: number;
   readonly rows: readonly string[];
+  /** The pane title: one line without control characters. */
+  readonly title: string;
 }
 
 /** Row updates avoid splitting ANSI sequences or the halves of wide glyphs. */
 export function frameDifference(previous: TerminalFrame | undefined, next: TerminalFrame): string {
   const compatible = previous?.columns === next.columns;
-  let output = '';
+  let output = previous?.title === next.title ? '' : `\x1b]2;${next.title}\x07`;
   for (let row = 0; row < Math.max(next.rows.length, previous?.rows.length ?? 0); row++) {
     const text = next.rows[row] ?? '';
     if (compatible && text === previous?.rows[row]) continue;

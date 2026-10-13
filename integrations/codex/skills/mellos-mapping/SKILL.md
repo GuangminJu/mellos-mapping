@@ -119,8 +119,8 @@ then reopen. A service without web-terminal support is upgraded on next open.
   replace the terminal or document just because another surface exists.
 - **Codex CLI:** Without a desktop panel tool, run the watcher in an available
   interactive terminal/split. `mmap_open {surface: "terminal", page}` supports
-  Windows Terminal and Linux/macOS tmux, including discovery of a single attached
-  session when `TMUX` is missing. If it fails, relay the reason and copyable
+  Windows Terminal, Linux/macOS tmux and Pebrel, including discovery of a single
+  attached tmux session when `TMUX` is missing. If it fails, relay the reason and copyable
   command; retry only after the environment changes or the user asks.
   `mmap_view` is always available as text, but text is not proof of an open viewer.
 

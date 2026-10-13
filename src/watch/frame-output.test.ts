@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFrameOutput, frameDifference, type TerminalFrame } from './frame-output.js';
 
-const frame = (...rows: string[]): TerminalFrame => ({ columns: 80, rows });
+const frame = (...rows: string[]): TerminalFrame => ({ columns: 80, rows, title: 'mellos map' });
 afterEach(() => vi.useRealTimers());
 
 describe('terminal frame output', () => {
@@ -14,6 +14,13 @@ describe('terminal frame output', () => {
     expect(diff).toContain('\x1b[3;1H\x1b[0m\x1b[K');
     expect(frameDifference(after, after)).toBe('');
     expect(frameDifference(after, { ...after, columns: 60 })).toContain('unchanged');
+  });
+
+  it('names the pane once per title and again in every full picture', () => {
+    const named = frame('map');
+    expect(frameDifference(undefined, named)).toMatch(/^\x1b\]2;mellos map\x07/);
+    expect(frameDifference(named, frame('moved'))).not.toContain('\x1b]2;');
+    expect(frameDifference(named, { ...named, title: 'mellos map · api' })).toBe('\x1b]2;mellos map · api\x07');
   });
 
   it('drops superseded pictures under backpressure, retaining the final state', () => {

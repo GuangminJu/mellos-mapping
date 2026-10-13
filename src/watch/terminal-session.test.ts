@@ -4,6 +4,12 @@ import { openTerminalSession } from './terminal-session.js';
 afterEach(() => vi.useRealTimers());
 
 describe('embedded terminal session', () => {
+  it('ends the shell command that launched it before taking the screen, so the pane never reads as busy', () => {
+    const write = vi.fn();
+    openTerminalSession({ interactive: true, mouse: false, write }).close();
+    expect(write.mock.calls[0]?.[0]).toMatch(/^\x1b\]133;D;0\x07\x1b\[\?1049h/);
+  });
+
   it('restores mouse reporting after the startup output is lost, even without a new frame', () => {
     vi.useFakeTimers();
     const write = vi.fn();

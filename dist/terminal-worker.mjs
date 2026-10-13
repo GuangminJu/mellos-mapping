@@ -2213,13 +2213,14 @@ var CLEAR_SCREEN = "\x1B[H\x1B[2J";
 var MOUSE_ON = "\x1B[?1003h\x1B[?1006h";
 var MOUSE_OFF = "\x1B[?1003l\x1B[?1006l";
 var RESET = "\x1B[0m";
+var COMMAND_DONE = "\x1B]133;D;0\x07";
 function terminalRestoreSequence(mouseActive, alternateScreen = false) {
   return (mouseActive ? MOUSE_OFF : "") + RESET + (alternateScreen ? LEAVE_SCREEN : "") + SHOW_CURSOR + (alternateScreen ? "" : "\n");
 }
 function openTerminalSession(options) {
   const { interactive, write } = options;
   const mouseActive = interactive && options.mouse;
-  write((interactive ? ENTER_SCREEN : "") + HIDE_CURSOR + CLEAR_SCREEN + (mouseActive ? MOUSE_ON : ""));
+  write((interactive ? COMMAND_DONE + ENTER_SCREEN : "") + HIDE_CURSOR + CLEAR_SCREEN + (mouseActive ? MOUSE_ON : ""));
   const timer = mouseActive ? setInterval(() => write(HIDE_CURSOR + MOUSE_ON), 1e3) : void 0;
   timer?.unref();
   let closed = false;
@@ -2236,7 +2237,7 @@ function openTerminalSession(options) {
 // src/watch/frame-output.ts
 function frameDifference(previous, next) {
   const compatible = previous?.columns === next.columns;
-  let output2 = "";
+  let output2 = previous?.title === next.title ? "" : `\x1B]2;${next.title}\x07`;
   for (let row = 0; row < Math.max(next.rows.length, previous?.rows.length ?? 0); row++) {
     const text = next.rows[row] ?? "";
     if (compatible && text === previous?.rows[row]) continue;
@@ -2565,6 +2566,7 @@ var CONFIRM_WINDOW_MS = 3e3;
 var FALLBACK_COLUMNS = 100;
 var FALLBACK_ROWS = 30;
 var DEFAULT_PAGE_TAB_LABEL = "main";
+var PANE_TITLE = "mellos map";
 function usableColumns(cols) {
   return Math.max(1, cols - 1);
 }
@@ -2767,7 +2769,7 @@ function mapPanel(map, unicode, width, rows = PANEL_CONTENT_ROWS) {
   const parts = [`${map.layers.length} layers`, `${map.nodes.length} nodes`, `${map.edges.length} edges`];
   if (map.lanes.length > 0) parts.push(`${map.lanes.length} lanes`);
   const lines = [
-    { text: fitWidth(map.title ?? "mellos map", width), sgr: "1" },
+    { text: fitWidth(map.title ?? PANE_TITLE, width), sgr: "1" },
     { text: fitWidth(parts.join(" \xB7 "), width), sgr: "90" },
     // documentation kinds document structure, not progress
     { text: fitWidth(isNeutralKind(map) ? `${map.kind} diagram` : counts, width), sgr: isNeutralKind(map) ? "90" : "" },
@@ -2826,11 +2828,12 @@ function runWatcher(cfg, io = nativeWatcherIO()) {
   const viewWidth = () => usableColumns(io.output.columns ?? FALLBACK_COLUMNS);
   const viewHeight = () => Math.max(1, (io.output.rows ?? FALLBACK_ROWS) - (1 + panelContentRows) - 1 - tabRows());
   const dividerY = () => tabRows() + viewHeight() + 1;
+  const pageTitleOf = (file) => mapOf(entryOf(pane, file))?.title ?? (pageIdOfFile(cfg.file, file) ?? DEFAULT_PAGE_TAB_LABEL);
   const pageTabsOf = (files) => files.map((f) => {
     const entry = entryOf(pane, f);
     const m = mapOf(entry);
     return {
-      title: m?.title ?? (pageIdOfFile(cfg.file, f) ?? DEFAULT_PAGE_TAB_LABEL),
+      title: pageTitleOf(f),
       status: m !== void 0 ? mapStatus(m) : "planned",
       active: f === pane.activeFile,
       fresh: entry?.fresh ?? false,
@@ -3033,7 +3036,8 @@ the map pane stopped: ${e instanceof Error ? e.stack ?? e.message : String(e)}
       footer
     ];
     if (frameOutput !== void 0) {
-      frameOutput.present({ columns: cols, rows });
+      const title = pane.activeFile === void 0 ? PANE_TITLE : `${PANE_TITLE} \xB7 ${pageTitleOf(pane.activeFile)}`;
+      frameOutput.present({ columns: cols, rows, title });
     } else {
       const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join("\n");
       if (frame !== lastFrame) {

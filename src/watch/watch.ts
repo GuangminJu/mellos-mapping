@@ -401,6 +401,8 @@ const FALLBACK_ROWS = 30;
  */
 const DEFAULT_PAGE_TAB_LABEL = 'main';
 
+const PANE_TITLE = 'mellos map';
+
 /**
  * Usable frame width: one column narrower than the terminal. A glyph written
  * into the terminal's LAST column arms deferred autowrap; the ERASE_LINE_END
@@ -861,7 +863,7 @@ export function mapPanel(
   const parts = [`${map.layers.length} layers`, `${map.nodes.length} nodes`, `${map.edges.length} edges`];
   if (map.lanes.length > 0) parts.push(`${map.lanes.length} lanes`);
   const lines: PanelLine[] = [
-    { text: fitWidth(map.title ?? 'mellos map', width), sgr: '1' },
+    { text: fitWidth(map.title ?? PANE_TITLE, width), sgr: '1' },
     { text: fitWidth(parts.join(' · '), width), sgr: '90' },
     // documentation kinds document structure, not progress
     { text: fitWidth(isNeutralKind(map) ? `${map.kind} diagram` : counts, width), sgr: isNeutralKind(map) ? '90' : '' },
@@ -992,13 +994,16 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
   /** Terminal row (1-based) of the map/panel separator — the draggable divider. */
   const dividerY = (): number => tabRows() + viewHeight() + 1;
 
+  const pageTitleOf = (file: string): string =>
+    mapOf(entryOf(pane, file))?.title ?? ((pageIdOfFile(cfg.file, file) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL);
+
   /** The tab strip's view models for `files`, in tab order. */
   const pageTabsOf = (files: readonly string[]): PageTab[] =>
     files.map((f) => {
       const entry = entryOf(pane, f);
       const m = mapOf(entry);
       return {
-        title: m?.title ?? ((pageIdOfFile(cfg.file, f) as string | undefined) ?? DEFAULT_PAGE_TAB_LABEL),
+        title: pageTitleOf(f),
         status: m !== undefined ? mapStatus(m) : 'planned',
         active: f === pane.activeFile,
         fresh: entry?.fresh ?? false,
@@ -1278,7 +1283,8 @@ export function runWatcher(cfg: WatchConfig, io: WatcherIO = nativeWatcherIO()):
       ...panelRows, footer,
     ];
     if (frameOutput !== undefined) {
-      frameOutput.present({ columns: cols, rows });
+      const title = pane.activeFile === undefined ? PANE_TITLE : `${PANE_TITLE} · ${pageTitleOf(pane.activeFile)}`;
+      frameOutput.present({ columns: cols, rows, title });
     } else {
       const frame = HOME + rows.map((row) => row + ERASE_LINE_END).join('\n');
       if (frame !== lastFrame) {
