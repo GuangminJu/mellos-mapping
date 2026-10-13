@@ -79,7 +79,7 @@ describe('a pane belongs beside its own session', () => {
   const session = { owners: ['split-11-22'], owner: 'split-11-22', hwnd: '333' };
   const viewer = { pid: 44, owner: session.owner, page: 'design', follow: true };
   const source = (viewers) => ({ readLiveViewers: () => viewers });
-  const probe = { inspectSession: () => ({ ok: true, value: session }) };
+  const probe = { kind: 'wt', inspectSession: () => ({ ok: true, value: session }) };
 
   it('ignores a separate window, legacy viewer and another session on the same project', () => {
     const elsewhere = [{ ...viewer, owner: 'window' }, { ...viewer, owner: undefined }, { ...viewer, owner: 'split-55-66' }];
@@ -89,23 +89,24 @@ describe('a pane belongs beside its own session', () => {
   });
 
   it('reuses an owned pane even while its source tab is inactive', () => {
-    const inactive = { inspectSession: () => ({ ok: true, value: { owners: session.owners } }) };
+    const inactive = { kind: 'wt', inspectSession: () => ({ ok: true, value: { owners: session.owners } }) };
     expect(preparePane(cfg, source([viewer]), 'map', inactive).value.viewer).toEqual(viewer);
     expect(preparePane({ ...cfg, force: true }, source([viewer]), 'map', inactive).ok).toBe(false);
   });
 
   it('requires the source window to be identified before creating a split', () => {
-    const unknown = { inspectSession: () => ({ ok: true, value: { owners: [] } }) };
+    const unknown = { kind: 'wt', inspectSession: () => ({ ok: true, value: { owners: [] } }) };
     const result = preparePane(cfg, source([{ ...viewer, owner: 'window' }]), 'map', unknown);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('no separate window was opened');
   });
 
   it('opens a separate window only when explicitly requested', () => {
-    const context = preparePane({ ...cfg, mode: 'window' }, source([viewer]), 'map', {}).value;
+    const context = preparePane({ ...cfg, mode: 'window' }, source([viewer]), 'map', { kind: 'wt' }).value;
     expect(context.viewer).toBeUndefined();
     const calls = [];
     const result = placePane(cfg, 'watch', 'map', context.target, {
+      kind: 'wt',
       openWt: (args) => { calls.push(args); return { ok: true }; },
     });
     expect(result.ok).toBe(true);
@@ -114,6 +115,7 @@ describe('a pane belongs beside its own session', () => {
 
   it('does not launch anything if Windows denies focus', () => {
     const result = placePane(cfg, 'watch', 'map', { ...session, mode: 'split' }, {
+      kind: 'wt',
       focusSession: () => ({ ok: false, error: 'focus denied' }),
       openWt: () => { throw new Error('must not open a fallback'); },
     });
@@ -123,6 +125,7 @@ describe('a pane belongs beside its own session', () => {
   it('preserves project, page and owner, splits vertically, then restores left input focus', () => {
     const calls = [];
     const result = placePane(cfg, 'C:\\插件\\watch.mjs', 'C:\\项目 folder\\map', { ...session, mode: 'split' }, {
+      kind: 'wt',
       focusSession: (hwnd) => { expect(hwnd).toBe('333'); return { ok: true }; },
       openWt: (args) => { calls.push(args); return { ok: true }; },
     });

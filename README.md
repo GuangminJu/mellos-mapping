@@ -337,8 +337,8 @@ get the eight `mmap_*` tools and the pane, and bring their own prompting.
    opens or retargets the pane with `mmap_open` when nobody is — you never
    have to remember to. Open or close it yourself with `mmap` in any
    terminal, or `/mellos-mapping:mmap` in the conversation (Windows
-   Terminal split on Windows, tmux split inside tmux, or a printed command
-   to run in any second terminal). On Windows the pane opens in the terminal
+   Terminal split on Windows, tmux split inside tmux, a Pebrel split inside
+   Pebrel, or a printed command to run in any second terminal). On Windows the pane opens in the terminal
    window hosting YOUR session, even with several windows open; pass
    `--window` to put the map in its own dedicated window instead. Prefer
    `--ascii` if your font lacks box-drawing glyphs.
@@ -358,6 +358,13 @@ the environment of the MCP server (restart it after changing them):
 | --- | --- |
 | `MELLOS_MAPPING_TMUX_TARGET` | Explicit tmux session or pane, such as `work:2.1` or `%7` |
 | `MELLOS_MAPPING_TMUX_SOCKET` | Absolute socket path, for example `/tmp/my-tmux/socket` |
+
+Inside [Pebrel](https://github.com/Kuddev/pebrel), `mmap_open` and `mmap` split the pane that hosts
+the conversation through Pebrel's runtime CLI (`PEBREL_CLI`). The launcher
+confirms which window that pane is in from its process tree, returns input focus
+to the conversation and types the watcher into the new pane's shell (PowerShell,
+cmd or a POSIX shell), which exits with it so the pane closes with the map.
+`--window` opens a new Pebrel window. Inside tmux, tmux owns the split.
 
 Ambiguous sessions, detached sessions and missing tmux produce a concrete error
 and a fully quoted watcher command, including the project and requested page,

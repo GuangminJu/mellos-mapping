@@ -30,6 +30,7 @@
  * Pure helpers are exported for the spec; nothing here runs on import.
  */
 import * as terminal from './terminal-session.mjs';
+import { createPebrelAdapter, hostedByPebrel } from './pebrel-session.mjs';
 import { createTmuxAdapter } from './tmux-session.mjs';
 import { watcherArgs } from './watcher-command.mjs';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -199,18 +200,23 @@ export function selectPaneViewer(viewers, owners) {
   return viewers.find((viewer) => viewer.owner !== undefined && owners.includes(viewer.owner));
 }
 
-const platformTerminal = () => process.platform === 'win32' ? terminal : createTmuxAdapter();
+/**
+ * Windows Terminal is composed here from its probe and `wt`; every other
+ * backend is an adapter that places and reveals its own panes.
+ */
+const platformTerminal = () => hostedByPebrel(process.env) ? createPebrelAdapter()
+  : process.platform === 'win32' ? terminal : createTmuxAdapter();
 
 /** Resolve identity before deciding whether to reuse, open or toggle. */
 export function preparePane(cfg, store, mapFile, io = platformTerminal()) {
   const viewers = store.readLiveViewers(mapFile, Date.now());
-  const inspected = io.kind === 'tmux' ? io.inspectSession(cfg, viewers) : cfg.mode === PANE_MODE.window
+  const inspected = io.kind !== 'wt' ? io.inspectSession(cfg, viewers) : cfg.mode === PANE_MODE.window
     ? { ok: true, value: { owners: ['window'], owner: 'window' } }
     : io.inspectSession();
   if (!inspected.ok) return inspected;
   const session = inspected.value;
   const viewer = selectPaneViewer(viewers, session.owners);
-  if (io.kind !== 'tmux' && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
+  if (io.kind === 'wt' && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
     return { ok: false, error: 'Could not identify this conversation’s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window.' };
   }
   return { ok: true, value: {
@@ -222,12 +228,12 @@ export function preparePane(cfg, store, mapFile, io = platformTerminal()) {
 
 /** A process heartbeat alone cannot establish that its pane is on screen. */
 export function revealPane(target, viewer, io = platformTerminal()) {
-  return io.kind === 'tmux' ? io.revealPane(target, viewer) : { ok: true, value: 'unverified' };
+  return io.kind !== 'wt' ? io.revealPane(target, viewer) : { ok: true, value: 'unverified' };
 }
 
 /** Compose a verified target with the watcher payload. Never changes the requested mode. */
 export function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
-  if (io.kind === 'tmux') return io.openPane(cfg, watchPath, mapFile, target);
+  if (io.kind !== 'wt') return io.openPane(cfg, watchPath, mapFile, target);
   const payload = [...paneCommand(cfg, watchPath, mapFile), '--owner', target.owner];
   if (target.mode === PANE_MODE.window) {
     const opened = io.openWt(['-w', DEDICATED_WINDOW_NAME, 'nt', ...payload], 'open the requested window');

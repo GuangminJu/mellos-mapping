@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Open the live map pane in the owning Windows Terminal or tmux session — the AGENT's
+ * Open the live map pane in the owning Windows Terminal, tmux or Pebrel session — the AGENT's
  * launcher, addressed by `/mmap` and by the skill.
  *
  *   node scripts/open-pane.mjs <project-dir> [--page <slug>] [--window] [--force]
@@ -151,6 +151,10 @@ async function main() {
     console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=tmux session=${placed.value.session} visibility=${visible.value}`);
     console.log(placed.value.mode === PANE_MODE.window
       ? 'Map opened in a new tmux window.' : 'Map opened beside this conversation (tmux split).');
+  } else if (placed.value.backend === 'pebrel') {
+    console.log(`MMAP_PANE mode=${placed.value.mode} pid=${reported.value.pid} backend=pebrel window=${placed.value.opened.window} pane=${placed.value.opened.pane} visibility=${visible.value}`);
+    console.log(placed.value.mode === PANE_MODE.window
+      ? 'Map opened in a new Pebrel window.' : 'Map opened beside this conversation (Pebrel split).');
   } else if (placed.value.mode === PANE_MODE.window) {
     console.log(`MMAP_PANE mode=window pid=${reported.value.pid} name=${DEDICATED_WINDOW_NAME} reason=${placed.value.reason}`);
     console.log(`Map opened in the dedicated "${DEDICATED_WINDOW_NAME}" window.`);

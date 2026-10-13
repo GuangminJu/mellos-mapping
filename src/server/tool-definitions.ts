@@ -446,13 +446,13 @@ export function openTool() {
         'ask for one. It never closes a pane: taking the map off the screen belongs to the user ' +
         '(the `q` key in the pane, or typing `mmap` in a terminal). The reply says whether a ' +
         'pane actually reported itself in afterwards, not merely that a command was run. ' +
-        'Automatic terminal opening supports Windows Terminal and tmux on Linux/macOS. ' +
+        'Automatic terminal opening supports Windows Terminal, tmux on Linux/macOS, and Pebrel, which splits the conversation\'s own pane. ' +
         'omp (Oh My Pi) has no side panel of its own: there the routes are this same terminal pane ' +
         '(a Windows Terminal split, or a tmux split on Linux/macOS) and the web viewer, whose URL ' +
         'the session opens with its own browser tool. ' +
         'If opening fails, relay the reason and copyable command; retry only after the environment changes or the user asks.',
       inputSchema: closed({
-        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web', 'web-terminal']).optional().describe('web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal or tmux launcher (default)'),
+        surface: z.enum(['terminal', 'codex-terminal', 'markdown', 'web', 'web-terminal']).optional().describe('web-terminal = automatically started mmap terminal in a local browser page; codex-terminal = prepare a command for the desktop host terminal; web = local browser viewer; markdown = MD/SVG; terminal = Windows Terminal, tmux or Pebrel launcher (default)'),
         page: id(
           'page to show first — the page THIS effort lives on, the same slug you pass to the ' +
             'other tools. Omit only for the default page: without it a fresh pane opens on ' +

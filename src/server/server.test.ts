@@ -927,7 +927,7 @@ describe('mmap_open — the assistant putting the map on screen', () => {
   it('requires explicit launcher visibility evidence instead of inferring it from a heartbeat', () => {
     const viewers = [{ pid: 1, page: 'effort' as PageId, follow: true, ageMs: 10 }];
     expect(openOutcome({ ok: true, output: 'MMAP_PANE pid=1' }, viewers, 'effort')).toContain('visibility is not confirmed');
-    expect(openOutcome({ ok: true, output: 'MMAP_PANE pid=1 visibility=visible' }, viewers, 'effort')).toContain('window is active');
+    expect(openOutcome({ ok: true, output: 'MMAP_PANE pid=1 visibility=visible' }, viewers, 'effort')).toContain('verified the terminal shows its pane');
   });
 
   it('a pane that came up elsewhere is not reported as showing the page', () => {

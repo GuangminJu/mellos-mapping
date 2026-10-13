@@ -310,8 +310,8 @@ npx -y -p mellos-mapping mellos-mapping-watch
    （见[谁在看](#谁在看)）；没人看的时候，Claude 用 `mmap_open` 自己
    把面板开出来或切到该看的那一页——你不需要记着去开它。想自己开关，
    在任意终端敲 `mmap`，或者在对话里用 `/mellos-mapping:mmap`
-   （Windows 上是 Windows Terminal 分屏，tmux 里是 tmux 分屏，其他
-   环境会打印一条命令让你在第二个终端里运行）。Windows 上即使开着多个
+   （Windows 上是 Windows Terminal 分屏，tmux 里是 tmux 分屏，Pebrel 里
+   是 Pebrel 分屏，其他环境会打印一条命令让你在第二个终端里运行）。Windows 上即使开着多个
    终端窗口，分屏也会落在**你的会话所在的窗口**；想让地图独占一个窗口
    就加 `--window`。字体缺少制表符字形时用 `--ascii`。
 3. 看着节点从底部一路亮起。图让你不安的时候就打断它——这正是它存在的
@@ -329,6 +329,12 @@ tmux 服务中唯一已连接的会话。默认在右侧分屏并保留输入焦
 | --- | --- |
 | `MELLOS_MAPPING_TMUX_TARGET` | 指定 tmux 会话或面板，例如 `work:2.1` 或 `%7` |
 | `MELLOS_MAPPING_TMUX_SOCKET` | socket 的绝对路径，例如 `/tmp/my-tmux/socket` |
+
+在 [Pebrel](https://github.com/Kuddev/pebrel) 里，`mmap_open` 与 `mmap` 通过 Pebrel 运行时 CLI
+（`PEBREL_CLI`）分屏承载本会话的面板。启动器用进程树确认该面板所在的窗口，
+把输入焦点还给对话，再把 watcher 命令输入新面板的 shell（PowerShell、cmd
+或 POSIX shell）；shell 随 watcher 一起退出，地图关闭时面板也随之关闭。
+`--window` 会新开一个 Pebrel 窗口。在 tmux 里则由 tmux 负责分屏。
 
 目标不明确、会话未连接或没有安装 tmux 时，启动器会返回具体原因，以及
 包含项目、页面和正确引号的一条完整 watcher 命令，可以粘贴到可见终端。

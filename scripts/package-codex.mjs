@@ -32,6 +32,7 @@ export const CODEX_FILES = [
   'scripts/mmap.mjs',
   'scripts/open-pane.mjs',
   'scripts/pane-core.mjs',
+  'scripts/pebrel-session.mjs',
   'scripts/terminal-session.mjs',
   'scripts/tmux-session.mjs',
   'scripts/watcher-command.mjs',

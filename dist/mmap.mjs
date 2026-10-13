@@ -15,8 +15,11 @@ function watcherArgs(cfg, watchPath, mapFile) {
   if (cfg.pageSlug !== void 0) args.push("--page", cfg.pageSlug);
   return args;
 }
+function posixQuote(arg) {
+  return "'" + arg.replaceAll("'", `'"'"'`) + "'";
+}
 function manualWatcherCommand(cfg, watchPath, mapFile, nodePath = process.execPath) {
-  return [nodePath, ...watcherArgs(cfg, watchPath, mapFile)].map((arg) => "'" + arg.replaceAll("'", `'"'"'`) + "'").join(" ");
+  return [nodePath, ...watcherArgs(cfg, watchPath, mapFile)].map(posixQuote).join(" ");
 }
 function paneFailureMessage(error, cfg, watchPath, mapFile, platform = process.platform) {
   return platform === "win32" ? error : `${error}
@@ -29,11 +32,13 @@ var terminal_session_exports = {};
 __export(terminal_session_exports, {
   focusSession: () => focusSession,
   inspectSession: () => inspectSession,
+  kind: () => kind,
   openWt: () => openWt,
   parseSessionProbe: () => parseSessionProbe,
   sessionProbeScript: () => sessionProbeScript
 });
 import { spawnSync } from "node:child_process";
+var kind = "wt";
 var NATIVE = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -158,13 +163,144 @@ function openWt(args, what) {
   return result.status === 0 ? { ok: true, value: void 0 } : { ok: false, error: `wt failed to ${what} (${result.error?.message ?? `exit ${result.status}`}).` };
 }
 
-// scripts/tmux-session.mjs
+// scripts/pebrel-session.mjs
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { createHash } from "node:crypto";
+var CTL_TIMEOUT_MS = 1e4;
+var SPLIT_RATIO = "0.42";
+var TERMINAL_TAB_KINDS = ["shell", "profile"];
+function hostedByPebrel(env) {
+  return Boolean(env.PEBREL_CLI && env.PEBREL_PANE_ID) && !env.TMUX;
+}
+function shellCommandLine(executable, argv) {
+  const shell = executable.toLowerCase().replace(/\.exe$/, "");
+  switch (shell) {
+    case "pwsh":
+    case "powershell":
+      return { ok: true, value: `& ${argv.map(powershellQuote).join(" ")}; exit` };
+    case "cmd":
+      return argv.some((arg) => /["%]/.test(arg)) ? { ok: false, error: 'cmd cannot quote a path containing " or %; no pane was kept.' } : { ok: true, value: `${argv.map((arg) => `"${arg}"`).join(" ")} & exit` };
+    case "sh":
+    case "bash":
+    case "zsh":
+    case "dash":
+    case "ksh":
+      return { ok: true, value: `exec ${argv.map(posixQuote).join(" ")}` };
+    default:
+      return { ok: false, error: `The new Pebrel pane runs ${executable}; the map starts only from PowerShell, cmd or a POSIX shell. No pane was kept.` };
+  }
+}
+function powershellQuote(arg) {
+  return `'${arg.replace(/['‘’‚‛]/g, "$&$&")}'`;
+}
+function createPebrelAdapter({ env = process.env, spawn = spawnSync2, nodePath = process.execPath, pid = process.pid } = {}) {
+  function ctl(command, ...args) {
+    const result = spawn(env.PEBREL_CLI, ["ctl", command, ...args.map(String)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: CTL_TIMEOUT_MS,
+      windowsHide: true
+    });
+    const reply = parseReply(result.stdout);
+    return reply?.ok === true ? { ok: true, value: reply.result } : { ok: false, error: `pebrel ctl ${command} failed: ${reply?.error?.message ?? result.error?.message ?? (result.stderr?.trim() || `exit ${result.status}`)}` };
+  }
+  function hosts(window, pane, processId) {
+    const tree = ctl("procs", "--window", window, "--pane", pane);
+    return tree.ok ? { ok: true, value: tree.value.processes.some((item) => item.pid === processId) } : tree;
+  }
+  function inspectSession2(cfg) {
+    const snapshot = ctl("snapshot");
+    if (!snapshot.ok) return snapshot;
+    const pane = Number(env.PEBREL_PANE_ID);
+    for (const window of snapshot.value.windows) {
+      if (!window.tabs.some((tab) => tab.panes.some((item) => item.id === pane))) continue;
+      const ours = hosts(window.id, pane, pid);
+      if (!ours.ok) return ours;
+      if (!ours.value) continue;
+      const identity = [snapshot.value.process_id, cfg.mode, cfg.mode === "window" ? "" : `${window.id}:${pane}`];
+      const owner = `pebrel-${createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24)}`;
+      return { ok: true, value: { backend: "pebrel", window: window.id, pane, owner, owners: [owner] } };
+    }
+    return { ok: false, error: `This process is not running inside Pebrel pane ${env.PEBREL_PANE_ID}; no pane was opened.` };
+  }
+  function createPane(target) {
+    if (target.mode === "window") return ctl("new-window");
+    const split = ctl("split", "--window", target.window, "--pane", target.pane, "--direction", "right");
+    if (!split.ok) return split;
+    const created = split.value.action;
+    const focused = ctl("focus", "--window", target.window, "--pane", target.pane);
+    const resized = focused.ok ? ctl("resize-pane", "--window", created.window_id, "--pane", created.pane_id, "--ratio", SPLIT_RATIO) : focused;
+    if (resized.ok) return split;
+    ctl("close-pane", "--window", created.window_id, "--pane", created.pane_id);
+    return resized;
+  }
+  function startWatcher(cfg, watchPath, mapFile, target, created) {
+    const tree = ctl("procs", "--window", created.window_id, "--pane", created.pane_id);
+    if (!tree.ok) return tree;
+    const shell = tree.value.processes.find((item) => item.depth === 0)?.executable ?? "no shell";
+    const line = shellCommandLine(shell, [nodePath, ...watcherArgs(cfg, watchPath, mapFile), "--owner", target.owner]);
+    return line.ok ? ctl("prompt", "--window", created.window_id, "--pane", created.pane_id, "--text", line.value) : line;
+  }
+  function openPane(cfg, watchPath, mapFile, target) {
+    const created = createPane(target);
+    if (!created.ok) return created;
+    const pane = created.value.action;
+    const started = startWatcher(cfg, watchPath, mapFile, target, pane);
+    if (started.ok) return { ok: true, value: { ...target, opened: { window: pane.window_id, pane: pane.pane_id } } };
+    ctl("close-pane", "--window", pane.window_id, "--pane", pane.pane_id);
+    return started;
+  }
+  function locate(processId) {
+    const snapshot = ctl("snapshot");
+    if (!snapshot.ok) return snapshot;
+    for (const window of snapshot.value.windows) {
+      for (const tab of window.tabs.filter((item) => TERMINAL_TAB_KINDS.includes(item.kind))) {
+        for (const pane of tab.panes.filter((item) => item.ssh_destination === null)) {
+          const found = hosts(window.id, pane.id, processId);
+          if (!found.ok) return found;
+          if (found.value) return { ok: true, value: { window, tab, pane } };
+        }
+      }
+    }
+    return { ok: false, error: "The live watcher could not be located in any Pebrel pane; visibility is unverified." };
+  }
+  function revealPane(target, viewer) {
+    const located = locate(viewer.pid);
+    if (!located.ok) return located;
+    const { window, tab, pane } = located.value;
+    if (zoomedOver(tab, pane.id)) {
+      const unzoomed = ctl("zoom-pane", "--window", window.id, "--pane", tab.zoomed_pane_id, "--zoomed", "false");
+      if (!unzoomed.ok) return unzoomed;
+    }
+    if (!tab.active) {
+      const focused = ctl("focus", "--window", window.id, "--pane", target.mode === "window" ? pane.id : target.pane);
+      if (!focused.ok) return focused;
+    }
+    const after = ctl("snapshot");
+    if (!after.ok) return after;
+    const shown = after.value.windows.find((item) => item.id === window.id)?.tabs.find((item) => item.panes.some((member) => member.id === pane.id));
+    return shown?.active && !zoomedOver(shown, pane.id) ? { ok: true, value: "visible" } : { ok: false, error: "The watcher is running, but its Pebrel pane is not visible in its window." };
+  }
+  return { kind: "pebrel", inspectSession: inspectSession2, openPane, revealPane };
+}
+function zoomedOver(tab, paneId) {
+  return tab.zoomed_pane_id !== void 0 && tab.zoomed_pane_id !== null && tab.zoomed_pane_id !== paneId;
+}
+function parseReply(stdout) {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return void 0;
+  }
+}
+
+// scripts/tmux-session.mjs
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { createHash as createHash2 } from "node:crypto";
 var SESSION_FORMAT = "#{session_id}	#{session_attached}";
 var TARGET_FORMAT = "#{socket_path}	#{session_id}	#{session_created}	#{session_attached}	#{pane_id}	#{pane_pid}";
 var PANE_FORMAT = "#{pane_id}	#{pane_pid}	#{window_id}	#{window_active}	#{window_zoomed_flag}	#{pane_active}";
-function createTmuxAdapter({ env = process.env, spawn = spawnSync2, nodePath = process.execPath } = {}) {
+function createTmuxAdapter({ env = process.env, spawn = spawnSync3, nodePath = process.execPath } = {}) {
   const inherited = /^(.*),\d+,(\d+)$/.exec(env.TMUX ?? "");
   const socket = env.MELLOS_MAPPING_TMUX_SOCKET || inherited?.[1];
   function run(args, socketPath = socket) {
@@ -196,7 +332,7 @@ function createTmuxAdapter({ env = process.env, spawn = spawnSync2, nodePath = p
     if (!(Number(attached) > 0)) return { ok: false, error: `tmux session ${session} has no attached client. Attach it before retrying.` };
     const identity = [socketPath, session, created, cfg.mode, cfg.mode === "window" ? "" : pane];
     const selectedViewer = cfg.mode === "split" ? viewers.find((viewer) => viewer.pid === Number(panePid) && /^tmux-[a-f0-9]{24}$/.test(viewer.owner ?? "")) : void 0;
-    const owner = selectedViewer?.owner ?? `tmux-${createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24)}`;
+    const owner = selectedViewer?.owner ?? `tmux-${createHash2("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24)}`;
     return { ok: true, value: { backend: "tmux", socket: socketPath, session, pane, owner, owners: [owner] } };
   }
   function revealPane(target, viewer) {
@@ -298,14 +434,14 @@ var SPLIT_SIZE = "0.42";
 function selectPaneViewer(viewers, owners) {
   return viewers.find((viewer) => viewer.owner !== void 0 && owners.includes(viewer.owner));
 }
-var platformTerminal = () => process.platform === "win32" ? terminal_session_exports : createTmuxAdapter();
+var platformTerminal = () => hostedByPebrel(process.env) ? createPebrelAdapter() : process.platform === "win32" ? terminal_session_exports : createTmuxAdapter();
 function preparePane(cfg, store, mapFile, io = platformTerminal()) {
   const viewers = store.readLiveViewers(mapFile, Date.now());
-  const inspected = io.kind === "tmux" ? io.inspectSession(cfg, viewers) : cfg.mode === PANE_MODE.window ? { ok: true, value: { owners: ["window"], owner: "window" } } : io.inspectSession();
+  const inspected = io.kind !== "wt" ? io.inspectSession(cfg, viewers) : cfg.mode === PANE_MODE.window ? { ok: true, value: { owners: ["window"], owner: "window" } } : io.inspectSession();
   if (!inspected.ok) return inspected;
   const session = inspected.value;
   const viewer = selectPaneViewer(viewers, session.owners);
-  if (io.kind !== "tmux" && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
+  if (io.kind === "wt" && cfg.mode === PANE_MODE.split && !session.hwnd && (!viewer || cfg.force)) {
     return { ok: false, error: "Could not identify this conversation\u2019s active Windows Terminal pane. Activate its PowerShell tab and retry; no separate window was opened. Use --window only if you want a separate window." };
   }
   return { ok: true, value: {
@@ -315,7 +451,7 @@ function preparePane(cfg, store, mapFile, io = platformTerminal()) {
   } };
 }
 function placePane(cfg, watchPath, mapFile, target, io = platformTerminal()) {
-  if (io.kind === "tmux") return io.openPane(cfg, watchPath, mapFile, target);
+  if (io.kind !== "wt") return io.openPane(cfg, watchPath, mapFile, target);
   const payload = [...paneCommand(cfg, watchPath, mapFile), "--owner", target.owner];
   if (target.mode === PANE_MODE.window) {
     const opened2 = io.openWt(["-w", DEDICATED_WINDOW_NAME, "nt", ...payload], "open the requested window");
@@ -451,7 +587,7 @@ async function main() {
   if (!reported.ok) {
     fail(reported.error);
   }
-  const where = placed.value.backend === "tmux" ? placed.value.mode === PANE_MODE.window ? "in a new tmux window" : "beside this terminal (tmux split)" : placed.value.mode === PANE_MODE.window ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})` : "beside this terminal (vertical split)";
+  const where = placed.value.backend === "tmux" ? placed.value.mode === PANE_MODE.window ? "in a new tmux window" : "beside this terminal (tmux split)" : placed.value.backend === "pebrel" ? placed.value.mode === PANE_MODE.window ? "in a new Pebrel window" : "beside this terminal (Pebrel split)" : placed.value.mode === PANE_MODE.window ? `in the dedicated "${DEDICATED_WINDOW_NAME}" window (${placed.value.reason})` : "beside this terminal (vertical split)";
   console.log(`Map opened for ${project.root} ${where}.`);
   if (!project.found) {
     console.log(

@@ -141,7 +141,7 @@ export function openOutcome(run: LauncherRun, viewers: readonly LiveViewer[], pa
   if (paneShows(viewers, page)) {
     const visible = /^MMAP_PANE [^\r\n]*\bvisibility=visible(?:\s|$)/m.test(run.output);
     return `pane: running and reporting ${pageName(page)} — ${visible
-      ? 'the launcher verified its tmux window is active and its pane is visible in the attached session.'
+      ? 'the launcher verified the terminal shows its pane: its window or tab is active and no other pane is zoomed over it.'
       : 'terminal visibility is not confirmed by the process heartbeat.'}\n${run.output}`;
   }
   if (viewers.length > 0) {

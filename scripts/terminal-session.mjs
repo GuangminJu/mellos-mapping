@@ -1,6 +1,8 @@
 /** Windows Terminal adapter. No project paths, reuse policy or persistent state. */
 import { spawnSync } from 'node:child_process';
 
+export const kind = 'wt';
+
 const NATIVE = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'

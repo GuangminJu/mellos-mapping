@@ -5,10 +5,13 @@ export function watcherArgs(cfg, watchPath, mapFile) {
   return args;
 }
 
-/** POSIX shell quoting is only for the human fallback; adapters use argv. */
+export function posixQuote(arg) {
+  return "'" + arg.replaceAll("'", "'\"'\"'") + "'";
+}
+
+/** The human fallback; adapters that can pass argv never quote. */
 export function manualWatcherCommand(cfg, watchPath, mapFile, nodePath = process.execPath) {
-  return [nodePath, ...watcherArgs(cfg, watchPath, mapFile)]
-    .map(arg => "'" + arg.replaceAll("'", "'\"'\"'") + "'").join(' ');
+  return [nodePath, ...watcherArgs(cfg, watchPath, mapFile)].map(posixQuote).join(' ');
 }
 
 export function paneFailureMessage(error, cfg, watchPath, mapFile, platform = process.platform) {
