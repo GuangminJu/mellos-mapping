@@ -24517,7 +24517,7 @@ function readMaps(stateFile, input) {
 }
 
 // src/support/version.ts
-var VERSION = "0.27.1";
+var VERSION = "0.28.0";
 
 // src/server/presence.ts
 var DEFAULT_PAGE_NAME = "(default)";
