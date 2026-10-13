@@ -204,6 +204,9 @@ confirmed open desktop panel. See `docs/codex.md` for transport and lifecycle de
    attached sessions require `MELLOS_MAPPING_TMUX_TARGET`; custom sockets use
    `MELLOS_MAPPING_TMUX_SOCKET` in the MCP server environment. `window: true`
    requests a new tmux window. Do not guess between attached sessions.
+   Inside Pebrel (`PEBREL_CLI` and `PEBREL_PANE_ID` set, not inside tmux) it
+   splits the conversation's own Pebrel pane; `window: true` opens a new
+   Pebrel window.
    Under omp (Oh My Pi) nothing about this changes: the same tool runs the same
    launcher, splitting the Windows Terminal window hosting the omp session
    (tmux split on Linux/macOS) and reusing the pane already bound to it. omp has
