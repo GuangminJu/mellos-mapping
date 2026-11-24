@@ -5,6 +5,7 @@
 [![MCP registry](https://img.shields.io/badge/MCP_registry-listed-2f6feb)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GuangminJu/mellos-mapping)
 [![CI](https://img.shields.io/github/actions/workflow/status/GuangminJu/mellos-mapping/ci.yml?branch=main&label=CI)](https://github.com/GuangminJu/mellos-mapping/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-444)](LICENSE)
+[![GuangminJu/mellos-mapping MCP server](https://glama.ai/mcp/servers/GuangminJu/mellos-mapping/badges/score.svg)](https://glama.ai/mcp/servers/GuangminJu/mellos-mapping)
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-community-ffb400?logo=discourse&logoColor=white)](https://linux.do)
 
 [English](README.md) | 简体中文
